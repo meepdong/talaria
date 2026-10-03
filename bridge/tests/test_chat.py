@@ -304,6 +304,18 @@ async def test_rename_and_delete(chat_bridge):
     await ws.close()
 
 
+async def test_chat_needs_ready(chat_bridge):
+    bridge, hermes = chat_bridge
+    device = await paired_device(bridge)
+    ws, hello = await device.open(bridge.url)
+    await ws.send(m.encode(device.auth_request(hello)))
+    check("auth.ok", await recv(ws))
+    await ws.send(m.encode(m.request("c1", "chat.send", {"text": "Too early"})))
+    assert (await recv(ws))["error"]["code"] == m.INVALID_REQUEST
+    assert hermes.sessions == {}
+    await ws.close()
+
+
 async def test_no_chat_configured(bridge: Bridge):
     ws = await connected(bridge)
     reply = await call(ws, "c1", "chat.send", {"text": "Hello?"})

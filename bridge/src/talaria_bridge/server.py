@@ -376,6 +376,9 @@ class BridgeServer:
         elif method == "status.get":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, self.status_report(session)))
+        elif method in CHAT_METHODS and not session.ready:
+            if msg_id is not None:
+                await self._send(ws, m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first"))
         elif method in CHAT_METHODS and self.chat is not None:
             # Chat calls may wait on the agent, so they run beside the reader, not in it.
             params = msg.get("params")
