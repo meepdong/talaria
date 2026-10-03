@@ -105,8 +105,9 @@ class HermesClient:
     async def stop_run(self, run_id: str) -> None:
         await self._call("POST", f"/v1/runs/{run_id}/stop", json={})
 
-    async def chat_stream(self, session_id: str, text: str) -> AsyncIterator[tuple[str, dict]]:
-        """Run one turn and yield its events as (name, payload) until the stream ends."""
+    async def chat_stream(self, session_id: str, text: str | list) -> AsyncIterator[tuple[str, dict]]:
+        """Run one turn and yield its events as (name, payload) until the stream ends.
+        `text` is the message: a string, or text and input_image parts."""
         try:
             async with self._http.stream("POST", f"/api/sessions/{session_id}/chat/stream",
                                          json={"message": text}, timeout=STREAM_TIMEOUT) as resp:

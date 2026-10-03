@@ -8,9 +8,13 @@ so a reply survives the phone dropping off and every device shows the same conve
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
+import os
+import re
 import secrets
+import shutil
 import sqlite3
 import time
 from collections import OrderedDict
@@ -18,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
 
@@ -30,6 +35,10 @@ LAST_MESSAGE_LEN = 200
 KEPT_TURNS = 50
 CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
+MAX_ATTACHMENTS = 10
+MAX_INLINE_IMAGES = 7 * 1024 * 1024  # Hermes refuses requests over 10 MB, and base64 adds a third
+# the line the bridge adds to a message for each file it saved to the agent's inbox (§10)
+FILE_LINE = re.compile(r"^Attached file: (?P<path>.+) \((?P<mime>[^,()]+), (?P<size>\d+) bytes\)$")
 
 Broadcast = Callable[[dict], Awaitable[None]]
 
@@ -135,6 +144,8 @@ class Turn:
     usage: dict | None = None
     runtime: dict | None = None
     client_msg_id: str | None = None
+    attachments: list[dict] = field(default_factory=list)
+    content: str | list | None = None  # what goes to the agent, when it differs from user_text
     run_id: str | None = None
     task: asyncio.Task | None = None
 
@@ -143,6 +154,8 @@ class Turn:
                 "status": self.status, "user_text": self.user_text, "text": self.text,
                 "tools": [dict(t) for t in self.tools], "commentary": list(self.commentary),
                 "waiting_for_approval": self.waiting_for_approval, "started_at": self.started_at}
+        if self.attachments:
+            snap["attachments"] = [dict(a) for a in self.attachments]
         for key in ("error", "usage", "runtime"):
             if getattr(self, key) is not None:
                 snap[key] = getattr(self, key)
@@ -164,21 +177,35 @@ def _runtime(raw) -> dict | None:
     return runtime or None
 
 
-def _message_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict):
-                if isinstance(part.get("text"), str):
-                    parts.append(part["text"])
-                elif "image" in str(part.get("type", "")):
-                    parts.append("[image]")
-        return "\n".join(p for p in parts if p)
-    return ""
+def _image_mime(part: dict) -> str:
+    ref = part.get("image_url")
+    url = ref.get("url") if isinstance(ref, dict) else ref
+    match = re.match(r"^data:(image/[\w.+-]+);", url) if isinstance(url, str) else None
+    return match.group(1) if match else "image/*"
+
+
+def _message_content(content) -> tuple[str, list[dict]]:
+    """A Hermes message's text and its attachments: inline images, and the files the bridge
+    saved to the agent's inbox (their `Attached file:` lines leave the text)."""
+    parts, attachments = [], []
+    for part in [content] if isinstance(content, str) else content if isinstance(content, list) else []:
+        if isinstance(part, str):
+            parts.append(part)
+        elif isinstance(part, dict):
+            if isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            elif "image" in str(part.get("type", "")):
+                attachments.append({"kind": "image", "name": "Photo", "mime": _image_mime(part)})
+    lines = []
+    for line in "\n".join(p for p in parts if p).split("\n"):
+        found = FILE_LINE.match(line.strip())
+        if found:
+            name = os.path.basename(found["path"])
+            name = re.sub(r"^b-[0-9a-f]{24}-", "", name)
+            attachments.append({"kind": "file", "name": name, "mime": found["mime"], "size": int(found["size"])})
+        else:
+            lines.append(line)
+    return "\n".join(lines), attachments
 
 
 def _tool_names(tool_calls) -> list[str]:
@@ -203,16 +230,18 @@ def history_messages(rows: list[dict]) -> list[dict]:
         role = row.get("role")
         if role not in ("user", "assistant") or row.get("display_kind") == "hidden":
             continue
-        text = _message_text(row.get("content")).strip()
+        text, attachments = _message_content(row.get("content"))
+        text = text.strip()
         if role == "assistant":
             pending_tools += _tool_names(row.get("tool_calls"))
-            if not text:
-                continue
-        if not text:
+            attachments = []
+        if not text and not attachments:
             continue
         ts = row.get("timestamp")
         msg = {"id": str(row.get("id", "")), "role": role, "text": text,
                "ts": int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None}
+        if attachments:
+            msg["attachments"] = attachments
         if role == "assistant" and pending_tools:
             msg["tools"], pending_tools = pending_tools, []
         out.append(msg)
@@ -221,9 +250,12 @@ def history_messages(rows: list[dict]) -> list[dict]:
 
 class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
-                 *, default_agent: str | None = None):
+                 *, default_agent: str | None = None, blobs: BlobStore | None = None,
+                 inboxes: dict[str, Path] | None = None):
         self.store = store
         self.agents = agents
+        self.blobs = blobs
+        self.inboxes = inboxes or {}  # agent_id -> folder the agent can read, for files
         self.broadcast = broadcast
         self.default_agent = default_agent or next(iter(agents), None)
         self._turns: OrderedDict[str, Turn] = OrderedDict()
@@ -243,11 +275,15 @@ class ChatService:
     async def send(self, p: dict) -> tuple[dict, Turn | None]:
         """Validate and register a turn. The caller sends the result, then calls `start`.
         Returns (result, None) for a retried client_msg_id."""
-        text = p.get("text")
-        if not (isinstance(text, str) and text.strip() and len(text) <= MAX_TEXT):
-            raise RpcError(m.INVALID_PARAMS, f"text must be 1 to {MAX_TEXT} characters")
-        if p.get("attachments"):
-            raise RpcError(m.MODALITY_UNSUPPORTED, "Attachments are not supported yet")
+        text = p.get("text", "")
+        if not (isinstance(text, str) and len(text) <= MAX_TEXT):
+            raise RpcError(m.INVALID_PARAMS, f"text must be at most {MAX_TEXT} characters")
+        refs = p.get("attachments")
+        if refs is not None and not (isinstance(refs, list) and 0 < len(refs) <= MAX_ATTACHMENTS
+                                     and all(isinstance(r, dict) for r in refs)):
+            raise RpcError(m.INVALID_PARAMS, f"attachments must list 1 to {MAX_ATTACHMENTS} blobs")
+        if not text.strip() and not refs:
+            raise RpcError(m.INVALID_PARAMS, "Send some text or an attachment")
         client_msg_id = p.get("client_msg_id")
         if client_msg_id is not None:
             _id(client_msg_id, "client_msg_id")
@@ -257,7 +293,15 @@ class ChatService:
                     del self._client_msgs[k]
             if client_msg_id in self._client_msgs:
                 return dict(self._client_msgs[client_msg_id][1]), None
+        blobs = self._blobs(refs or [])
+        try:
+            return await self._send(p, text, blobs, client_msg_id)
+        except BaseException:
+            for blob in blobs:
+                self.blobs.release(blob)  # not sent: the device may retry with the same blobs
+            raise
 
+    async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None) -> tuple[dict, Turn]:
         conv_id = p.get("conversation_id")
         if conv_id is not None:
             conv = self.store.get(_id(conv_id, "conversation_id"))
@@ -266,25 +310,82 @@ class ChatService:
             client = self._client(conv.agent_id)
             if conv_id in self._active:
                 raise RpcError(m.CONFLICT, "A reply is still running in this conversation")
+            self._check_files(conv.agent_id, blobs)
         else:
             agent_id = p.get("agent_id", self.default_agent)
             if agent_id is not None:
                 _id(agent_id, "agent_id")
             client = self._client(agent_id)
-            conv = await self._new_conversation(agent_id, client, text)
+            self._check_files(agent_id, blobs)
+            conv = await self._new_conversation(agent_id, client, text.strip() or blobs[0].name)
             conv_id = conv.id
 
+        if conv_id in self._active:  # another send won the race while the session was created
+            raise RpcError(m.CONFLICT, "A reply is still running in this conversation")
+        content = await asyncio.to_thread(self._content, conv, text, blobs) if blobs else None
         now_s = int(time.time())
         turn = Turn(conversation_id=conv_id, turn_id="t-" + secrets.token_hex(8), agent_id=conv.agent_id,
-                    title=conv.title, user_text=text, started_at=now_s, client_msg_id=client_msg_id)
+                    title=conv.title, user_text=text, started_at=now_s, client_msg_id=client_msg_id,
+                    attachments=[b.meta() for b in blobs], content=content)
         self._active[conv_id] = turn.turn_id
         self._turns[turn.turn_id] = turn
         self._evict()
-        self.store.touch(conv_id, "user", text, now_s)
+        self.store.touch(conv_id, "user", text.strip() or _attachments_preview(turn.attachments), now_s)
         result = {"conversation_id": conv_id, "turn_id": turn.turn_id, "title": conv.title}
         if client_msg_id is not None:
             self._client_msgs[client_msg_id] = (time.monotonic(), result)
         return result, turn
+
+    def _blobs(self, refs: list[dict]) -> list[Blob]:
+        if not refs:
+            return []
+        if self.blobs is None:
+            raise RpcError(m.MODALITY_UNSUPPORTED, "This bridge takes no attachments")
+        ids = [r.get("blob_id") for r in refs]
+        if len(set(map(str, ids))) != len(ids):
+            raise RpcError(m.INVALID_PARAMS, "The same attachment is listed twice")
+        blobs = []
+        try:
+            for blob_id in ids:
+                blobs.append(self.blobs.take(blob_id))
+            if sum(b.size for b in blobs if b.kind == "image") > MAX_INLINE_IMAGES:
+                raise RpcError(m.INVALID_PARAMS, "Photos too large for one message; send fewer or smaller ones")
+        except (BlobError, RpcError) as exc:
+            for blob in blobs:
+                self.blobs.release(blob)
+            raise exc if isinstance(exc, RpcError) else RpcError(exc.code, exc.message) from None
+        return blobs
+
+    def _check_files(self, agent_id: str | None, blobs: list[Blob]) -> None:
+        if any(b.kind == "file" for b in blobs) and self.inboxes.get(agent_id) is None:
+            raise RpcError(m.MODALITY_UNSUPPORTED, "This agent can only receive photos, not files")
+
+    def _content(self, conv: Conversation, text: str, blobs: list[Blob]) -> str | list:
+        """The message for the agent: images inline, files saved to its inbox with a line each.
+        The blobs are used up once this returns."""
+        lines = [text] if text.strip() else []
+        images = []
+        try:
+            for blob in blobs:
+                if blob.kind == "image":
+                    data = base64.b64encode(blob.path.read_bytes()).decode("ascii")
+                    images.append({"type": "input_image", "image_url": f"data:{blob.mime};base64,{data}"})
+                    continue
+                folder = self.inboxes[conv.agent_id] / conv.id
+                folder.mkdir(parents=True, exist_ok=True, mode=0o750)
+                target = folder / f"{blob.blob_id}-{safe_name(blob.name)}"
+                shutil.copyfile(blob.path, target)
+                os.chmod(target, 0o640)  # the agent reads it through the inbox's group
+                lines.append(f"Attached file: {target} ({blob.mime}, {blob.size} bytes)")
+        except OSError as exc:
+            log.warning("could not prepare attachments: %s", exc)
+            raise RpcError(m.INTERNAL_ERROR, "The bridge could not store the attachment") from None
+        for blob in blobs:
+            self.blobs.discard(blob.blob_id)
+        message = "\n\n".join(lines)
+        if not images:
+            return message
+        return ([{"type": "text", "text": message}] if message else []) + images
 
     def _client(self, agent_id: str | None) -> HermesClient:
         if agent_id is None or agent_id not in self.agents:
@@ -334,6 +435,8 @@ class ChatService:
                    "title": turn.title, "user_text": turn.user_text, "started_at": turn.started_at}
         if turn.client_msg_id is not None:
             started["client_msg_id"] = turn.client_msg_id
+        if turn.attachments:
+            started["attachments"] = [dict(a) for a in turn.attachments]
         await self._emit(turn, "chat.started", started)
         conv = self.store.get(turn.conversation_id)
         final_text: str | None = None
@@ -341,7 +444,8 @@ class ChatService:
         try:
             if conv is None:
                 raise HermesUnavailable("conversation was deleted")
-            stream = self.agents[conv.agent_id].chat_stream(conv.hermes_session_id, turn.user_text)
+            stream = self.agents[conv.agent_id].chat_stream(
+                conv.hermes_session_id, turn.content if turn.content is not None else turn.user_text)
             async for name, payload in stream:
                 if turn.waiting_for_approval and name != "approval.request":
                     turn.waiting_for_approval = False
@@ -514,6 +618,14 @@ class ChatService:
 
     async def handle(self, method: str, p: dict) -> tuple[dict, Turn | None]:
         """Dispatch one chat request. Returns (result, turn to start after the result is sent)."""
+        if method in BLOB_METHODS:
+            if self.blobs is None:
+                raise RpcError(m.MODALITY_UNSUPPORTED, "This bridge takes no attachments")
+            try:
+                # file work off the event loop: a chunk is up to 512 KiB, a commit hashes 20 MiB
+                return await asyncio.to_thread(self.blobs.handle, method, p), None
+            except BlobError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method == "chat.send":
             return await self.send(p)
         if method == "chat.cancel":
@@ -532,4 +644,14 @@ class ChatService:
 
 
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
-                          "conversations.list", "conversations.rename", "conversations.delete"})
+                          "conversations.list", "conversations.rename", "conversations.delete"}) | BLOB_METHODS
+
+
+def _attachments_preview(attachments: list[dict]) -> str:
+    photos = sum(1 for a in attachments if a["kind"] == "image")
+    files = [a["name"] for a in attachments if a["kind"] == "file"]
+    if photos and not files:
+        return "📷 Photo" if photos == 1 else f"📷 {photos} photos"
+    if files and not photos:
+        return "📎 " + ", ".join(files)
+    return f"📎 {len(attachments)} attachments"

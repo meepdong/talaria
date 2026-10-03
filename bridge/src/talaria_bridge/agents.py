@@ -31,6 +31,7 @@ class AgentConfig:
     health_url: str
     api_url: str | None = None  # chat (M2): the Hermes API server, e.g. http://127.0.0.1:8642
     api_key_file: str | None = None  # a file holding its API_SERVER_KEY, readable only by the bridge
+    inbox_dir: str | None = None  # chat attachments (§10): where the bridge saves files the agent can read
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -48,8 +49,11 @@ def load_agents(path: Path) -> list[AgentConfig]:
         if api_url is not None and not (isinstance(api_url, str) and api_url.startswith(("http://", "https://"))
                                         and isinstance(key_file, str) and key_file):
             raise ValueError(f"{path}: an agent's api_url must be http(s) and come with api_key_file")
+        inbox = entry.get("inbox_dir")
+        if inbox is not None and not (isinstance(inbox, str) and Path(inbox).is_absolute()):
+            raise ValueError(f"{path}: an agent's inbox_dir must be an absolute path")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
-                                  api_url, key_file if api_url is not None else None))
+                                  api_url, key_file if api_url is not None else None, inbox))
     return agents
 
 
