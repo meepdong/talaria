@@ -4,7 +4,7 @@
 >
 > *Working name. In myth, the talaria are Hermes' winged sandals: they carry the messenger anywhere.*
 
-[![tests](https://github.com/meepdong/meepClaude/actions/workflows/tests.yml/badge.svg)](https://github.com/meepdong/meepClaude/actions/workflows/tests.yml)
+[![tests](https://github.com/meepdong/talaria/actions/workflows/tests.yml/badge.svg)](https://github.com/meepdong/talaria/actions/workflows/tests.yml)
 
 **Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android client starts at M1. Feedback welcome.
 **Not affiliated with Nous Research.** Talaria is an independent community project that works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and, by design, with any agent that speaks [MCP](https://modelcontextprotocol.io).
@@ -97,4 +97,4 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 
 ## License
 
-**Apache-2.0** — see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). It is compatible with the MIT and Apache-2.0 projects this design learns from, and includes a patent grant.
+**Apache-2.0** — see [LICENSE](LICENSE) and [NOTICE](NOTICE). It is compatible with the MIT and Apache-2.0 projects this design learns from, and includes a patent grant.

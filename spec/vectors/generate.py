@@ -2,7 +2,7 @@
 
     python spec/vectors/generate.py
 
-Run from the talaria/ folder with talaria-bridge installed. The keys are fixed test keys
+Run from the repository root with talaria-bridge installed. The keys are fixed test keys
 (never use them for anything real). ECDSA signatures are randomized, so regenerating
 changes the signature values; any valid signature over the listed bytes is correct, and
 implementations must accept the published ones.

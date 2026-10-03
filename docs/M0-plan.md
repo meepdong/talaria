@@ -142,7 +142,7 @@ repo publicly.
 - **`LICENSE` added** — the canonical Apache-2.0 text at the repository root, with a `NOTICE`
   carrying the copyright line and the "not affiliated with Nous Research" disclaimer. The README
   no longer says "planned".
-- **CI added** — [`.github/workflows/tests.yml`](../../.github/workflows/tests.yml) runs
+- **CI added** — [`.github/workflows/tests.yml`](../.github/workflows/tests.yml) runs
   `pytest bridge tools/tnp-cli` on every push and pull request, on Ubuntu (3.12 and 3.13) and on
   Windows (3.12). Windows is in the matrix on purpose: the SAS emoji bug
   described above was a console encoding bug that only exists there.
@@ -152,8 +152,9 @@ repo publicly.
   `signatures.json` every run; [`test_vectors.py`](../bridge/tests/test_vectors.py) verifies the
   *published* vectors against the code, which is the check that actually matters.
 
-- **The repository root `.venv/` was being tracked.** `talaria/.gitignore` covers `.venv/`, but
-  only inside `talaria/`, so a virtual environment created one level up was committed: 861 of the
-  913 tracked files were pip's vendored wheels. They are untracked now, and a root `.gitignore`
-  covers virtual environments anywhere in the tree, along with `bridge.db` and `bridge_key.pem`
-  in case `TALARIA_HOME` is ever pointed inside the repo.
+- **A `.venv/` was being tracked.** Back when this project lived in a subdirectory of a larger
+  repository, the `.gitignore` covering `.venv/` sat in that subdirectory, so a virtual environment
+  created one level up was committed: 861 of the 913 tracked files were pip's vendored wheels. The
+  `.gitignore` now sits at the repository root and covers virtual environments anywhere in the
+  tree, along with `bridge.db` and `bridge_key.pem` in case `TALARIA_HOME` is ever pointed inside
+  the repo.

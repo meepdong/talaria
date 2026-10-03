@@ -1,4 +1,11 @@
+# Python virtual environments, anywhere in the tree.
 .venv/
+venv/
 __pycache__/
+*.py[cod]
 *.egg-info/
 .pytest_cache/
+
+# Bridge runtime state, if TALARIA_HOME is pointed inside the repo.
+*.db
+bridge_key.pem

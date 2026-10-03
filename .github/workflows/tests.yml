@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the floor in both pyproject.toml files; 3.13 catches forward drift.
+        # Windows is kept because the pairing CLIs print emoji, and a console
+        # encoding bug there once reduced the SAS to its six digits (see
+        # docs/M0-plan.md).
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: "**/pyproject.toml"
+
+      # One pip command, so tnp-cli's `talaria-bridge` dependency resolves to the
+      # local editable install instead of being looked up on PyPI.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "bridge[test]" -e "tools/tnp-cli[test]"
+
+      - name: Test
+        run: python -m pytest bridge tools/tnp-cli -q

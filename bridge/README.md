@@ -6,7 +6,7 @@ Byte formats and test vectors live in [`../spec/`](../spec/README.md). The proto
 
 ## Install (Windows PowerShell; on macOS or Linux use `python3.12` and `.venv/bin/`)
 
-From the `talaria` folder:
+From the repository root:
 
 ```
 py -3.12 -m venv .venv
@@ -21,7 +21,7 @@ py -3.12 -m venv .venv
 
 ## Try a pairing on one computer
 
-Open three terminals in the `talaria` folder.
+Open three terminals at the repository root.
 
 1. Start the bridge in local test mode (plain `ws://`, loopback only):
    ```

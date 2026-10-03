@@ -373,6 +373,7 @@ The tool list is **fixed and independent of which devices are connected**. In He
 
 ```
 talaria/
+├── .github/     # CI: pytest on Linux and Windows
 ├── spec/        # PROTOCOL.md source of truth + JSON Schemas + conformance test vectors
 ├── bridge/      # Python bridge (MCP server, TNP server, CLI: talaria pair|devices|logs)
 ├── client/      # KMP client (see §2.3)
