@@ -39,19 +39,44 @@ TLS protects the channel. **Authentication does not rely on TLS**: both sides pr
 
 ### 3.2 Pairing (one time per device)
 
-1. On the server: `talaria pair --name "OnePlus 10 Pro"` prints a QR code containing:
-   ```json
-   {"tnp": 0, "url": "wss://meep-vps.tailnet.ts.net/tnp",
-    "bridge_id": "K7Q2…", "bridge_pk": "<base64 SPKI>",
-    "pair_token": "<128-bit random, base64url>", "exp": 1790000000}
-   ```
-   The token is single-use and expires in 5 minutes.
-2. The device scans the QR, **pins `bridge_pk`**, generates its key pair, and connects.
-3. The device sends `pair.request` with `pair_token`, its public key, its name and platform.
-4. The bridge verifies and consumes the token, stores the device public key, and replies `pair.accepted`.
-5. Manual fallback: an 8-character code shown by the CLI, with a rate limit of 5 attempts per code.
+`talaria pair --name "OnePlus 10 Pro"` shows **three equivalent ways to pair**, so devices with and without cameras are covered:
 
-Revocation: `talaria devices revoke <device_id>`. Any open session closes immediately and the key is rejected from then on.
+```
+█▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█     Scan with the Talaria app
+█ ███ █ ▀█▀ █ ███ █     or paste this link (expires in 5:00):
+█ ▀▀▀ █ █▀█ █ ▀▀▀ █     talaria://pair#v0.meep-vps.ts.net.K7Q2….8fJ2…
+▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀     or enter code: HX4-92K
+```
+
+| Method | For | Carries |
+|---|---|---|
+| **QR code** (rendered in the terminal) | Phones, tablets | The full pairing payload below |
+| **Pairing link** `talaria://pair#…` | Devices without cameras (desktop, glasses), or pasting over a trusted channel | The same payload, base64url-encoded after `#` |
+| **Short code** (8 characters) | Last resort, typed by hand | A lookup key. The device must also be given the bridge URL. Rate-limited to 5 attempts per code. |
+
+Pairing payload:
+```json
+{"tnp": 0, "url": "wss://meep-vps.tailnet.ts.net/tnp",
+ "bridge_id": "K7Q2…", "bridge_pk": "<base64 SPKI>",
+ "pair_token": "<128-bit random, base64url>", "exp": 1790000000}
+```
+
+- The token is **single-use** and expires in **5 minutes** (configurable, max 15).
+- The secret sits **after `#`** (the URL fragment), which browsers, proxies and servers never transmit or log. A pairing link is still a secret: share it only over a channel you trust.
+- Desktop clients register the `talaria://` scheme and also offer a "paste link" box.
+
+Flow:
+1. The device reads the payload, **pins `bridge_pk`**, generates its key pair in the OS keystore, and connects.
+2. The device sends `pair.request` with `pair_token`, its public key, name and platform.
+3. The bridge verifies the token, then both sides derive a **short authentication string (SAS)**: 6 digits and 3 emoji computed from `SHA-256(bridge_pk ‖ device_pk ‖ pair_token)`.
+4. **Confirmation:** the device shows the SAS, and the terminal asks:
+   `Approve "OnePlus 10 Pro"?  Code 482 913  🦊🌙🎸  [y/N]`
+   The operator approves only if the codes match. This stops someone who saw the QR code or link (on a screen share, in a screenshot) from pairing a device of their own.
+5. The bridge consumes the token, stores the device public key, and replies `pair.accepted`. Without approval within 2 minutes it replies `pair.rejected`.
+
+Prerequisite: the device must be able to reach the bridge (e.g. Tailscale is running). If it cannot, the client shows "Can't reach your server — is Tailscale on?" rather than a generic error.
+
+Management: `talaria devices list` and `talaria devices revoke <device_id>`. Revocation closes any open session immediately and the key is rejected from then on.
 
 ### 3.3 Connection handshake (every connection)
 
@@ -252,14 +277,89 @@ The agent can list rules (`rules.list`, tier 1) and propose changes. **It can ne
 - Small (≤ 256 KiB): base64 inside the result, as `{"blob": {"mime": "image/jpeg", "b64": "…"}}`.
 - Large: the device calls `blob.upload` and receives a one-time HTTPS `PUT` URL on the bridge (valid 5 minutes, size-limited). The command result then references `blob_id`.
 
-## 10. Chat
+## 10. Status, agents, chat and groups
+
+All chat goes **through the bridge**. Devices never hold agent API keys.
+
+### 10.1 Status
+
+`status.get` (device → bridge, request) returns a layered health report. The bridge also pushes `status` notifications when anything changes.
+
+```json
+{"bridge": {"version": "0.1.0", "uptime_s": 86400, "latency_ms": 45},
+ "agents": [
+   {"id": "meep",  "state": "ready",    "model": "anthropic/claude-sonnet-5.5"},
+   {"id": "scout", "state": "degraded", "detail": "provider error: insufficient credit"}
+ ],
+ "device": {"session_id": "s-77", "last_acked_seq": 118}}
+```
+
+Agent `state` is one of `ready`, `degraded` (reachable but failing requests), `offline` or `unknown`. The client maps network failure, bridge failure and agent failure to distinct, actionable messages.
+
+### 10.2 Agents
+
+The bridge keeps an **agent registry**. An agent is a Hermes profile or another OpenAI-compatible endpoint, configured on the server. The registry holds endpoints and keys; devices see only descriptions.
+
+| Method | Purpose |
+|---|---|
+| `agents.list` | All agents: `id`, `name`, `avatar`, `role`, `model`, `modalities`, `state`, `cost_tier` |
+| `agents.get` | One agent in full: the above plus `soul` (SOUL.md content), `tools`/`skills` summary, `memory_summary` (optional, owner-controlled), `spend` |
+| `agents.soul.update` | Replace an agent's SOUL.md. **Disabled unless the bridge enables `allow_soul_edit`.** The request carries the expected current version (`soul_rev`) to prevent overwriting concurrent edits. The bridge keeps every previous version. |
+
+Modalities:
+```json
+"modalities": {"in": ["text", "image", "pdf"], "out": ["text"]}
+```
+Clients warn before sending a modality the target agent does not accept.
+
+### 10.3 Chat
 
 | Method | Direction | Purpose |
 |---|---|---|
-| `chat.send` | device → bridge (request) | `{conversation_id?, text, attachments?}`. The bridge proxies it to the Hermes API server. |
-| `chat.delta` | bridge → device (notification) | Streaming tokens and tool-progress markers |
-| `chat.done` | bridge → device (notification) | Final message, usage |
-| `chat.history` | device → bridge (request) | Fetch the recent conversation |
+| `chat.send` | device → bridge (request) | `{agent_id \| group_id, conversation_id?, text, attachments?, reply_to?}` |
+| `chat.delta` | bridge → device (notification) | Streaming output tagged with `kind`: `text`, `tool_progress`, `commentary`, `worker` (see §10.5) |
+| `chat.done` | bridge → device (notification) | Final message, `usage` (tokens, cost), `runtime` (model actually used) |
+| `chat.cancel` | device → bridge (request) | Stop an in-flight reply |
+| `chat.history` | device → bridge (request) | Page through a conversation |
+| `conversations.list` | device → bridge (request) | Conversations and groups, with last message and unread count |
+
+- A Talaria conversation maps to a Hermes **named conversation** on the Responses API, so history lives on the server and survives app reinstalls.
+- **Attachments** reference blobs (§9): `{"blob_id": "b-12", "mime": "image/jpeg", "name": "receipt.jpg"}`. Clients SHOULD downscale images (long edge ≤ 1568 px) and MUST strip location metadata (EXIF GPS) before upload unless the user opts out for that message.
+- **Voice** is converted to text **on the device** before sending. Audio is only uploaded if the user explicitly attaches an audio file.
+
+### 10.4 Groups (agents only, one owner)
+
+A group is a conversation with several of the owner's agents. **The bridge** routes messages and builds context; Hermes itself has no group concept.
+
+| Method | Purpose |
+|---|---|
+| `groups.create` / `groups.update` / `groups.delete` | Name, avatar, description ("house rules"), members, settings |
+| `groups.get` | Group info: members with roles, settings, spend, shared media |
+
+Group settings:
+```jsonc
+{"routing": "conductor",          // conductor | mention_only | round_robin
+ "conductor": "meep",
+ "max_agent_replies_per_turn": 3, // hard stop for agent-to-agent ping-pong
+ "agent_to_agent": "mention_only",
+ "daily_budget": {"amount": 50, "currency": "INR"}}
+```
+
+- **Routing.** `conductor`: the conductor decides who answers (default). `mention_only`: only @mentioned agents answer. `round_robin`: everyone answers (costly, off by default).
+- **Context.** Each agent receives the recent group transcript with speaker labels ("Scout said: …") plus the new message. Each agent's own memory stays separate.
+- **Limits.** The bridge enforces `max_agent_replies_per_turn` and `daily_budget`. Hitting a limit posts a system message and stops further agent replies until the user writes again.
+
+### 10.5 Workflow events
+
+When an agent delegates work to sub-agents (Hermes `delegate_task` or Kanban), the bridge relays progress from Hermes' run event stream as `chat.delta` with `kind: "worker"`:
+
+```json
+{"kind": "worker", "worker_id": "w-3", "parent": "meep",
+ "status": "running", "goal": "Find cheapest Goa flights 14–17 Nov",
+ "model": "anthropic/claude-haiku-4.5", "cost": {"amount": 0.42, "currency": "INR"}}
+```
+
+`status` is one of `queued`, `running`, `done`, `failed` or `cancelled`. Clients render these as a live workflow view. A per-conversation budget, when set, is enforced by the bridge and reported with `BUDGET_EXCEEDED`.
 
 ## 11. Relayed devices (watch, glasses)
 
@@ -291,6 +391,10 @@ When the bridge queues a TTL command for an offline device, it sends a push with
 | -32007 | `DEVICE_BUSY` | Device locked or unable to act now |
 | -32008 | `POLICY_BLOCKED` | Blocked by constraints, filters or tier 3 |
 | -32009 | `EXPIRED` | TTL passed before delivery |
+| -32010 | `AGENT_UNAVAILABLE` | The target agent is offline or failing |
+| -32011 | `BUDGET_EXCEEDED` | A group, conversation or workflow budget was reached |
+| -32012 | `MODALITY_UNSUPPORTED` | The agent does not accept this attachment type |
+| -32013 | `CONFLICT` | Stale revision (e.g. `soul_rev` does not match) |
 
 ## 14. Versioning and extensions
 

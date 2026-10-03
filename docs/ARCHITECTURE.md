@@ -40,7 +40,12 @@ A standalone service that runs on the same host as the agent and listens only on
 | TNP endpoint | WebSocket server for devices; mutual challenge-response auth (see PROTOCOL §3) |
 | MCP server | Exposes a **fixed** set of tools to the agent (see §4) |
 | Event pipeline | Receives device events, stores them, forwards selected ones to Hermes via a webhook route |
-| Chat proxy | Forwards chat from devices to the Hermes API server, so **devices never hold the Hermes API key** |
+| Chat proxy | Forwards chat from devices to the right agent's API (Hermes Responses API with named conversations), so **devices never hold agent API keys** |
+| Agent registry | Several agents: Hermes profiles (each with its own SOUL.md, memory, model, skills) or other OpenAI-compatible endpoints. Holds endpoints and keys; exposes names, roles, models, modalities, souls. |
+| Group router | Agent group chats: routing mode (conductor / @mention / round-robin), speaker-labelled shared context, reply caps, daily budgets |
+| Workflow relay | Subscribes to Hermes run events and relays sub-agent (worker) progress and cost to devices |
+| Media pipeline | Receives attachments (blobs), checks modality support, forwards to the agent |
+| Status | Aggregates bridge, device and per-agent health into one status report |
 | Offline queue | Holds TTL-bounded commands (e.g. notifications) for disconnected devices; sends a content-free wake push |
 | Audit log | Every command, approval result and event, kept locally |
 
@@ -56,7 +61,21 @@ A standalone service that runs on the same host as the agent and listens only on
 |---|---|---|
 | Agent → device | Hermes `mcp_servers` entry pointing at the bridge | Tools such as `device_notify` and `device_location` |
 | Device → agent (events) | Hermes **webhook adapter** route (`platforms.webhook`) | HMAC-signed. Hermes route `filters`, `coalesce`, `deliver` and `skills` apply. Payload is treated as untrusted. |
-| Device → agent (chat) | Hermes **API server** (OpenAI-compatible, `127.0.0.1:8642`) via the bridge | The API key stays on the server |
+| Device → agent (chat) | Hermes **API server** (`127.0.0.1:8642`), Responses API with a named `conversation` per Talaria conversation, via the bridge | The API key stays on the server. Each additional agent (profile) has its own API port and key. |
+| Agent souls and info | Bridge reads each profile's `SOUL.md`; model, skills and health via the API server (`/v1/capabilities`, `/v1/skills`, `/health/detailed`) | Writing SOUL.md is opt-in (`allow_soul_edit`) and versioned |
+| Sub-agents (workflows) | Hermes `delegate_task` (parallel workers) and Kanban (multi-profile pipelines); progress from the run event stream | Talaria **observes and steers**; it does not orchestrate |
+
+Running cheap workers under a strong conductor is a Hermes setting:
+
+```yaml
+# ~/.hermes/config.yaml (conductor profile)
+delegation:
+  model: "anthropic/claude-haiku-4.5"   # all delegate_task workers use this
+  provider: "openrouter"
+  max_concurrent_children: 5            # default 10; lower caps cost spikes
+```
+
+Choosing a different model **per task** works through profiles: the conductor hands tasks to worker *profiles* (e.g. a cheap "Scout", a strong "Coder") via Kanban.
 
 Example Hermes config (`~/.hermes/config.yaml`):
 
@@ -94,7 +113,9 @@ client/
 │   ├── security/      # key mgmt interface, signing, approval engine         (common + expect/actual)
 │   ├── rules/         # rule DSL, evaluator, template expansion, script host (common)
 │   ├── storage/       # encrypted local DB (rules, history, event outbox)    (common, SQLDelight)
-│   └── capabilities/  # Capability interface + registry                      (common)
+│   ├── capabilities/  # Capability interface + registry                      (common)
+│   ├── voice/         # SpeechToText + TextToSpeech interfaces               (common + expect/actual)
+│   └── media/         # image downscale, EXIF/GPS strip, PDF page picking    (common + expect/actual)
 ├── capability-impl/
 │   ├── android/       # notifications listener, SMS, geofence, camera, TTS, foreground service
 │   ├── desktop/       # toasts, script runner, folder watch, hotkey, tray   (JVM: Windows/Linux)
@@ -109,6 +130,8 @@ client/
 - **Capabilities are plugins inside the app.** Each implements `Capability` (name, version, tier, params schema, `invoke()`), registers itself only if the OS allows it, and is announced to the bridge on connect. The protocol never assumes a capability exists.
 - **Approval engine** (in `core/security`) sits between the session and every capability call. It cannot be bypassed by protocol messages.
 - **Outbox pattern.** Events are written to the local DB first, then sent, and removed only after the bridge acknowledges them. Nothing is lost when offline.
+- **Voice is local.** `SpeechToText` is an interface with swappable engines: Android's on-device `SpeechRecognizer` first (free, streaming partial results, en-IN/hi-IN), whisper.cpp on-device later (offline, better with mixed languages). The transcript lands in the input box for editing before it is sent; auto-send is optional. Replies can be spoken with the platform TTS (free).
+- **Media is prepared on the device.** Images are downscaled (long edge ≤ 1568 px, enough for Claude vision) and location metadata is stripped before upload. Long PDFs prompt for a page range.
 
 ### 2.4 Wake path
 
@@ -163,6 +186,40 @@ sequenceDiagram
     B-->>H: tool result
 ```
 
+### 3.4 Group chat turn (conductor routing)
+
+```mermaid
+sequenceDiagram
+    participant U as You (app)
+    participant B as Bridge (group router)
+    participant M as Meep (conductor profile)
+    participant S as Scout (cheap profile)
+    U->>B: chat.send(group="trip", "Plan Goa under ₹15k")
+    B->>M: transcript + message (speaker-labelled)
+    M-->>B: "@Scout find flights 14–17 Nov" + own reply
+    B-->>U: chat.delta/done (Meep)
+    B->>S: transcript + mention (reply 1 of max 3)
+    S-->>B: "Cheapest return ₹4,200 …"
+    B-->>U: chat.delta/done (Scout)
+    B->>M: Scout's answer (reply 2 of max 3)
+    M-->>B: final plan + itinerary.pdf
+    B-->>U: chat.done (Meep), usage and group spend
+```
+
+### 3.5 Multimodal routing
+
+| Input | Path | Notes |
+|---|---|---|
+| Photo / screenshot | Device downscales and strips GPS → blob → agent | Claude models read images directly |
+| PDF | Blob → agent | Claude reads text and layout; cost scales with pages |
+| Voice | On-device speech-to-text → text | No audio leaves the device by default |
+| Audio file | On-device or server transcription → text | Opt-in |
+| Video | Sampled frames → images, plus transcribed audio | Sample sparingly; cost adds up |
+| Image generation (output) | Agent's image tool (e.g. an OpenRouter or FAL image model) → blob → chat | Needs an image provider configured in Hermes |
+| Files (output) | Agent writes in its sandbox → blob → downloadable card | — |
+
+If the selected agent lacks a modality, the client warns, or the conductor delegates that part to a capable worker. Hermes can also use a separate (cheaper) model for its auxiliary vision tasks.
+
 ## 4. The agent-facing MCP surface (fixed)
 
 The tool list is **fixed and independent of which devices are connected**. In Hermes, changing the tool set invalidates the provider prompt cache, so dynamic per-device tools would make every turn more expensive.
@@ -183,7 +240,8 @@ The tool list is **fixed and independent of which devices are connected**. In He
 
 | Where | What | Protection |
 |---|---|---|
-| Bridge SQLite | Devices, public keys, event store (retention configurable, default 30 days), offline queue, audit log | File permissions 0600. Optional SQLCipher. |
+| Bridge SQLite | Devices, public keys, event store (retention configurable, default 30 days), offline queue, audit log, groups and group transcripts, soul version history, spend counters | File permissions 0600. Optional SQLCipher. |
+| Bridge config | Agent registry (`agents.yaml`: endpoints, keys via env vars, roles, modalities, cost tiers) | Mode 0600; keys never sent to devices |
 | Device DB | Rules, chat history cache, event outbox, approval history | SQLCipher, key wrapped by OS keystore |
 | Device keystore | Device private key (ECDSA P-256) | Android Keystore (StrongBox if available), Secure Enclave, Windows CNG/TPM, Linux Secret Service |
 
@@ -212,8 +270,12 @@ talaria/
 
 ## 8. Open questions
 
-1. **Chat path:** proxy chat through the bridge (one credential per device; current plan) or let clients use the Hermes dashboard WebSocket directly (richer session features)?
-2. **Event delivery to Hermes:** webhook-per-event (current plan) or a Hermes plugin that injects events into an existing session?
-3. **Relay for iOS push:** self-hosted relay with the user's own Apple account, or skip background push on iOS?
-4. **Rule engine scope:** how far beyond trigger → action do we go (loops, variables) before it becomes a programming language?
-5. **Name:** "Talaria" is a placeholder. Check trademarks before 1.0.
+Decided: **chat goes through the bridge** (devices hold no agent keys; one credential per device).
+
+1. **Event delivery to Hermes:** webhook-per-event (current plan) or a Hermes plugin that injects events into an existing session?
+2. **Relay for iOS push:** self-hosted relay with the user's own Apple account, or skip background push on iOS?
+3. **Rule engine scope:** how far beyond trigger → action do we go (loops, variables) before it becomes a programming language?
+4. **Per-task worker models:** is Kanban across profiles enough, or should the conductor be able to pick a model per `delegate_task` call (needs Hermes support)?
+5. **Soul editing:** keep it bridge-opt-in only, or also require confirming on the terminal?
+6. **Group transcript retention** and whether group context should be summarised to control cost in long-running groups.
+7. **Name:** "Talaria" is a placeholder. Check trademarks before 1.0.

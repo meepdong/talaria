@@ -27,7 +27,12 @@ Talaria turns your phone, laptop, and (later) watch or smart glasses into **devi
 
 ## What you can do with it
 
-- **Chat** with your agent from a native app (replaces Telegram-as-UI).
+- **Pair securely** by scanning a QR code in your terminal, or by pasting a link on devices without cameras, then confirming a matching code.
+- **See connection health at a glance**: network, bridge, and each agent, with clear fixes when something breaks.
+- **Chat** with your agent from a native app (replaces Telegram-as-UI), by text or **voice** (speech-to-text runs on the phone for free), with **photos, PDFs and files** attached.
+- **Several agents, each with its own soul**: a personal assistant, a coder, a cheap researcher. Open any agent's profile to read its SOUL.md, model, tools and spend.
+- **Group chats with your agents, WhatsApp-style**: a conductor agent hands tasks to others, with reply caps and daily budgets so it never runs away.
+- **Watch multi-agent workflows live**: a strong conductor delegates to cheap worker models, and you see every worker's task, model, status and cost.
 - **Notifications on your terms**: the agent pushes alerts into your own channels, priorities and sounds, with reply buttons.
 - **Device-aware automation**: "when a bank SMS says *debited*, log the expense and tell me if I've spent over ₹2,000 today." Rules run on the device; the agent can *propose* rules in plain language, and you approve them.
 - **Phone as a sensor**: location triggers, filtered notification forwarding, battery and connectivity state.
@@ -70,7 +75,8 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Talaria Node Protocol v0.1 draft: pairing, auth, messages, capabilities, rules, errors |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Capability catalog and per-platform support matrix |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, permission tiers, privacy controls |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M7 with exit criteria |
+| [docs/UI.md](docs/UI.md) | Screen sketches: pairing, status, chats, group info, agent profiles, workflow view |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones with exit criteria (pairing → status → chat → multi-agent → groups → workflows → device features) |
 
 ## License
 

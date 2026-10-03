@@ -79,7 +79,22 @@ Legend: ✅ supported · ⚠️ partial or with caveats · ❌ not possible · �
 | Relay glasses | 🔜 Vendor SDKs via the phone | ❌ | ❌ | 🔜 |
 | Wake push | ✅ ntfy / UnifiedPush | ✅ (persistent socket) | ✅ (persistent socket) | ⚠️ APNs via relay |
 
-## 3. Platform notes
+## 3. Client features per platform
+
+These are app features rather than capabilities the agent can call.
+
+| Feature | Android | Windows | Linux | iOS |
+|---|---|---|---|---|
+| Pair by QR scan | ✅ CameraX + ZXing (no Google dependency) | ⚠️ Webcam, rarely used | ⚠️ Webcam, rarely used | ✅ |
+| Pair by link / code | ✅ `talaria://` deep link | ✅ Scheme handler + paste box | ✅ Scheme handler + paste box | ✅ |
+| On-device speech-to-text | ✅ `SpeechRecognizer` on-device (API 31+), whisper.cpp later | ⚠️ `Windows.Media.SpeechRecognition` or whisper.cpp | ⚠️ whisper.cpp / Vosk | ✅ `SFSpeechRecognizer` (on-device mode) |
+| Spoken replies (TTS) | ✅ | ✅ | ⚠️ | ✅ |
+| Attach photo / PDF / file | ✅ Photo picker, SAF | ✅ | ✅ | ✅ |
+| Image downscale + GPS strip | ✅ | ✅ | ✅ | ✅ |
+| Agent / group chats, agent profiles | ✅ | ✅ | ✅ | ✅ |
+| Workflow view | ✅ | ✅ | ✅ | ✅ |
+
+## 4. Platform notes
 
 ### Android (reference platform)
 - **Battery management is the number-one reliability risk.** OnePlus/OxygenOS, Xiaomi, Oppo, Vivo, Realme and Samsung stop background apps aggressively. Onboarding MUST walk through: exclusion from battery optimisation, autostart, "lock in recents", and on OnePlus, the per-app battery setting "Allow background activity". See dontkillmyapp.com for vendor steps.

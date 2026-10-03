@@ -21,6 +21,10 @@ Talaria gives an AI agent access to personal devices. That is only acceptable if
 | T7 | **Event injection into the agent** | A crafted notification text says "ignore previous instructions" | The bridge labels payloads as untrusted; Hermes webhook payloads are treated as data; prompts quote them as data |
 | T8 | **Replay / impersonation** | Reusing a captured auth message | Nonces from both sides, timestamps within ±120 s, signatures bound to `bridge_id` and both nonces |
 | T9 | **Supply chain** | A malicious dependency in the app | Minimal dependencies, lockfiles, reproducible builds as a goal, signed releases with published checksums |
+| T10 | **Leaked pairing QR code or link** | The QR code is visible on a screen share; the link is pasted in the wrong chat | Single-use token, 5-minute expiry, secret kept in the URL fragment, and **SAS confirmation on the terminal**: nothing pairs without the operator approving matching codes |
+| T11 | **Runaway cost** | Agents ping-pong in a group; a workflow spawns many workers | Per-turn agent reply cap, group and workflow budgets enforced by the bridge, lower `max_concurrent_children`, live spend shown in the app |
+| T12 | **Soul tampering** | Someone with a stolen, unlocked phone rewrites an agent's personality | Soul editing off by default (`allow_soul_edit`), revision checks, full version history on the bridge, app lock required for edits |
+| T13 | **Metadata leaks in attachments** | A photo reveals your home location | GPS/EXIF stripped on the device by default; per-message opt-out only |
 
 ## 3. Safe defaults
 
@@ -31,6 +35,10 @@ Talaria gives an AI agent access to personal devices. That is only acceptable if
 - Notification and SMS forwarding are **allow-list only**. There is no "forward everything" option in the UI.
 - **OTP redaction is always on:** any number of 4–8 digits near words like *OTP, code, verification, passcode* (and common Hindi equivalents) is replaced with `[redacted]` before leaving the device. It cannot be turned off remotely.
 - The bridge listens on localhost plus the private-network interface only. Startup warns loudly if it is bound to a public address.
+- Pairing always requires **terminal approval with matching codes**.
+- Agent API keys live only in the bridge configuration. Devices never receive them.
+- Groups start with `max_agent_replies_per_turn: 3`, `agent_to_agent: mention_only` and a daily budget.
+- Images are downscaled and stripped of location metadata before upload.
 
 ## 4. Privacy
 
@@ -56,7 +64,7 @@ Tier 2 approvals on a locked device require unlocking (biometric or PIN).
 |---|---|
 | Device private key | OS keystore, non-exportable |
 | Bridge private key | `~/.config/talaria/bridge.key`, mode 0600 |
-| Hermes API key | Bridge environment only; **never sent to devices** |
+| Hermes API keys (one per agent/profile) | Bridge environment only; **never sent to devices** |
 | MCP token, webhook secret | Bridge and Hermes `.env` files, mode 0600 |
 
 ## 7. Reporting vulnerabilities
