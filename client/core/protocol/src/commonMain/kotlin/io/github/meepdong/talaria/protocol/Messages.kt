@@ -56,6 +56,14 @@ object Tnp {
         put("result", value)
     }
 
+    fun error(id: JsonElement, code: Int, message: String): JsonObject = base {
+        put("id", id)
+        put("error", buildJsonObject {
+            put("code", code)
+            put("message", message)
+        })
+    }
+
     fun encode(msg: JsonObject): String = msg.toString()
 
     /** Parse one text frame, checking the JSON-RPC and TNP markers. */
