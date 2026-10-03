@@ -54,9 +54,9 @@ Everything is stored in `~/.talaria` (`%USERPROFILE%\.talaria` on Windows), or `
 - `bridge.db`: devices, pairing tokens and pending requests (SQLite).
 - `agents.json` (optional): agents whose health the status report shows. The bridge reads it at start, so restart after editing it:
   ```json
-  {"agents": [{"id": "hermes", "name": "Hermes", "health_url": "http://127.0.0.1:8642/health"}]}
+  {"agents": [{"id": "hermes", "name": "Hermes", "health_url": "http://127.0.0.1:9119/api/status"}]}
   ```
-  Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON `status` says otherwise), any other HTTP status is `degraded`, and no answer is `offline`.
+  Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON says otherwise, through `status` or Hermes's `gateway_state`), any other HTTP status is `degraded`, and no answer is `offline`.
 
 ## Commands
 

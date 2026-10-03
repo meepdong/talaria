@@ -4,7 +4,10 @@ Agents are listed in `agents.json` in the bridge home. In M1 the bridge only che
 each agent's health URL answers; chat and the full agent registry come in M2.
 
     {"agents": [{"id": "hermes", "name": "Hermes",
-                 "health_url": "http://127.0.0.1:8642/health"}]}
+                 "health_url": "http://127.0.0.1:9119/api/status"}]}
+
+Any 2xx answer is up. A JSON body can say otherwise with `status`, or, as Hermes's
+dashboard does, with `gateway_running` and `gateway_state`.
 """
 
 from __future__ import annotations
@@ -65,6 +68,10 @@ def http_probe(url: str, timeout_s: float) -> dict:
         status = info.get("status")
         if isinstance(status, str) and status.lower() not in HEALTHY_WORDS:
             result = {"state": "degraded", "detail": f"reports status {status!r}"}
+        # Hermes's dashboard (/api/status) answers while its gateway is down, so check that too.
+        gateway = info.get("gateway_state")
+        if info.get("gateway_running") is False or (isinstance(gateway, str) and gateway != "running"):
+            result = {"state": "degraded", "detail": f"gateway is {gateway or 'not running'}"}
         model = info.get("model")
         if isinstance(model, str):
             result["model"] = model
