@@ -216,8 +216,8 @@ class ControllerTest {
         c.setSpeechInput(input)
         c.await<Screen.Chat> { it.tab == Tab.HOME && it.view.voice.canDictate }
         c.talk()
-        val talking = c.await<Screen.Chat> { it.view.voice.listening }
-        assertEquals(Tab.CHATS, talking.tab)
+        // page and voice are separate flows, so wait for both rather than the first frame that listens
+        val talking = c.await<Screen.Chat> { it.view.voice.listening && it.tab == Tab.CHATS }
         assertNull(talking.view.openId, "talking starts a new chat")
         input.listener!!.done("what's on today")
         val heard = c.await<Screen.Chat> { it.view.voice.dictation != null }.view.voice.dictation!!
