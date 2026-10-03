@@ -314,7 +314,7 @@ class TalariaController(
 
     /** A reply typed into a notification, sent without opening the app. */
     fun replyFromNotification(conversationId: String, text: String) {
-        chat?.send(text, conversationId)
+        chat?.send(text, conversationId = conversationId)
     }
 
     private fun currentName(): String = when (val m = mode.value) {
