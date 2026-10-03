@@ -108,6 +108,7 @@ class TalariaController(
         val conversationOpen: Boolean = false,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
+        val modelQuery: String? = null,
     )
 
     private val mode = MutableStateFlow<Mode>(Mode.Connect(defaultDeviceName))
@@ -408,7 +409,7 @@ class TalariaController(
             return
         }
         if (query.isBlank()) {
-            c.notice("Pick a model from the chip at the top of the chat, or type /model and part of its name")
+            openModelPicker()
             return
         }
         val all = options.providers.flatMap { p -> p.models.map { p.id to it } }
@@ -418,13 +419,22 @@ class TalariaController(
         when {
             matches.size == 1 -> pickModel(matches[0].first, matches[0].second)
             matches.isEmpty() -> c.notice("No model matches \"$query\"")
-            else -> c.notice("\"$query\" matches ${matches.size} models: " +
-                matches.take(5).joinToString { it.second.substringAfterLast('/') } + if (matches.size > 5) "…" else "")
+            else -> openModelPicker(query.trim())
         }
     }
 
     override fun pickModel(provider: String, model: String) {
+        page.update { it.copy(modelQuery = null) }
         chat?.pickModel(ModelChoice(provider, model))
+    }
+
+    override fun openModelPicker(query: String) {
+        chat?.let { if (it.state.value.models == null) it.loadModels() }
+        page.update { it.copy(modelQuery = query) }
+    }
+
+    override fun closeModelPicker() {
+        page.update { it.copy(modelQuery = null) }
     }
 
     override fun dismissAside(id: String) {
@@ -772,7 +782,7 @@ class TalariaController(
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
-                    x.serverPending).copy(voice = x.voice)
+                    x.serverPending).copy(voice = x.voice, modelPicker = x.page.modelQuery)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,

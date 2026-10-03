@@ -157,6 +157,9 @@ interface TalariaActions {
     fun setAutoSend(on: Boolean) {}
 
     fun pickModel(provider: String, model: String) {}
+    /** Open the model picker, filtered by [query]. */
+    fun openModelPicker(query: String = "") {}
+    fun closeModelPicker() {}
     fun dismissAside(id: String) {}
     fun closeStatus() {}
     fun retryMessage(key: String) {}

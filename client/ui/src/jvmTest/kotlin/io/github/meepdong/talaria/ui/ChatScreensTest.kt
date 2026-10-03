@@ -53,6 +53,7 @@ class ChatScreensTest {
         override fun stopSpeaking() { calls += "stop speaking" }
         override fun setReadAloud(on: Boolean) { calls += "read aloud $on" }
         override fun pickModel(provider: String, model: String) { calls += "model $provider $model" }
+        override fun openModelPicker(query: String) { calls += "picker $query" }
         override fun dismissAside(id: String) { calls += "dismiss $id" }
         override fun closeStatus() { calls += "close status" }
     }
@@ -236,7 +237,14 @@ class ChatScreensTest {
         v = v.copy(status = null)
         waitForIdle()
         onNodeWithTag("model").performClick()
+        v = v.copy(modelPicker = "") // the controller opens the picker
+        waitForIdle()
+        onNodeWithTag("model-anthropic/claude-sonnet-4").assertExists()
+        onNodeWithTag("model-search").performTextInput("gpt")
+        onNodeWithTag("model-anthropic/claude-sonnet-4").assertDoesNotExist()
         onNodeWithTag("model-openai/gpt-5").performClick()
+        v = v.copy(modelPicker = null)
+        waitForIdle()
         onNodeWithTag("dismiss-aside").performClick()
         onNodeWithTag("composer").performTextInput("/st")
         onNodeWithTag("command-status").assertExists()
@@ -245,7 +253,18 @@ class ChatScreensTest {
         onNodeWithTag("commands").assertDoesNotExist()
         onNodeWithTag("composer").performTextReplacement("/steer go on")
         onNodeWithTag("send").performClick()
-        assertEquals(listOf("close status", "model openrouter openai/gpt-5", "dismiss a-1", "send /steer go on"), actions.calls)
+        assertEquals(listOf("close status", "picker ", "model openrouter openai/gpt-5", "dismiss a-1", "send /steer go on"), actions.calls)
+    }
+
+    @Test
+    fun modelFilter() {
+        val groups = listOf(ModelGroup("anthropic", "Anthropic", listOf(
+            ModelItem("anthropic", "claude-haiku-4.5", "claude-haiku-4.5", false),
+            ModelItem("anthropic", "claude-sonnet-5.5", "claude-sonnet-5.5", true))))
+        assertEquals(listOf("claude-haiku-4.5"), filterModels(groups, " HAIKU ").single().models.map { it.model })
+        assertEquals(2, filterModels(groups, "anthropic").single().models.size, "the provider's name matches all its models")
+        assertEquals(emptyList(), filterModels(groups, "gpt"))
+        assertEquals(groups, filterModels(groups, ""))
     }
 
     @Test
