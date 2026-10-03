@@ -2,6 +2,7 @@ package io.github.meepdong.talaria.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,7 +32,7 @@ import androidx.compose.ui.unit.dp
 /** UI.md §1, left: pair with a link, or with a short code plus the server's address. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectScreen(screen: Screen.Connect, actions: TalariaActions) {
+fun ConnectScreen(screen: Screen.Connect, actions: TalariaActions, extras: @Composable ColumnScope.() -> Unit = {}) {
     var useCode by remember { mutableStateOf(false) }
     var link by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
@@ -48,6 +49,8 @@ fun ConnectScreen(screen: Screen.Connect, actions: TalariaActions) {
                 "or the short code if you can't copy from there.",
             style = MaterialTheme.typography.bodyMedium,
         )
+
+        extras()
 
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(

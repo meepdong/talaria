@@ -99,3 +99,16 @@ jobs:
           name: talaria-desktop-${{ runner.os }}
           path: client/desktopApp/build/compose/binaries/main/app/
           if-no-files-found: error
+
+      # The Android debug APK, signed with the repo's fixed debug key so each build
+      # installs over the last one. Install it with adb install -r or from the phone.
+      - name: Build the Android app
+        if: runner.os == 'Linux'
+        run: ./gradlew :androidApp:assembleDebug --console=plain
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: talaria-android-debug
+          path: client/androidApp/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

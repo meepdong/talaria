@@ -10,7 +10,7 @@ Kotlin Multiplatform. The Android app and the Windows/Linux desktop app share ev
 | `core/session` | **built** | The connection: pairing with the SAS, the signed handshake, answering and sending pings, `status.get`, reconnecting after 1, 2, 4 … 60 s, the connection log, saved pairing, and the Network row check |
 | `ui` | **built** | Compose Multiplatform screens: Connect (link, or short code plus address), Confirm code (digits, emoji, countdown), and Connection status (Network, Bridge and agent rows, test button, connection log). `TalariaController` runs pairing and the session behind them. |
 | `desktopApp` | **built** | The Windows and Linux app: the screens in a window, a tray icon whose dot shows the state, and start at login |
-| `androidApp` | later in M1 | QR scan, foreground service, battery onboarding |
+| `androidApp` | **built** | The Android app (10 and up): the same screens, QR scanning (CameraX and ZXing), the device key in the Android Keystore, a foreground service that holds the session, and battery setup for OnePlus |
 
 `core/protocol` has one JVM target, which both apps use: Android provides the same `java.security` APIs (SHA-256, ECDSA P-256). Signing goes through the `Signer` interface, so the device key can stay in the platform key store.
 
@@ -35,6 +35,18 @@ Or build the app folder, which carries its own Java runtime: `gradlew :desktopAp
 - **Forget this server** deletes the pairing and the device key, so the next pairing uses a fresh key. Revoke the old device on the server with `talaria devices revoke <id>`.
 
 Only one copy runs at a time; a second one says so and exits.
+
+## Android app
+
+CI builds a debug APK on every push: download `talaria-android-debug` from the run's artifacts and install it (`adb install -r talaria-android-debug.apk`, or open the file on the phone). Every build is signed with the same debug key from `androidApp/debug.keystore`, so a new build installs over the old one and keeps the pairing. Locally: `gradlew :androidApp:assembleDebug` with the Android SDK installed.
+
+- **Pairing:** tap **Scan the QR code** and point the phone at the code `talaria pair` prints, paste the link, type the short code and address, or tap a `talaria://pair#…` link on the phone.
+- **Key:** a P-256 key generated in the Android Keystore, in StrongBox when the phone has it. It can't be exported.
+- **Background:** once paired, a foreground service (type `specialUse`) keeps the session open, with a quiet notification that shows the state and a Reconnect button. It retries as soon as a network comes back.
+- **Battery:** the status screen asks to turn off battery optimisation for Talaria, and on OnePlus, OPPO and realme it links to App info for **Allow background activity**. Without both, OxygenOS stops the app in the background.
+- **Files:** `bridge.json` and `connection.log` are in the app's private storage.
+
+The shared screens are compiled into the app from `ui/src`, because `core/session` only has a JVM target so far.
 
 ## Tests
 
