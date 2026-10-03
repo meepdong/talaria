@@ -25,7 +25,8 @@ Status: **draft, unstable**. Everything here may change before v1.0. The key wor
 | Endpoint | `wss://<bridge-host>/tnp` |
 | Framing | One JSON-RPC 2.0 message per text frame, UTF-8 |
 | Max frame | 1 MiB. Larger payloads use `blob.upload` (§9). |
-| Network | A private network (e.g. Tailscale) is RECOMMENDED. The bridge SHOULD NOT be exposed to the public internet. |
+| Network | A private network (Tailscale, Headscale, plain WireGuard or similar) is RECOMMENDED. The bridge SHOULD NOT be exposed to the public internet. |
+| TLS certificate | Either publicly trusted (e.g. via `tailscale serve`) or **self-signed and pinned**: the pairing payload carries `tls_spki_sha256`, and clients MUST then accept only that certificate key |
 
 TLS protects the channel. **Authentication does not rely on TLS**: both sides prove their identity with signatures (§3), so a misconfigured proxy cannot impersonate either side.
 
@@ -58,7 +59,8 @@ Pairing payload:
 ```json
 {"tnp": 0, "url": "wss://meep-vps.tailnet.ts.net/tnp",
  "bridge_id": "K7Q2…", "bridge_pk": "<base64 SPKI>",
- "pair_token": "<128-bit random, base64url>", "exp": 1790000000}
+ "pair_token": "<128-bit random, base64url>", "exp": 1790000000,
+ "tls_spki_sha256": "<optional; present when the bridge uses a self-signed certificate>"}
 ```
 
 - The token is **single-use** and expires in **5 minutes** (configurable, max 15).
@@ -74,7 +76,7 @@ Flow:
    The operator approves only if the codes match. This stops someone who saw the QR code or link (on a screen share, in a screenshot) from pairing a device of their own.
 5. The bridge consumes the token, stores the device public key, and replies `pair.accepted`. Without approval within 2 minutes it replies `pair.rejected`.
 
-Prerequisite: the device must be able to reach the bridge (e.g. Tailscale is running). If it cannot, the client shows "Can't reach your server — is Tailscale on?" rather than a generic error.
+Prerequisite: the device must be able to reach the bridge over the private network (Tailscale, Headscale, WireGuard…). If it cannot, the client shows "Can't reach your server — is your private network (Tailscale/WireGuard) on?" rather than a generic error.
 
 Management: `talaria devices list` and `talaria devices revoke <device_id>`. Revocation closes any open session immediately and the key is rejected from then on.
 

@@ -18,7 +18,7 @@ flowchart LR
         B --- DB
     end
 
-    A & W & I -- "TNP over WebSocket (wss)<br/>private network, e.g. Tailscale" --> B
+    A & W & I -- "TNP over WebSocket (wss)<br/>private network: Tailscale / Headscale / WireGuard" --> B
     H -- "MCP (streamable HTTP, localhost)" --> B
     B -- "HMAC-signed webhook (device events)" --> H
     B -- "chat proxy (OpenAI-compatible API)" --> H
@@ -138,6 +138,24 @@ client/
 ### 2.4 Wake path
 
 Mobile OSes kill idle sockets. When a TTL command is queued for a disconnected device, the bridge sends a **content-free wake push**: ntfy/UnifiedPush on Android (no Google dependency), and APNs on iOS (needs a relay holding Apple credentials; see ROADMAP M7). The device reconnects and pulls its queue. **No payload ever travels through the push provider.**
+
+### 2.5 Networking options
+
+Talaria needs only one thing from the network: **devices can reach the bridge's `wss://` endpoint privately**. Security does not depend on the network layer, because TNP authenticates both sides with signatures and the device pins the bridge key at pairing (PROTOCOL §3). Any of these work:
+
+| Option | What it is | Pros | Cons | Best for |
+|---|---|---|---|---|
+| **Tailscale** ⭐ (default in docs) | WireGuard mesh with a hosted coordination server | Login-and-go setup; works on networks that block UDP (falls back to encrypted HTTPS relays); direct device-to-device mesh; MagicDNS names; **real HTTPS certificates** via `tailscale serve` | A third-party coordination server knows device names and public keys (not traffic) | Most users; development |
+| **Headscale** | Self-hosted, open-source Tailscale coordination server; uses the normal Tailscale apps | Tailscale's convenience with **no company server** | One more service to run and update on the VPS | Self-hosters who want convenience |
+| **Plain WireGuard** | Hand-configured WireGuard tunnels (hub-and-spoke via the VPS) | No third party at all; minimal and fast; WireGuard apps can import configs from a QR code | Manual keys and configs; one open UDP port; **fails on networks that block UDP**; no names or real certificates by default | Purists; phone ↔ VPS only |
+| Other mesh VPNs (e.g. NetBird) | Similar to Tailscale/Headscale | — | — | Users already running them |
+| Public internet + TLS | Bridge on a public domain | No VPN app needed | Exposes the bridge to scanners; **not recommended** | Not supported in v1 |
+
+**TLS without Tailscale certificates.** With Headscale or plain WireGuard there is usually no public certificate. The bridge then uses a **self-signed certificate**, and the pairing payload carries its fingerprint (`tls_spki_sha256`, PROTOCOL §3.2). The client pins it, so no certificate authority is involved and nothing extra is needed from the user.
+
+**Client diagnostics.** The connection status screen (M1) says "Can't reach your server — is your private network (Tailscale/WireGuard) on?" and offers a VPN-specific hint when the bridge address is a Tailscale (`*.ts.net`, `100.64.0.0/10`) or WireGuard address.
+
+**Always-on.** On Android, the chosen VPN app should be set as **Always-on VPN** so the assistant and notifications work without manual reconnecting.
 
 ## 3. Key data flows
 
@@ -347,7 +365,7 @@ The tool list is **fixed and independent of which devices are connected**. In He
 | Bridge | Python 3.12+, `websockets`/Starlette, official `mcp` Python SDK, SQLite | Same ecosystem as Hermes; simple to self-host |
 | Clients | Kotlin Multiplatform, Compose Multiplatform, Ktor client, SQLDelight | Native Android power plus shared logic and UI on desktop and iOS |
 | Scripting (rules) | Embedded JS engine (e.g. QuickJS via a KMP binding), sandboxed | Small and safe; no file or network access except declared actions |
-| Network | Tailscale recommended (`tailscale serve` provides HTTPS) | No public ports; WireGuard encryption; real TLS certificates |
+| Network | Any private network: Tailscale (default), Headscale or plain WireGuard (§2.5) | No public ports; WireGuard encryption; Tailscale adds real TLS certificates, others use pinned self-signed certificates |
 | Distribution | GitHub Releases, F-Droid, Obtainium (Android); MSI/EXE, DEB/RPM (desktop) | Avoids Play Store restrictions on SMS and notification access |
 | CI | GitHub Actions (Linux for Android/desktop, macOS runners for iOS; free for public repos) | Builds without a local Mac |
 
