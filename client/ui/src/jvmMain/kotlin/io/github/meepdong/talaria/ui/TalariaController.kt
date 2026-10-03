@@ -5,6 +5,7 @@ import io.github.meepdong.talaria.chat.ChatRepository
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.FinishedReply
 import io.github.meepdong.talaria.chat.MessageState
+import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
@@ -323,7 +324,7 @@ class TalariaController(
     }
 
     override fun pickModel(provider: String, model: String) {
-        chat?.pickModel(io.github.meepdong.talaria.chat.ModelChoice(provider, model))
+        chat?.pickModel(ModelChoice(provider, model))
     }
 
     override fun dismissAside(id: String) {
