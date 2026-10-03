@@ -120,4 +120,6 @@ data class FinishedReply(
     val text: String,
     val state: MessageState,
     val error: String?,
+    /** The question was sent from this device, so this device may read the answer aloud. */
+    val fromThisDevice: Boolean = false,
 )

@@ -20,6 +20,7 @@ import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.security.desktop.DesktopKeyStore
 import io.github.meepdong.talaria.session.ConnectionLog
 import io.github.meepdong.talaria.session.FilePairingStore
+import io.github.meepdong.talaria.ui.Prefs
 import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.TalariaController
@@ -62,7 +63,10 @@ fun main(args: Array<String>) {
         defaultDeviceName = defaultDeviceName(),
         log = ConnectionLog(ConnectionLog.fileSink(logFile)),
         imageDecoder = { bytes -> Image.makeFromEncoded(bytes).toComposeImageBitmap() },
+        speechOutput = DesktopVoice.forThisComputer(windows),
+        prefs = Prefs.FileBacked(File(dataDir, "settings.properties")),
     )
+    controller.setSpeechInput(VoskInput.forThisComputer(File(dataDir, "speech"), scope))
     controller.setFilePicker { photos ->
         val files = Attachments.pick(photos)  // on the UI thread: the dialog is modal
         if (files.isNotEmpty()) {

@@ -7,6 +7,7 @@ import android.os.Build
 import android.provider.Settings
 import io.github.meepdong.talaria.session.ConnectionLog
 import io.github.meepdong.talaria.session.FilePairingStore
+import io.github.meepdong.talaria.ui.Prefs
 import io.github.meepdong.talaria.ui.TalariaController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,8 @@ class TalariaApplication : Application() {
             defaultDeviceName = deviceName(),
             log = ConnectionLog(ConnectionLog.fileSink(logFile)),
             imageDecoder = { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() },
+            speechOutput = AndroidVoice(this),
+            prefs = SharedPrefs(getSharedPreferences("settings", MODE_PRIVATE)),
         )
         controller.start()
     }
@@ -41,4 +44,9 @@ class TalariaApplication : Application() {
     private fun deviceName(): String =
         (Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() }
             ?: "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}").take(64)
+}
+
+private class SharedPrefs(private val prefs: android.content.SharedPreferences) : Prefs {
+    override fun get(key: String, default: Boolean) = prefs.getBoolean(key, default)
+    override fun set(key: String, value: Boolean) = prefs.edit().putBoolean(key, value).apply()
 }

@@ -22,6 +22,8 @@ kotlin {
             implementation(libs.compose.material3)
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.jna.platform)
+            // offline speech-to-text; its own JNA 5.7 resolves up to ours
+            implementation(libs.vosk)
         }
         jvmTest.dependencies {
             implementation(kotlin("test"))

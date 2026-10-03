@@ -77,6 +77,17 @@ interface TalariaActions {
     /** Pick photos ([photos] true) or any files to send with the next message. */
     fun attachFiles(photos: Boolean) {}
     fun removeAttachment(index: Int) {}
+
+    /** 🎤: start dictating, or stop and keep what was heard. */
+    fun toggleDictation() {}
+    /** The composer has taken dictation [id]. */
+    fun dictationTaken(id: Long) {}
+    fun speak(key: String, text: String) {}
+    fun stopSpeaking() {}
+    /** Read replies to messages sent from this device aloud. */
+    fun setReadAloud(on: Boolean) {}
+    /** Send dictated text as soon as it's heard, rather than leaving it to edit. */
+    fun setAutoSend(on: Boolean) {}
     fun retryMessage(key: String) {}
     fun stopReply(turnId: String) {}
     fun loadOlder() {}

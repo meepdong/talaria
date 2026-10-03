@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import io.github.meepdong.talaria.chat.ChatRepository
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.FinishedReply
+import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
@@ -76,6 +77,9 @@ class TalariaController(
     private val networkEveryMs: Long = 5_000,
     /** Decodes photo bytes for thumbnails; each platform has its own image codecs. */
     imageDecoder: (ByteArray) -> ImageBitmap? = { null },
+    /** Reads replies aloud; null where the platform has no voice. */
+    private val speechOutput: SpeechOutput? = null,
+    private val prefs: Prefs = Prefs.Memory(),
 ) : TalariaActions {
     private sealed interface Mode {
         data class Connect(val name: String, val error: String? = null, val busy: Boolean = false) : Mode
@@ -101,6 +105,13 @@ class TalariaController(
      * the app can't pick files, which hides the 📎 button.
      */
     private val picker = MutableStateFlow<((photos: Boolean) -> Unit)?>(null)
+
+    /** Speech-to-text, set while the app can listen (on Android, while it's on screen). */
+    private val speechInput = MutableStateFlow<SpeechInput?>(null)
+    private val voice = MutableStateFlow(
+        VoiceView(readAloud = prefs.get(PREF_READ_ALOUD, false), autoSend = prefs.get(PREF_AUTO_SEND, false)),
+    )
+    private var dictations = 0L
     private var pairJob: Job? = null
     private var started = false
 
@@ -113,11 +124,13 @@ class TalariaController(
 
     private data class Extras(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
-        val pending: List<OutgoingFile>, val canAttach: Boolean,
+        val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
     )
 
-    private val extras = combine(combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) }, pending, picker) { q, files, pick ->
-        Extras(q.a, q.b, q.c, q.d, files, pick != null)
+    private val extras = combine(
+        combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) }, pending, picker, voice, speechInput,
+    ) { q, files, pick, v, input ->
+        Extras(q.a, q.b, q.c, q.d, files, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null))
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -149,6 +162,11 @@ class TalariaController(
             }
         }
         scope.launch {
+            replies.collect { r ->
+                if (r.fromThisDevice && r.state == MessageState.DONE && voice.value.readAloud) say(READ_ALOUD_KEY, r.text)
+            }
+        }
+        scope.launch {
             val saved = withContext(io) { runCatching { pairingStore.load() }.getOrNull() } ?: return@launch
             val key = try {
                 withContext(io) { keyStore.load() }
@@ -167,6 +185,8 @@ class TalariaController(
     /** Stop the session, for example when the app quits. */
     fun close() {
         pairJob?.cancel()
+        speechInput.value?.stop()
+        speechOutput?.stop()
         (mode.value as? Mode.Connected)?.let {
             it.chat.stop()
             it.client.stop()
@@ -278,6 +298,75 @@ class TalariaController(
         pending.update { (it + fit).take(OutgoingFile.MAX_PER_MESSAGE) }
     }
 
+    /** The platform's speech-to-text: set while the app can listen, null otherwise. */
+    fun setSpeechInput(input: SpeechInput?) {
+        if (input == null) {
+            speechInput.value?.stop()
+            voice.update { it.copy(listening = false, heard = "") }
+        }
+        speechInput.value = input
+    }
+
+    override fun toggleDictation() {
+        val input = speechInput.value ?: return
+        if (voice.value.listening) {
+            input.stop()
+            return
+        }
+        stopSpeaking()
+        voice.update { it.copy(listening = true, heard = "") }
+        input.start(object : SpeechInput.Listener {
+            override fun partial(text: String) {
+                voice.update { if (it.listening) it.copy(heard = text) else it }
+            }
+
+            override fun done(text: String) {
+                val heard = text.trim()
+                voice.update { v ->
+                    v.copy(listening = false, heard = "",
+                        dictation = if (heard.isEmpty()) v.dictation else Dictation(++dictations, heard, v.autoSend))
+                }
+            }
+
+            override fun failed(message: String) {
+                voice.update { it.copy(listening = false, heard = "") }
+                chat?.notice(message)
+            }
+        })
+    }
+
+    override fun dictationTaken(id: Long) {
+        voice.update { if (it.dictation?.id == id) it.copy(dictation = null) else it }
+    }
+
+    override fun speak(key: String, text: String) {
+        if (voice.value.speakingKey == key) stopSpeaking() else say(key, text)
+    }
+
+    private fun say(key: String, text: String) {
+        val out = speechOutput ?: return
+        val words = speakable(text)
+        if (words.isEmpty()) return
+        voice.update { it.copy(speakingKey = key) }
+        out.speak(words) { voice.update { if (it.speakingKey == key) it.copy(speakingKey = null) else it } }
+    }
+
+    override fun stopSpeaking() {
+        speechOutput?.stop()
+        voice.update { it.copy(speakingKey = null) }
+    }
+
+    override fun setReadAloud(on: Boolean) {
+        prefs.set(PREF_READ_ALOUD, on)
+        voice.update { it.copy(readAloud = on) }
+        if (!on && voice.value.speakingKey == READ_ALOUD_KEY) stopSpeaking()
+    }
+
+    override fun setAutoSend(on: Boolean) {
+        prefs.set(PREF_AUTO_SEND, on)
+        voice.update { it.copy(autoSend = on) }
+    }
+
     override fun retryMessage(key: String) {
         chat?.retry(key)
     }
@@ -375,7 +464,8 @@ class TalariaController(
                 Screen.Status(status.copy(canGoBack = true))
             } else {
                 Screen.Chat(chatView(l.chat ?: ChatState(), x.page.conversationOpen,
-                    state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images), status)
+                    state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images)
+                    .copy(voice = x.voice), status)
             }
         }
     }
@@ -386,6 +476,12 @@ class TalariaController(
 
         /** How long to wait for the decision, a little past the bridge's own limit. */
         const val DECISION_TIMEOUT_MS = 150_000L
+
+        const val PREF_READ_ALOUD = "voice.read_aloud"
+        const val PREF_AUTO_SEND = "voice.auto_send"
+
+        /** [VoiceView.speakingKey] while a reply is read aloud on its own. */
+        const val READ_ALOUD_KEY = "read-aloud"
 
         /** What people type for a short-code pairing: a host, host:port, or a wss:// URL. */
         fun bridgeUrl(address: String): String? {

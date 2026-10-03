@@ -145,7 +145,7 @@ private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Bool
             Text(view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
             if (showBack) ConnectionDot(view, actions)
-            view.openId?.let { id -> ConversationMenu(id, actions, onRename = { renaming = true }) }
+            ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
         }
         HorizontalDivider()
 
@@ -171,12 +171,24 @@ private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Bool
 }
 
 @Composable
-private fun ConversationMenu(id: String, actions: TalariaActions, onRename: () -> Unit) {
+private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActions, onRename: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    if (id == null && !voice.canSpeak && !voice.canDictate) return
     Box {
         TextButton(onClick = { open = true }, modifier = Modifier.testTag("menu")) { Text("⋮") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false; confirmDelete = false }) {
+            if (voice.canSpeak) {
+                DropdownMenuItem(text = { Text((if (voice.readAloud) "✓ " else "") + "Read replies aloud") },
+                    modifier = Modifier.testTag("read-aloud"),
+                    onClick = { open = false; actions.setReadAloud(!voice.readAloud) })
+            }
+            if (voice.canDictate) {
+                DropdownMenuItem(text = { Text((if (voice.autoSend) "✓ " else "") + "Send dictation right away") },
+                    modifier = Modifier.testTag("auto-send"),
+                    onClick = { open = false; actions.setAutoSend(!voice.autoSend) })
+            }
+            if (id == null) return@DropdownMenu
             DropdownMenuItem(text = { Text("Rename") }, onClick = { open = false; onRename() })
             DropdownMenuItem(
                 text = { Text(if (confirmDelete) "Tap again to delete" else "Delete") },
@@ -244,14 +256,14 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                             Text(view.historyError, color = MaterialTheme.colorScheme.error)
                     }
                 }
-                items(view.messages, key = { it.key }) { m -> MessageBubble(m, actions) }
+                items(view.messages, key = { it.key }) { m -> MessageBubble(m, view.voice, actions) }
             }
         }
     }
 }
 
 @Composable
-private fun MessageBubble(m: MessageItem, actions: TalariaActions) {
+private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActions) {
     if (m.fromUser) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
             m.attachments.forEach { a ->
@@ -304,8 +316,15 @@ private fun MessageBubble(m: MessageItem, actions: TalariaActions) {
                 style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("reply-error"))
             ItemState.CANCELLED -> Text("Stopped", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> m.time?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                m.time?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (voice.canSpeak && m.text.isNotBlank()) {
+                    TextButton(onClick = { actions.speak(m.key, m.text) }, modifier = Modifier.testTag("speak-${m.key}")) {
+                        Text(if (voice.speakingKey == m.key) "■" else "🔊")
+                    }
+                }
             }
         }
     }
@@ -332,15 +351,31 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
     var text by remember { mutableStateOf("") }
     val ready = view.canSend && (text.isNotBlank() || view.pending.isNotEmpty())
     fun send() {
-        if (ready) {
+        if (view.canSend && (text.isNotBlank() || view.pending.isNotEmpty())) {
             actions.sendMessage(text)
             text = ""
         }
+    }
+    val voice = view.voice
+    // dictation lands in the composer, to edit before sending unless auto-send is on
+    LaunchedEffect(voice.dictation?.id) {
+        val d = voice.dictation ?: return@LaunchedEffect
+        text = listOf(text.trimEnd(), d.text).filter { it.isNotEmpty() }.joinToString(" ").take(32000)
+        actions.dictationTaken(d.id)
+        if (d.send) send()
     }
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
         view.composerHint?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(4.dp).testTag("composer-hint"))
+        }
+        if (voice.speakingKey != null) {
+            TextButton(onClick = actions::stopSpeaking, modifier = Modifier.testTag("stop-speaking")) { Text("🔊 Stop reading") }
+        }
+        if (voice.listening) {
+            Text("🎤 " + voice.heard.ifEmpty { "Listening…" }, style = MaterialTheme.typography.bodyMedium,
+                fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(4.dp).testTag("heard"))
         }
         if (view.pending.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp).testTag("pending"),
@@ -370,6 +405,11 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                         DropdownMenuItem(text = { Text("File") }, modifier = Modifier.testTag("attach-file"),
                             onClick = { menu = false; actions.attachFiles(photos = false) })
                     }
+                }
+            }
+            if (voice.canDictate) {
+                TextButton(onClick = actions::toggleDictation, modifier = Modifier.heightIn(min = 52.dp).testTag("dictate")) {
+                    Text(if (voice.listening) "■" else "🎤")
                 }
             }
             OutlinedTextField(
