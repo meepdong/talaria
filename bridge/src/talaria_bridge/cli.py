@@ -1,0 +1,243 @@
+"""`talaria` command: serve | pair | devices list | devices revoke."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import ipaddress
+import logging
+import os
+import socket
+import ssl
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from . import __version__
+from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
+from .protocol import keys
+from .protocol.encoding import b64u_encode, now
+from .protocol.pairing import format_short_code
+from .registry import Registry
+from .server import BridgeServer, ServerSettings
+
+TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def default_home() -> Path:
+    return Path(os.environ.get("TALARIA_HOME") or Path.home() / ".talaria")
+
+
+def open_home(home: Path) -> tuple[Registry, keys.PrivateKey]:
+    home.mkdir(parents=True, exist_ok=True)
+    return Registry(home / "bridge.db"), keys.load_or_create_private_key(home / "bridge_key.pem")
+
+
+def is_private_address(host: str) -> bool:
+    """True for loopback, private LAN and Tailscale (100.64.0.0/10) addresses."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not (ip.is_loopback or ip.is_private or ip in TAILSCALE_CGNAT):
+            return False
+    return bool(infos)
+
+
+def is_loopback(host: str) -> bool:
+    try:
+        return all(ipaddress.ip_address(i[4][0].split("%")[0]).is_loopback
+                   for i in socket.getaddrinfo(host, None))
+    except socket.gaierror:
+        return False
+
+
+def cert_spki_sha256(cert_path: Path) -> str:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    spki = cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return b64u_encode(hashlib.sha256(spki).digest())
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    registry, key = open_home(args.home)
+    settings = ServerSettings(host=args.host, port=args.port)
+    if args.dev:
+        if not is_loopback(args.host):
+            print("--dev serves plain ws:// and only on a loopback address such as 127.0.0.1.",
+                  file=sys.stderr)
+            return 2
+        url = args.url or f"ws://{args.host}:{args.port}/tnp"
+        pin = None
+    else:
+        if not (args.tls_cert and args.tls_key and args.url):
+            print("Without --dev the bridge needs --tls-cert, --tls-key and --url wss://…/tnp.\n"
+                  "To try it on this computer, run: talaria serve --dev", file=sys.stderr)
+            return 2
+        if not args.url.startswith("wss://"):
+            print("--url must start with wss://", file=sys.stderr)
+            return 2
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(args.tls_cert, args.tls_key)
+        settings.ssl = ctx
+        url = args.url
+        pin = cert_spki_sha256(Path(args.tls_cert)) if args.pin_cert else None
+    if not is_private_address(args.host):
+        print(f"WARNING: {args.host} is a public address. Talaria should only listen on "
+              "localhost or your private network (Tailscale/WireGuard).", file=sys.stderr)
+
+    registry.set_meta("url", url)
+    if pin:
+        registry.set_meta("tls_spki_sha256", pin)
+    else:
+        registry.db.execute("DELETE FROM meta WHERE key = 'tls_spki_sha256'")
+
+    bridge = BridgeServer(registry, key, settings)
+    print(f"Talaria bridge {__version__}")
+    print(f"  bridge id: {bridge.bridge_id}")
+    print(f"  listening: {url}  (data in {args.home})")
+    print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
+
+    async def run() -> None:
+        async with bridge.serve():
+            await asyncio.get_running_loop().create_future()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    return 0
+
+
+def print_qr(link: str) -> None:
+    import qrcode
+
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(link)
+    qr.make(fit=True)
+    qr.print_ascii(invert=True)
+
+
+def cmd_pair(args: argparse.Namespace) -> int:
+    registry, key = open_home(args.home)
+    url = args.url or registry.get_meta("url")
+    if not url:
+        print("Start the bridge once first (talaria serve), or pass --url.", file=sys.stderr)
+        return 2
+    new = create_pairing(registry, key, url=url, name=args.name, ttl_s=args.ttl,
+                         tls_spki_sha256=registry.get_meta("tls_spki_sha256"))
+    minutes, seconds = divmod(args.ttl, 60)
+    if not args.no_qr:
+        print_qr(new.link)
+        print("Scan with the Talaria app")
+    print(f"Paste this link (expires in {minutes}:{seconds:02d}, keep it private):")
+    print(f"  {new.link}")
+    print(f"or enter code {format_short_code(new.short_code)} with the bridge address {url}")
+    print("\nWaiting for the device…")
+
+    req = wait_for_request(registry, new.payload.pair_token, new.payload.exp)
+    if req is None:
+        print("The pairing link expired. Run talaria pair again.")
+        return 1
+    state = confirm_request(registry, req, timeout_s=APPROVAL_TIMEOUT_S)
+    if state == "approved":
+        print(f'Approved. "{req.device_name}" is paired as {req.device_id}.')
+        return 0
+    if state == "rejected":
+        print("Rejected. The link is used up. If the codes didn't match, someone else may "
+              "have the link: run talaria pair again and share the new one carefully.")
+    else:
+        print("Not paired: no decision in time. Run talaria pair again.")
+    return 1
+
+
+def fmt_time(ts: int | None) -> str:
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "never"
+
+
+def cmd_devices_list(args: argparse.Namespace) -> int:
+    registry, _ = open_home(args.home)
+    devices = registry.list_devices()
+    if not devices:
+        print("No paired devices. Pair one with: talaria pair --name \"My phone\"")
+        return 0
+    print(f"{'DEVICE ID':<27} {'NAME':<24} {'PLATFORM':<10} {'LAST SEEN':<17} STATUS")
+    for d in devices:
+        status = f"revoked {fmt_time(d.revoked_at)}" if d.revoked else "active"
+        print(f"{d.device_id:<27} {d.name[:24]:<24} {d.platform[:10]:<10} "
+              f"{fmt_time(d.last_seen):<17} {status}")
+    return 0
+
+
+def cmd_devices_revoke(args: argparse.Namespace) -> int:
+    registry, _ = open_home(args.home)
+    try:
+        device = registry.find_device(args.device_id)
+    except LookupError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    if not registry.revoke_device(device.device_id, now()):
+        print(f'"{device.name}" was already revoked.')
+        return 0
+    print(f'Revoked "{device.name}" ({device.device_id}). Any open session closes within a '
+          "second, and this key can no longer connect or pair again.")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="talaria", description="Talaria bridge")
+    parser.add_argument("--home", type=Path, default=default_home(),
+                        help="data folder (default: $TALARIA_HOME or ~/.talaria)")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--version", action="version", version=f"talaria {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    serve = sub.add_parser("serve", help="run the TNP endpoint")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--url", help="address devices use, e.g. wss://meep-vps.tailnet.ts.net/tnp")
+    serve.add_argument("--dev", action="store_true", help="plain ws:// on loopback, for local testing")
+    serve.add_argument("--tls-cert")
+    serve.add_argument("--tls-key")
+    serve.add_argument("--pin-cert", action="store_true",
+                       help="self-signed certificate: devices pin its key from the pairing payload")
+    serve.set_defaults(func=cmd_serve)
+
+    pair = sub.add_parser("pair", help="pair a new device")
+    pair.add_argument("--name", help="label for the device, e.g. \"OnePlus 10 Pro\"")
+    pair.add_argument("--ttl", type=int, default=DEFAULT_TTL_S, help="link lifetime in seconds (max 900)")
+    pair.add_argument("--url", help="override the bridge address put in the link")
+    pair.add_argument("--no-qr", action="store_true")
+    pair.set_defaults(func=cmd_pair)
+
+    devices = sub.add_parser("devices", help="list or revoke paired devices")
+    dsub = devices.add_subparsers(dest="devices_command", required=True)
+    dsub.add_parser("list").set_defaults(func=cmd_devices_list)
+    revoke = dsub.add_parser("revoke")
+    revoke.add_argument("device_id", help="device id or a unique prefix of it")
+    revoke.set_defaults(func=cmd_devices_revoke)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
+                        format="%(asctime)s %(name)s %(message)s")
+    try:
+        return args.func(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
