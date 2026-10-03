@@ -17,7 +17,7 @@ Low-fidelity layouts for the Android reference client. Desktop uses the same scr
 │  [ Paste a pairing link ]    │   │ Then type  y  in the         │
 │  [ Enter a code ]            │   │ terminal to approve.         │
 │                              │   │                              │
-│  Needs Tailscale on ⓘ        │   │ Waiting… (1:43)   [Cancel]   │
+│  Needs your VPN on ⓘ         │   │ Waiting… (1:43)   [Cancel]   │
 └──────────────────────────────┘   └──────────────────────────────┘
 ```
 
@@ -40,7 +40,7 @@ Low-fidelity layouts for the Android reference client. Desktop uses the same scr
 │ [ Test connection ]          │
 └──────────────────────────────┘
 ```
-Failures name the broken layer and the fix: "Server unreachable — is Tailscale on?", "This device was revoked — pair again", "Server identity changed ⚠️ — do not continue unless you re-installed the bridge".
+Failures name the broken layer and the fix: "Server unreachable — is your private network (Tailscale/WireGuard) on?", "This device was revoked — pair again", "Server identity changed ⚠️ — do not continue unless you re-installed the bridge".
 
 ## 3. Chat list
 
