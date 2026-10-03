@@ -85,4 +85,30 @@ class ChatIntegrationTest {
         assertEquals(conv, second.openId)
         assertEquals(1, second.conversations.size)
     }
+
+    @Test
+    fun photosAndFilesUploadInChunks() = runBlocking {
+        val (_, fromLaptop) = device("Laptop")
+        val (_, onPhone) = device("Phone")
+        withTimeout(30_000) { onPhone.state.first { it.listLoaded } }
+        val photo = OutgoingFile("IMG_1.jpg", "image/jpeg", ByteArray(3000) { it.toByte() })
+        val report = OutgoingFile("report.pdf", "application/pdf", ByteArray(700 * 1024) { (it % 251).toByte() })
+
+        fromLaptop.send("Have a look", listOf(photo, report))
+        val done = withTimeout(30_000) {
+            fromLaptop.state.first { s -> s.openMessages.size == 2 && s.openMessages.last().state == MessageState.DONE }
+        }
+        val sent = done.openMessages.first()
+        assertEquals(listOf(Attachment.Kind.IMAGE, Attachment.Kind.FILE), sent.attachments.map { it.kind })
+        assertEquals(photo.bytes.toList(), sent.attachments[0].preview?.toList())
+
+        // the phone sees what was attached, without the photo's bytes
+        val conv = done.openId!!
+        onPhone.open(conv)
+        val history = withTimeout(30_000) { onPhone.state.first { it.threads[conv]?.loaded == true } }
+        val asked = history.threads.getValue(conv).messages.first()
+        assertEquals("Have a look", asked.text)
+        assertEquals(listOf(Attachment(Attachment.Kind.IMAGE, "Photo", "image/jpeg"),
+            Attachment(Attachment.Kind.FILE, "report.pdf", "application/pdf", report.bytes.size.toLong())), asked.attachments)
+    }
 }
