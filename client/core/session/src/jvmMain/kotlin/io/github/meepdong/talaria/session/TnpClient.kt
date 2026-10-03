@@ -10,8 +10,11 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -61,6 +64,24 @@ class TnpClient(
     private var job: Job? = null
     private val wake = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var live: LiveSession? = null
+
+    private val _notifications = MutableSharedFlow<JsonObject>(extraBufferCapacity = 1024)
+
+    /** Notifications from the bridge other than `ping` and `status`, such as chat.delta. */
+    val notifications: SharedFlow<JsonObject> = _notifications.asSharedFlow()
+
+    /**
+     * Call [method] on the bridge and return its result. Throws [RpcException] for an
+     * error reply, and [TnpException] when there is no session or no answer in time.
+     */
+    suspend fun request(method: String, params: JsonObject = JsonObject(emptyMap()), timeoutMs: Long? = null): JsonObject {
+        val session = live ?: throw TnpException(Failure.CLOSED, "not connected")
+        val reply = session.call(method, params, timeoutMs ?: settings.requestTimeoutMs)
+        reply.obj("error")?.let { err ->
+            throw RpcException(err.long("code")?.toInt() ?: 0, err.str("message") ?: "Request failed")
+        }
+        return reply.obj("result") ?: JsonObject(emptyMap())
+    }
 
     fun start() {
         if (job?.isActive == true) return
@@ -142,11 +163,13 @@ class TnpClient(
             val at = nowMs()
             onConnected(at)
             log.add(at, "Connected", auth.sessionId)
+            // Live before CONNECTED, so whoever reacts to the state can make requests.
+            val session = LiveSession(ws).also { live = it }
             _state.update {
                 it.copy(phase = ConnectionState.Phase.CONNECTED, failure = null, detail = null,
                     sessionId = auth.sessionId, lastConnectedAtMs = at, nextRetryAtMs = null)
             }
-            LiveSession(ws).also { live = it }.serve()
+            session.serve()
         } finally {
             ws.close(Tnp.CLOSE_NORMAL, "client closing")
         }
@@ -197,17 +220,19 @@ class TnpClient(
                 "status" -> msg.obj("params")?.let { applyStatus(it) }
                 else -> if (msg["id"] != null) {
                     ws.send(Tnp.encode(Tnp.error(msg["id"]!!, Tnp.METHOD_NOT_FOUND, "Not supported by this client")))
+                } else {
+                    _notifications.emit(msg)
                 }
             }
         }
 
-        suspend fun call(method: String): JsonObject {
+        suspend fun call(method: String, params: JsonObject? = null, timeoutMs: Long = settings.requestTimeoutMs): JsonObject {
             val id = "d-${nextId.incrementAndGet()}"
             val reply = CompletableDeferred<JsonObject>()
             pending[id] = reply
-            ws.send(Tnp.encode(Tnp.request(id, method)))
+            ws.send(Tnp.encode(Tnp.request(id, method, params)))
             return try {
-                withTimeout(settings.requestTimeoutMs) { reply.await() }
+                withTimeout(timeoutMs) { reply.await() }
             } catch (e: TimeoutCancellationException) {
                 throw TnpException(Failure.TIMEOUT, "no answer to $method")
             } finally {

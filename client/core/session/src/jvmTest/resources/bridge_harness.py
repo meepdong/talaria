@@ -7,17 +7,24 @@ Talks JSON lines on stdin/stdout:
   <- {"cmd": "agent", "state": s}      -> {"ok": true}   (changes the fake agent's health)
 Every pair request is approved automatically. EOF on stdin stops the bridge.
 With --old, status.get is unknown, as on an M0 bridge.
+Chat goes to a small fake Hermes: each reply streams "Hel", a web_search tool call and "lo",
+then finishes as "Hello".
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 import sys
 import tempfile
 from pathlib import Path
 
+import httpx
+
 from talaria_bridge.agents import AgentConfig, AgentMonitor
+from talaria_bridge.chat import ChatService, ChatStore
+from talaria_bridge.hermes import HermesClient
 from talaria_bridge.operator import create_pairing
 from talaria_bridge.protocol import keys
 from talaria_bridge.protocol import messages as m
@@ -40,6 +47,43 @@ class OldBridge(BridgeServer):
         await super()._dispatch(ws, device_id, msg)
 
 
+class FakeHermes:
+    """Just enough of the Hermes Sessions API for the chat proxy."""
+
+    def __init__(self):
+        self.sessions: dict[str, list[dict]] = {}
+
+    async def handle(self, req: httpx.Request) -> httpx.Response:
+        parts = req.url.path.split("/")
+        if req.method == "POST" and req.url.path == "/api/sessions":
+            self.sessions[json.loads(req.content)["id"]] = []
+            return httpx.Response(201, json={"session": {}})
+        if len(parts) < 4 or parts[3] not in self.sessions:
+            return httpx.Response(404, json={"error": {"message": "not found", "code": "session_not_found"}})
+        rows = self.sessions[parts[3]]
+        if req.url.path.endswith("/messages"):
+            limit, offset = int(req.url.params["limit"]), int(req.url.params["offset"])
+            return httpx.Response(200, json={"data": rows[max(0, len(rows) - offset - limit):len(rows) - offset]})
+        if req.url.path.endswith("/chat/stream"):
+            return httpx.Response(200, content=self.stream(rows, json.loads(req.content)["message"]))
+        return httpx.Response(200, json={})
+
+    async def stream(self, rows: list[dict], text: str):
+        def ev(name: str, payload: dict) -> bytes:
+            return f"event: {name}\ndata: {json.dumps(payload)}\n\n".encode()
+        rows.append({"id": len(rows) + 1, "role": "user", "content": text, "timestamp": int(time.time())})
+        yield ev("run.started", {"run_id": f"run_{len(rows)}"})
+        yield ev("assistant.delta", {"delta": "Hel"})
+        await asyncio.sleep(0.05)
+        yield ev("tool.started", {"tool_name": "web_search", "preview": "q"})
+        yield ev("tool.completed", {"tool_name": "web_search", "preview": "ok"})
+        yield ev("assistant.delta", {"delta": "lo"})
+        rows.append({"id": len(rows) + 1, "role": "assistant", "content": "Hello", "timestamp": int(time.time())})
+        yield ev("assistant.completed", {"content": "Hello"})
+        yield ev("run.completed", {"usage": {"total_tokens": 3}, "runtime": {"model": "test/model"}})
+        yield ev("done", {})
+
+
 def emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
@@ -52,7 +96,13 @@ async def main() -> None:
     monitor = AgentMonitor([AgentConfig("meep", "Meep", "http://127.0.0.1:9/health")],
                            interval_s=0.1, probe=probe)
     settings = ServerSettings(port=0, approval_timeout_s=10, revocation_check_s=0.1, decision_poll_s=0.02)
-    server = (OldBridge if "--old" in sys.argv else BridgeServer)(registry, key, settings, monitor)
+    hermes = HermesClient("http://hermes.test", "k", transport=httpx.MockTransport(FakeHermes().handle))
+
+    async def unused(msg: dict) -> None:
+        pass
+
+    chat = ChatService(ChatStore(home / "chat.db"), {"meep": hermes}, unused)
+    server = (OldBridge if "--old" in sys.argv else BridgeServer)(registry, key, settings, monitor, chat)
     tokens: list[str] = []
 
     async def approve() -> None:
