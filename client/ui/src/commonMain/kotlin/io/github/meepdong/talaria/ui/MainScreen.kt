@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -220,7 +222,8 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
     ) {
         Column(
             Modifier.fillMaxHeight().width(if (wide) 360.dp else 310.dp).background(MaterialTheme.colorScheme.surface)
-                .clickable(interactionSource = MutableInteractionSource(), indication = null) {}
+                // taps inside the panel don't close it; no semantics, so its rows stay separate
+                .pointerInput(Unit) { detectTapGestures {} }
                 .verticalScroll(rememberScrollState()).padding(20.dp).testTag("menu-panel"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
