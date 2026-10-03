@@ -2,9 +2,8 @@ package io.github.meepdong.talaria.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -32,13 +32,17 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,15 +53,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -151,7 +157,7 @@ private fun Conversation(
             Text(view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
             if (showBack) ConnectionDot(view, actions)
-            view.model?.let { ModelChip(it, view.modelGroups, actions) }
+            view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions) }
             ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
             menu()
         }
@@ -195,30 +201,53 @@ private fun Conversation(
     }
 }
 
-/** The model this chat uses; tap to pick another (Hermes's /model). */
+/** The model this chat uses; tap it for a searchable dropdown of the models Hermes has keys for (Hermes's /model). */
 @Composable
-private fun ModelChip(label: String, groups: List<ModelGroup>, actions: TalariaActions) {
-    var open by remember { mutableStateOf(false) }
+private fun ModelChip(label: String, groups: List<ModelGroup>, picker: String?, actions: TalariaActions) {
+    var query by remember(picker != null) { mutableStateOf(picker.orEmpty()) }
     Box {
         Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(enabled = groups.isNotEmpty()) { open = true }
+            modifier = Modifier.widthIn(max = 200.dp).clip(RoundedCornerShape(50)).clickable { actions.openModelPicker() }
                 .testTag("model")) {
             Text("$label ▾", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 420.dp)) {
-            groups.forEach { g ->
-                Text(g.name, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium,
+        DropdownMenu(expanded = picker != null, onDismissRequest = actions::closeModelPicker,
+            modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 460.dp).testTag("model-picker")) {
+            OutlinedTextField(query, { query = it.take(60) }, singleLine = true, placeholder = { Text("Search models") },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag("model-search"))
+            val shown = filterModels(groups, query)
+            when {
+                groups.isEmpty() -> Text("Loading models…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                shown.isEmpty() -> Text("No model matches \"$query\"", Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            shown.forEach { g ->
+                Text(g.name, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 2.dp),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 g.models.forEach { m ->
                     DropdownMenuItem(
-                        text = { Text((if (m.selected) "✓ " else "") + m.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        text = {
+                            Text(m.label, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (m.selected) FontWeight.SemiBold else null)
+                        },
+                        trailingIcon = { if (m.selected) Text("✓", color = MaterialTheme.colorScheme.primary) },
                         modifier = Modifier.testTag("model-${m.model}"),
-                        onClick = { open = false; actions.pickModel(m.provider, m.model) },
+                        onClick = { actions.pickModel(m.provider, m.model) },
                     )
                 }
             }
         }
+    }
+}
+
+/** The picker's groups, keeping only models whose name or label contains [query]. */
+internal fun filterModels(groups: List<ModelGroup>, query: String): List<ModelGroup> {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return groups
+    return groups.mapNotNull { g ->
+        val models = g.models.filter { q in it.model.lowercase() || q in it.label.lowercase() || q in g.name.lowercase() }
+        if (models.isEmpty()) null else g.copy(models = models)
     }
 }
 
@@ -483,45 +512,63 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                 }
             }
         }
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (view.canAttach) {
-                var menu by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { menu = true }, enabled = view.pending.size < 10,
-                        modifier = Modifier.heightIn(min = 52.dp).testTag("attach")) { Text("📎") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Photo") }, modifier = Modifier.testTag("attach-photo"),
-                            onClick = { menu = false; actions.attachFiles(photos = true) })
-                        DropdownMenuItem(text = { Text("File") }, modifier = Modifier.testTag("attach-file"),
-                            onClick = { menu = false; actions.attachFiles(photos = false) })
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // one rounded field with 📎 and 🎤 inside it, so the text gets the width on a phone
+            Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.weight(1f)) {
+                Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
+                    if (view.canAttach) {
+                        var menu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { menu = true }, enabled = view.pending.size < 10,
+                                modifier = Modifier.padding(vertical = 4.dp).testTag("attach")) { Text("📎") }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("Photo") }, modifier = Modifier.testTag("attach-photo"),
+                                    onClick = { menu = false; actions.attachFiles(photos = true) })
+                                DropdownMenuItem(text = { Text("File") }, modifier = Modifier.testTag("attach-file"),
+                                    onClick = { menu = false; actions.attachFiles(photos = false) })
+                            }
+                        }
+                    }
+                    TextField(
+                        value = text,
+                        onValueChange = { text = it.take(32000) },
+                        placeholder = {
+                            Text(if (view.runningTurnId != null) "Sends after this reply" else "Message Hermes, or / for commands",
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
+                        maxLines = 6,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                        ),
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("composer").onPreviewKeyEvent { e ->
+                            // Enter sends, Shift+Enter starts a new line (hardware keyboards)
+                            if (e.key == Key.Enter && !e.isShiftPressed) {
+                                if (e.type == KeyEventType.KeyDown) send()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    )
+                    if (voice.canDictate) {
+                        IconButton(onClick = actions::toggleDictation,
+                            modifier = Modifier.padding(vertical = 4.dp).testTag("dictate")) {
+                            Text(if (voice.listening) "■" else "🎤")
+                        }
                     }
                 }
             }
-            if (voice.canDictate) {
-                TextButton(onClick = actions::toggleDictation, modifier = Modifier.heightIn(min = 52.dp).testTag("dictate")) {
-                    Text(if (voice.listening) "■" else "🎤")
-                }
-            }
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it.take(32000) },
-                placeholder = { Text(if (view.runningTurnId != null) "Message… (sends after this reply)" else "Message… or / for commands") },
-                maxLines = 8,
-                modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("composer").onPreviewKeyEvent { e ->
-                    // Enter sends, Shift+Enter starts a new line (hardware keyboards)
-                    if (e.key == Key.Enter && !e.isShiftPressed) {
-                        if (e.type == KeyEventType.KeyDown) send()
-                        true
-                    } else {
-                        false
-                    }
-                },
-            )
             val running = view.runningTurnId
             if (running != null) {
-                OutlinedButton(onClick = { actions.stopReply(running) }, modifier = Modifier.testTag("stop")) { Text("■") }
+                FilledTonalIconButton(onClick = { actions.stopReply(running) },
+                    modifier = Modifier.padding(bottom = 2.dp).size(48.dp).testTag("stop")) { Text("■") }
             }
-            Button(onClick = ::send, enabled = ready, modifier = Modifier.testTag("send")) {
+            FilledIconButton(onClick = ::send, enabled = ready,
+                modifier = Modifier.padding(bottom = 2.dp).size(48.dp).testTag("send")) {
                 Text("➤")
             }
         }

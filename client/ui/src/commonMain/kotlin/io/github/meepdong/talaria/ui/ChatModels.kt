@@ -66,6 +66,8 @@ data class ChatView(
     val model: String? = null,
     /** What the model chip offers, by provider. */
     val modelGroups: List<ModelGroup> = emptyList(),
+    /** The model picker's search text while it's open (from the chip, or /model with several matches). Null: closed. */
+    val modelPicker: String? = null,
     /** Side questions (/btw) on the open conversation. */
     val asides: List<AsideItem> = emptyList(),
     /** /status, while it's showing. */
