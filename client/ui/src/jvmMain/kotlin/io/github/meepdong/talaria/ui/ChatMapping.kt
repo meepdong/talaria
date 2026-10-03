@@ -9,6 +9,7 @@ import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
+import io.github.meepdong.talaria.chat.ServerFile
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -76,6 +77,7 @@ private fun ChatMessage.item(nowMs: Long, images: ImageCache) = MessageItem(
 fun chatView(
     state: ChatState, conversationOpen: Boolean, connected: Boolean, status: StatusView, nowMs: Long,
     pending: List<OutgoingFile> = emptyList(), canAttach: Boolean = false, images: ImageCache = NO_IMAGES,
+    serverPending: List<ServerFile> = emptyList(),
 ): ChatView {
     val thread = state.openThread
     val running = state.openMessages.lastOrNull { it.state == MessageState.STREAMING }?.turnId
@@ -117,7 +119,7 @@ fun chatView(
         notice = state.notice,
         connection = status.overall,
         connectionSummary = status.summary,
-        pending = pending.map { it.toAttachment().chip(images) },
+        pending = pending.map { it.toAttachment().chip(images) } + serverPending.map { it.toAttachment().chip(images) },
         canAttach = canAttach,
         model = state.effectiveModel?.shortName,
         modelGroups = state.models?.providers.orEmpty().map { p ->

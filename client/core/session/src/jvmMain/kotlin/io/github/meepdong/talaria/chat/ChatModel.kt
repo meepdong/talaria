@@ -95,6 +95,11 @@ class OutgoingFile(val name: String, val mime: String, val bytes: ByteArray) {
     }
 }
 
+/** A file already on the server (spec/README.md §12), sent to the agent by where it is. */
+data class ServerFile(val root: String, val path: String, val name: String, val mime: String, val size: Long?) {
+    fun toAttachment() = Attachment(Attachment.Kind.FILE, name, mime, size)
+}
+
 data class ChatMessage(
     /** Stable across updates, for list keys. */
     val key: String,

@@ -33,6 +33,7 @@ class AgentConfig:
     api_key_file: str | None = None  # a file holding its API_SERVER_KEY, readable only by the bridge
     inbox_dir: str | None = None  # chat attachments (§10): where the bridge saves files the agent can read
     openrouter_key_file: str | None = None  # an OpenRouter management key, for account.balance (§11)
+    files: tuple[dict, ...] = ()  # shared folders (§12): {"id", "name", "path", "agent_path"?}
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -56,8 +57,16 @@ def load_agents(path: Path) -> list[AgentConfig]:
         balance_key = entry.get("openrouter_key_file")
         if balance_key is not None and not (isinstance(balance_key, str) and Path(balance_key).is_absolute()):
             raise ValueError(f"{path}: an agent's openrouter_key_file must be an absolute path")
+        files = entry.get("files", [])
+        if not (isinstance(files, list) and all(
+                isinstance(f, dict) and isinstance(f.get("id"), str) and f["id"] and f["id"] != "inbox"
+                and isinstance(f.get("path"), str) and Path(f["path"]).is_absolute()
+                and isinstance(f.get("agent_path", f["path"]), str) for f in files)):
+            raise ValueError(f"{path}: an agent's files must list {{id, name, path, agent_path?}} with absolute paths"
+                             " (the id inbox is taken)")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
-                                  api_url, key_file if api_url is not None else None, inbox, balance_key))
+                                  api_url, key_file if api_url is not None else None, inbox, balance_key,
+                                  tuple(files)))
     return agents
 
 

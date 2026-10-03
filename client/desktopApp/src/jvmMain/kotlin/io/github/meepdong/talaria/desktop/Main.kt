@@ -77,6 +77,8 @@ fun main(args: Array<String>) {
             }
         }
     }
+    val opened = OpenedFiles(File(dataDir, "opened"), windows)
+    controller.setFileOpener { name, _, bytes -> opened.open(name, bytes) }
     controller.start()
     val loginItem = LoginItem.forThisComputer()
     val startHidden = LoginItem.MINIMIZED_FLAG in args

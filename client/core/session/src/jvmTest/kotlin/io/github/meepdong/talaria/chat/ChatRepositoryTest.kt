@@ -65,6 +65,20 @@ class ChatRepositoryTest {
     private fun delta(seq: Int, body: String) = """{"conversation_id":"c-1","turn_id":"t-1","seq":$seq,$body}"""
 
     @Test
+    fun serverFilesAreNamedNotUploaded() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Q3.pdf"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        repo.send("", serverFiles = listOf(ServerFile("inbox", "c-1/b-x-Q3.pdf", "Q3.pdf", "application/pdf", 4)))
+        assertEquals(listOf("Q3.pdf"), repo.state.value.draft.single().attachments.map { it.name })
+        advanceUntilIdle()
+        val sent = api.calls.single { it.first == "chat.send" }.second
+        assertEquals(Json.parseToJsonElement("""[{"root":"inbox","path":"c-1/b-x-Q3.pdf"}]"""), sent["files"])
+        assertTrue(api.calls.none { it.first.startsWith("blob.") })
+    }
+
+    @Test
     fun newConversationStreamsIntoTheDraft() = chatTest { scope ->
         val api = FakeApi()
         api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }

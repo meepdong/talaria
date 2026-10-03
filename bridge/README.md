@@ -73,6 +73,14 @@ Photos go to Hermes inline with the message. Other files (PDFs, documents) need 
 
 The apps can pick a chat's model, queue messages while a reply runs, steer a running reply, ask side questions and show a chat's status (`spec/README.md` §11). Nothing to configure: the bridge uses Hermes's own model list and session API.
 
+The apps can browse the files on the server, read-only (`spec/README.md` §12): the inbox, plus any folder you share in the agent's `files` list. For Hermes's workspace:
+
+```json
+"files": [{"id": "workspace", "name": "Hermes workspace", "path": "/home/hermes/projects", "agent_path": "/workspace/projects"}]
+```
+
+`agent_path` is where Hermes sees the folder (its Docker sandbox mounts `/home/hermes/projects` at `/workspace/projects`), so "Ask Hermes about it" points it at the right file. The bridge's user needs read access, for example `setfacl -m u:talaria:x /home/hermes` and `setfacl -R -m u:talaria:rX,d:u:talaria:rX /home/hermes/projects`. Hidden files and links leading out of the folder are never shown.
+
 To show your OpenRouter balance in the apps, create a **management key** in OpenRouter (Settings → Management keys), save it in a file only the bridge can read (`install -m 600 -o talaria /dev/null /etc/talaria/openrouter.key`, then paste the key into it), and add `"openrouter_key_file": "/etc/talaria/openrouter.key"` to the agent. A management key can also create and delete API keys, so it never leaves the bridge: the apps only get the number.
 
 ## Commands

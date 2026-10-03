@@ -34,6 +34,7 @@ sealed interface Screen {
         val home: HomeView = HomeView(),
         val menu: MenuView = MenuView(),
         val menuOpen: Boolean = false,
+        val files: FilesView = FilesView(),
     ) : Screen
 }
 
@@ -149,6 +150,17 @@ interface TalariaActions {
 
     /** The mic button: say something to Hermes and hear the answer, in a new chat. */
     fun talk() {}
+
+    // Files (§12)
+
+    fun openRoot(id: String) {}
+    /** A folder opens in the list; a file is fetched and opened with the device's own app. */
+    fun openFile(path: String) {}
+    fun filesUp() {}
+    /** Search by name under the folder showing; blank goes back to the folder. */
+    fun searchFiles(query: String) {}
+    /** A new chat with this server file attached, ready for a question. */
+    fun askAboutFile(path: String) {}
 }
 
 /** The tray icon's colour. */

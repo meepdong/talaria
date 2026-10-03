@@ -89,6 +89,9 @@ class ChatRepository(
 
     /** Files of messages not yet taken by the bridge, by client_msg_id, so a retry can upload them again. */
     private val outgoing = java.util.concurrent.ConcurrentHashMap<String, List<OutgoingFile>>()
+
+    /** Server files (§12) named by messages not yet taken by the bridge, by client_msg_id. */
+    private val outgoingServer = java.util.concurrent.ConcurrentHashMap<String, List<ServerFile>>()
     private var job: Job? = null
 
     fun start() {
@@ -122,14 +125,18 @@ class ChatRepository(
      * Send [text] and [files] to [conversationId], the open conversation by default (null starts
      * a new one). Files are uploaded first (spec/README.md §10).
      */
-    fun send(text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId) {
+    fun send(
+        text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId,
+        serverFiles: List<ServerFile> = emptyList(),
+    ) {
         val body = text.trim()
-        if (body.isEmpty() && files.isEmpty()) return
+        if (body.isEmpty() && files.isEmpty() && serverFiles.isEmpty()) return
         val cmid = newClientMsgId()
         val conv = conversationId
         val msg = ChatMessage("local:$cmid", Role.USER, body, nowMs(), MessageState.SENDING, clientMsgId = cmid,
-            attachments = files.map { it.toAttachment() })
+            attachments = files.map { it.toAttachment() } + serverFiles.map { it.toAttachment() })
         if (files.isNotEmpty()) outgoing[cmid] = files
+        if (serverFiles.isNotEmpty()) outgoingServer[cmid] = serverFiles
         _state.update { s -> s.withMessages(conv) { it + msg } }
         scope.launch { deliver(conv, body, cmid) }
     }
@@ -358,8 +365,12 @@ class ChatRepository(
                 if (conv == null) _state.value.draftModel?.let { put("model", it.json()) }
                 put("client_msg_id", cmid)
                 if (blobs.isNotEmpty()) put("attachments", JsonArray(blobs.map { id -> buildJsonObject { put("blob_id", id) } }))
+                outgoingServer[cmid]?.let { found ->
+                    put("files", JsonArray(found.map { f -> buildJsonObject { put("root", f.root); put("path", f.path) } }))
+                }
             }, SEND_TIMEOUT_MS)
             outgoing.remove(cmid)
+            outgoingServer.remove(cmid)
             lock.withLock { onSent(r, cmid) }
         } catch (e: CancellationException) {
             throw e
