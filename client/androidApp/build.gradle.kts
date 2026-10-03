@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "io.github.meepdong.talaria.android"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.meepdong.talaria"
