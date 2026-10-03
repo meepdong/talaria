@@ -1,24 +1,26 @@
-# Roadmap (draft v0.3)
+# Roadmap (draft v0.4)
 
-The rule: **architecture for every platform, ship one platform at a time.** Each milestone is usable on its own. Android is the reference client; desktop and iOS follow.
+The rule: **one shared codebase, two platforms from the start.** From M1 on, the Android and Windows/Linux desktop clients are built together on Kotlin Multiplatform, sharing protocol, security and UI code. Each milestone is usable on its own and ships on both platforms unless it is marked Android-only. iOS follows after v1.
 
 ## v1 scope: "your own Gemini, built on your own agent"
 
-v1 is deliberately small: a reliable Android app that replaces Telegram as the way you talk to your Hermes agent, and makes it your phone's assistant.
+v1 is deliberately small: reliable Android and Windows/Linux apps that replace Telegram as the way you talk to your Hermes agent, and make it your phone's assistant.
 
 | v1 milestone | What you get |
 |---|---|
 | M−1 Validate | Confirmation that people want it (or a clear signal to keep it personal) |
 | M0 Bridge + secure pairing ✅ | QR code / link / short code pairing with terminal confirmation |
-| M1 Connection status | Clear health of network, bridge and agent, with fixes |
-| M2 Chat | Streaming chat with voice input, spoken replies, photo/PDF attachments |
-| M2b Voice replies (basic) | "Reply to Asha on WhatsApp: …" with confirmation |
-| M2c Default assistant | Long-press power → your agent; instant on-device phone commands |
-| M6 Notifications and background | Agent alerts, reliable background connection, full assistant overlay |
+| M1 Connection status | Pairing and clear health of network, bridge and agent, with fixes, on Android and desktop |
+| M2 Chat | Streaming chat with voice input, spoken replies, photo/PDF attachments, on Android and desktop |
+| M2b Voice replies (basic, Android) | "Reply to Asha on WhatsApp: …" with confirmation |
+| M2c Default assistant (Android) | Long-press power → your agent; instant on-device phone commands |
+| M6 Notifications and background | Agent alerts on both platforms, reliable background connection, full assistant overlay on Android |
 
-**v1 is done when** you have used it daily for a month instead of Telegram and Gemini, and at least a few other Hermes users run it.
+**v1 is done when** you have used it daily for a month instead of Telegram and Gemini, on your phone and your laptop, and at least a few other Hermes users run it.
 
-Everything else (multiple agents, group chats, workflows, automation rules and schedules, phone data, desktop, wearables, iOS, hardware) is **Later**. It gets built only after v1 is in real use, ordered by what v1 users actually ask for.
+**Test setup:** the bridge runs on the same always-on VPS as Hermes Agent (for the author, a Hostinger VPS). Clients reach it over Tailscale. A laptop-hosted bridge is fine for local development, but every milestone's exit test runs against the VPS.
+
+Everything else (multiple agents, group chats, workflows, automation rules and schedules, phone data, desktop scripting and automation, wearables, iOS, hardware) is **Later**. It gets built only after v1 is in real use, ordered by what v1 users actually ask for.
 
 ## v1 milestones
 
@@ -33,21 +35,25 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - `tools/tnp-cli/`: terminal client that pairs by pasted link.
 - **Exit:** pair the CLI client by link; tests pass for bad signatures, replays, expired or reused tokens, revoked devices, and rejected SAS.
 
-### M1 — Android: pairing and connection status *(first app checkpoint)*
-- KMP skeleton (`core/protocol`, `core/security`, `ui`, `androidApp`).
-- Pair by QR scan or pasted link; SAS screen; key in Android Keystore.
-- Foreground-service session, reconnect with backoff, battery onboarding (OnePlus first).
-- **Connection status screen:** network, bridge and agent layers, latency, last connected, reconnect countdown, "Test" button (`status.get` / `status`).
-- **Exit:** a week of stable connection on a OnePlus 10 Pro; every failure shows the right layer and fix.
+### M1 — Pairing and connection status, Android and desktop *(first app checkpoint)*
+- KMP skeleton: `core/protocol`, `core/security`, `ui` (Compose Multiplatform), `androidApp`, `desktopApp` (JVM, Windows and Linux).
+- `core/protocol` passes the `spec/vectors` test vectors on both targets.
+- Pair by QR scan (Android) or pasted link (both); SAS screen shared by both.
+- Device key storage behind one interface: Android Keystore; Windows DPAPI; Linux Secret Service (libsecret), with an encrypted-file fallback and a clear warning when no keyring is available.
+- Android: foreground-service session, reconnect with backoff, battery onboarding (OnePlus first).
+- Desktop: tray app that keeps the session open, reconnects with backoff, and can start at login.
+- **Connection status screen** (shared UI): network, bridge and agent layers, latency, last connected, reconnect countdown, "Test" button (`status.get` / `status`).
+- Bridge deployed on the VPS next to Hermes, reachable over Tailscale.
+- **Exit:** a week of stable connection to the VPS bridge on a OnePlus 10 Pro and on a Windows laptop; every failure shows the right layer and fix.
 
 ### M2 — Chat
 - One agent via the bridge chat proxy (Hermes Responses API, named conversations).
 - Streaming replies, tool-progress indicators, cancel, history.
-- **Voice:** on-device speech-to-text (Android `SpeechRecognizer`), edit before send, optional auto-send; spoken replies via TTS.
+- **Voice:** on-device speech-to-text (Android `SpeechRecognizer`; on desktop, a local engine such as Vosk or whisper.cpp), edit before send, optional auto-send; spoken replies via TTS.
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.
-- **Exit:** used daily for a week instead of Telegram, including voice and photo messages.
+- **Exit:** used daily for a week instead of Telegram, on phone and laptop, including voice and photo messages.
 
-### M2b — Voice replies (basic)
+### M2b — Voice replies (basic, Android)
 - "Reply to <contact> on <app>: <message>": on-device speech-to-text, intent parsing, **local** contact matching with disambiguation.
 - Exact mode (free) and Polish mode (`compose.polish`).
 - Confirmation card, read aloud, with voice commands "send / change… / cancel".
@@ -55,7 +61,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - Entry points: in-app mic, Quick Settings tile, Talaria as default assistant.
 - **Exit:** a week of replying to friends by voice with zero wrong-recipient sends.
 
-### M2c — Default assistant (basic)
+### M2c — Default assistant (basic, Android)
 - Qualify for Android's **default digital assistant** role via `ACTION_ASSIST`; onboarding that walks through choosing Talaria, setting OxygenOS "press and hold power button" to the assistant, and setting Tailscale as **always-on VPN**.
 - Assistant overlay: listen → transcript → answer, with spoken replies starting at the first sentence.
 - **On-device command router:** timers, alarms, calls, open app, navigate, media play/pause, voice replies (M2b). Everything else goes to the configurable **default assistant agent**.
@@ -63,7 +69,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - **Exit:** a week of using the power button instead of Gemini; phone commands under 1 s and working offline.
 
 ### M6 — Notifications and background
-- `notify.show` with user channels and reply actions; MCP `device_notify`; wake push (ntfy / UnifiedPush).
+- `notify.show` with user channels and reply actions on Android and as desktop toasts; MCP `device_notify`; wake push (ntfy / UnifiedPush) on Android.
 - Full **`VoiceInteractionService`** assistant: true overlay session, lock-screen session, opt-in screen context with per-use confirmation and an app deny-list.
 - **Exit:** agent alerts arrive reliably for a week, including after the phone has been idle overnight.
 
@@ -117,8 +123,8 @@ Not committed and not ordered by priority yet; numbering is kept for reference. 
 - **Auto mode** only for allow-listed contacts and situations (driving, sleeping, in a meeting), labelled as sent by your assistant, rate-limited, never in groups by default.
 - Telegram Business bot integration as the official "reply as you" route.
 
-### M9 — Desktop (Windows and Linux)
-- Tray app, chat, notifications, `script.run` with manifests, shared folder, global hotkey; MSI/EXE and DEB/RPM builds.
+### M9 — Desktop actuator (Windows and Linux)
+- The desktop app already has pairing, status, chat and notifications from v1. M9 adds `script.run` with manifests, shared folder, global hotkey; MSI/EXE and DEB/RPM builds.
 - **Exit:** "run my backup script on the laptop" from the phone, approved on the laptop.
 
 ### M10 — Plain-language rules and scripting
@@ -138,4 +144,4 @@ Not committed and not ordered by priority yet; numbering is kept for reference. 
 ## Working agreements
 - Every protocol change updates `spec/` first, with schema and test vectors, then code.
 - Security-relevant changes (tiers, approvals, redaction, pairing, budgets) need a written rationale in the pull request.
-- Releases: semantic versioning; signed APKs; changelog.
+- Releases: semantic versioning; signed APKs and desktop installers; changelog.
