@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from pathlib import Path
 
@@ -96,13 +97,16 @@ def test_read_in_chunks(tmp_path: Path):
 
 def test_shared_folders_in_agents_json(tmp_path: Path):
     path = tmp_path / "agents.json"
-    path.write_text('{"agents": [{"id": "hermes", "health_url": "http://x/health", "inbox_dir": "/var/lib/talaria/inbox",'
-                    ' "files": [{"id": "workspace", "name": "Hermes workspace", "path": "/home/hermes/projects",'
-                    ' "agent_path": "/workspace/projects"}]}]}')
+    inbox, projects = tmp_path / "inbox", tmp_path / "projects"  # absolute on every OS
+    path.write_text(json.dumps({"agents": [{
+        "id": "hermes", "health_url": "http://x/health", "inbox_dir": str(inbox),
+        "files": [{"id": "workspace", "name": "Hermes workspace", "path": str(projects), "agent_path": "/workspace/projects"}],
+    }]}))
     roots = file_roots(load_agents(path)[0])
-    assert [(r.id, r.agent_path) for r in roots] == [
-        ("inbox", "/var/lib/talaria/inbox"), ("workspace", "/workspace/projects")]
-    path.write_text('{"agents": [{"id": "hermes", "health_url": "http://x/health", "files": [{"id": "inbox", "path": "/x"}]}]}')
+    assert [(r.id, r.path, r.agent_path) for r in roots] == [
+        ("inbox", inbox, str(inbox)), ("workspace", projects, "/workspace/projects")]
+    path.write_text(json.dumps({"agents": [{"id": "hermes", "health_url": "http://x/health",
+                                            "files": [{"id": "inbox", "path": str(projects)}]}]}))
     with pytest.raises(ValueError):
         load_agents(path)
 
