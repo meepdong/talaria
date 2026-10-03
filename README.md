@@ -77,6 +77,7 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Talaria Node Protocol v0.1 draft: pairing, auth, messages, capabilities, rules, errors |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Capability catalog and per-platform support matrix |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, permission tiers, privacy controls |
+| [docs/hardware/RING.md](docs/hardware/RING.md) | Hardware track: a no-mic smart ring (based on Open Ring) as Talaria's trigger and haptic display; multi-device use |
 | [docs/UI.md](docs/UI.md) | Screen sketches: pairing, status, chats, group info, agent profiles, workflow view |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones with exit criteria (pairing → status → chat → multi-agent → groups → workflows → device features) |
 
