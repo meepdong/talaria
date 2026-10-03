@@ -47,6 +47,17 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="talaria" android:host="pair" />
             </intent-filter>
+            <!-- In the share sheet: files, photos and text from any app go to a new chat. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
         <!-- Holds the bridge session while the app is in the background. -->

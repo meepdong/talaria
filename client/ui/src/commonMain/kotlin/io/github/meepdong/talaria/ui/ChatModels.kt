@@ -64,7 +64,7 @@ data class ChatView(
     val voice: VoiceView = VoiceView(),
 )
 
-/** Text heard by dictation, for the composer. [id] tells one dictation from the next. */
+/** Text for the composer, heard by dictation or shared from another app. [id] tells one from the next. */
 data class Dictation(val id: Long, val text: String, val send: Boolean)
 
 /** The 🎤 and 🔊 controls. */

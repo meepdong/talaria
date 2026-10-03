@@ -51,6 +51,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - Streaming replies, tool-progress indicators, cancel, history.
 - **Voice:** on-device speech-to-text (Android `SpeechRecognizer`; on desktop, a local engine such as Vosk or whisper.cpp), edit before send, optional auto-send; spoken replies via TTS.
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.
+- **Share to Talaria (Android):** Talaria is in the share sheet for files, photos and text from any app; sharing opens a new chat with them attached, ready to send.
 - **Exit:** used daily for a week instead of Telegram, on phone and laptop, including voice and photo messages.
 
 ### M2b — Voice replies (basic, Android)
