@@ -4,7 +4,7 @@
 >
 > *Working name. In myth, the talaria are Hermes' winged sandals: they carry the messenger anywhere.*
 
-**Status:** design draft. No code yet. **v1 scope defined** (see below). Feedback welcome.
+**Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android client starts at M1. Feedback welcome.
 **Not affiliated with Nous Research.** Talaria is an independent community project that works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and, by design, with any agent that speaks [MCP](https://modelcontextprotocol.io).
 
 ---
@@ -91,6 +91,7 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 | [docs/hardware/BAND.md](docs/hardware/BAND.md) | Hardware track: a gesture wristband (IMU first, optional sEMG) for push-to-talk, navigation and glasses control |
 | [docs/UI.md](docs/UI.md) | Screen sketches: pairing, status, chats, group info, agent profiles, workflow view |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | v1 scope and milestones with exit criteria, plus everything planned for later |
+| [docs/M0-plan.md](docs/M0-plan.md) | M0 (bridge and secure pairing): deliverables, exit criteria, status and what was verified |
 
 ## License
 

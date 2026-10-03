@@ -228,7 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")
+        # UTF-8 so the SAS emoji survive being piped or logged on Windows, where stdout
+        # otherwise falls back to the locale code page and turns them into "?".
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(asctime)s %(name)s %(message)s")

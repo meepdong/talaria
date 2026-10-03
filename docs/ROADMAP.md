@@ -9,7 +9,7 @@ v1 is deliberately small: a reliable Android app that replaces Telegram as the w
 | v1 milestone | What you get |
 |---|---|
 | M−1 Validate | Confirmation that people want it (or a clear signal to keep it personal) |
-| M0 Bridge + secure pairing | QR code / link / short code pairing with terminal confirmation |
+| M0 Bridge + secure pairing ✅ | QR code / link / short code pairing with terminal confirmation |
 | M1 Connection status | Clear health of network, bridge and agent, with fixes |
 | M2 Chat | Streaming chat with voice input, spoken replies, photo/PDF attachments |
 | M2b Voice replies (basic) | "Reply to Asha on WhatsApp: …" with confirmation |
@@ -27,7 +27,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - Ask: Would you use it? Which first feature matters most? Which platform do you use?
 - **Exit:** a handful of people say they would try it, or clear feedback changes the plan.
 
-### M0 — Bridge core and secure pairing
+### M0 — Bridge core and secure pairing ✅ *done — see [M0-plan.md](M0-plan.md)*
 - `spec/`: JSON Schemas for PROTOCOL messages, plus test vectors (signatures, handshake, SAS derivation).
 - `bridge/`: TNP server (handshake, heartbeats), device registry, `talaria pair` (QR in the terminal, `talaria://` link, short code), **SAS confirmation prompt**, `talaria devices list|revoke`.
 - `tools/tnp-cli/`: terminal client that pairs by pasted link.
