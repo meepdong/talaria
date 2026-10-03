@@ -294,8 +294,26 @@ class TalariaController(
      */
     fun addAttachments(files: List<OutgoingFile>, problem: String? = null) {
         val (fit, tooBig) = files.partition { it.bytes.size <= OutgoingFile.MAX_SIZE }
-        (problem ?: tooBig.firstOrNull()?.let { "${it.name} is over 20 MB, too large to send" })?.let { chat?.notice(it) }
+        val room = OutgoingFile.MAX_PER_MESSAGE - pending.value.size
+        (problem ?: tooBig.firstOrNull()?.let { "${it.name} is over 20 MB, too large to send" }
+            ?: if (fit.size > room) "A message can carry ${OutgoingFile.MAX_PER_MESSAGE} files; the rest were left out" else null)
+            ?.let { chat?.notice(it) }
         pending.update { (it + fit).take(OutgoingFile.MAX_PER_MESSAGE) }
+    }
+
+    /**
+     * Files or text shared from another app (Android's share sheet): a new chat with them
+     * ready to send, so the user can add a question first.
+     */
+    fun receiveShare(files: List<OutgoingFile>, text: String?, problem: String? = null) {
+        chat?.newConversation()
+        page.value = Page(conversationOpen = true)
+        pending.value = emptyList()
+        addAttachments(files, problem)
+        val words = text?.trim().orEmpty()
+        if (words.isNotEmpty()) {
+            voice.update { it.copy(dictation = Dictation(++dictations, words.take(32000), send = false)) }
+        }
     }
 
     /** The platform's speech-to-text: set while the app can listen, null otherwise. */

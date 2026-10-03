@@ -1,6 +1,7 @@
 package io.github.meepdong.talaria.android
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -30,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.TalariaApp
@@ -43,7 +45,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleLink(intent)
+        // after a rotation the same intent comes back; it was handled the first time
+        if (savedInstanceState == null) handleLink(intent)
         setContent {
             val controller = app.controller
             val screen by controller.screen.collectAsState()
@@ -150,8 +153,34 @@ class MainActivity : ComponentActivity() {
         handleLink(intent)
     }
 
+    /** Shared from another app: read the files now, while this activity may still read them. */
+    private fun receiveShare(intent: Intent) {
+        val uris = buildList {
+            if (intent.action == Intent.ACTION_SEND) {
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(::add)
+            } else {
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(::addAll)
+            }
+        }
+        // content:// from other apps only: a file:// path or our own authority could hand
+        // Talaria's private files (the pairing) to the chat
+        val shared = uris.filter { it.scheme == ContentResolver.SCHEME_CONTENT && it.authority?.startsWith(packageName) != true }
+        val refused = if (shared.size < uris.size) "Some shared items couldn't be read" else null
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        intent.action = null
+        Thread {
+            val (files, problem) = AndroidAttachments.prepare(this, shared)
+            app.controller.showChats()
+            app.controller.receiveShare(files, text, problem ?: refused)
+        }.start()
+    }
+
     /** A tapped talaria://pair#… link starts pairing, if this phone isn't paired yet. */
     private fun handleLink(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            receiveShare(intent)
+            return
+        }
         intent?.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)?.let { conv ->
             // opened from a reply notification
             intent.removeExtra(ReplyNotifier.EXTRA_CONVERSATION)
