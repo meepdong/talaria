@@ -38,6 +38,11 @@
         },
         "started_at": {
           "type": "integer"
+        },
+        "client_msg_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       },
       "required": [

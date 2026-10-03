@@ -245,7 +245,8 @@ async def test_retry_with_client_msg_id_sends_once(chat_bridge):
     bridge, hermes = chat_bridge
     ws = await connected(bridge)
     a = (await call(ws, "c1", "chat.send", {"text": "Once", "client_msg_id": "m-1"}))["result"]
-    await until_done(ws, a["turn_id"])
+    started = (await until_done(ws, a["turn_id"]))[0]["params"]
+    assert started["client_msg_id"] == "m-1"
     b = (await call(ws, "c2", "chat.send", {"text": "Once", "client_msg_id": "m-1"}))["result"]
     assert a == b and hermes.runs == 1
     await ws.close()

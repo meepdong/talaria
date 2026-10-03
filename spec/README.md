@@ -104,7 +104,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | Method | Direction | Params → result |
 |---|---|---|
 | `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?}` → `{conversation_id, turn_id, title}` |
-| `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at}` |
+| `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at, client_msg_id?}` |
 | `chat.delta` | notification | `{conversation_id, turn_id, seq, kind, text?, tool?}` |
 | `chat.done` | notification | `{conversation_id, turn_id, seq, status, text, error?, usage?, runtime?}` |
 | `chat.cancel` | request | `{turn_id}` → `{turn_id, status}` |
@@ -116,7 +116,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` is reserved and rejected with `MODALITY_UNSUPPORTED` until attachments land.
 
-**Every device sees every turn.** `chat.started`, `chat.delta` and `chat.done` go to every session past `ready`, including turns sent from another device, so the phone and the laptop show the same conversation live.
+**Every device sees every turn.** `chat.started`, `chat.delta` and `chat.done` go to every session past `ready`, including turns sent from another device, so the phone and the laptop show the same conversation live. `chat.started` repeats the sender's `client_msg_id`, so the sending device can match it to the message it already shows, even before the `chat.send` result is handled.
 
 **Deltas.** `seq` starts at 1 and grows by one per notification of a turn, `chat.done` included. `kind` is one of:
 - `text`: `text` is the next piece of the answer.

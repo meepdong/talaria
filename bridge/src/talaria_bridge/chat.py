@@ -134,6 +134,7 @@ class Turn:
     error: str | None = None
     usage: dict | None = None
     runtime: dict | None = None
+    client_msg_id: str | None = None
     run_id: str | None = None
     task: asyncio.Task | None = None
 
@@ -275,7 +276,7 @@ class ChatService:
 
         now_s = int(time.time())
         turn = Turn(conversation_id=conv_id, turn_id="t-" + secrets.token_hex(8), agent_id=conv.agent_id,
-                    title=conv.title, user_text=text, started_at=now_s)
+                    title=conv.title, user_text=text, started_at=now_s, client_msg_id=client_msg_id)
         self._active[conv_id] = turn.turn_id
         self._turns[turn.turn_id] = turn
         self._evict()
@@ -329,9 +330,11 @@ class ChatService:
         await self._emit(turn, "chat.delta", {"kind": kind, **fields})
 
     async def _run(self, turn: Turn) -> None:
-        await self._emit(turn, "chat.started", {
-            "conversation_id": turn.conversation_id, "turn_id": turn.turn_id, "agent_id": turn.agent_id,
-            "title": turn.title, "user_text": turn.user_text, "started_at": turn.started_at})
+        started = {"conversation_id": turn.conversation_id, "turn_id": turn.turn_id, "agent_id": turn.agent_id,
+                   "title": turn.title, "user_text": turn.user_text, "started_at": turn.started_at}
+        if turn.client_msg_id is not None:
+            started["client_msg_id"] = turn.client_msg_id
+        await self._emit(turn, "chat.started", started)
         conv = self.store.get(turn.conversation_id)
         final_text: str | None = None
         status: str | None = None
