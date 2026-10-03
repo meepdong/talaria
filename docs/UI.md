@@ -167,7 +167,31 @@ Status ticks: ✓ sent · ✓✓ received · ⏳ working · ✅ done.
 └────────────────────────────────────────┘
 ```
 
-## 9. Design notes
+## 9. Voice reply
+
+```
+┌──────────────────────────────┐
+│ 🎤 "Reply to Asha on         │
+│    WhatsApp: tell her I'll   │
+│    be ten minutes late"      │
+├──────────────────────────────┤
+│ To:   Asha Mehta  (WhatsApp) │  ← tap to change; asks if ambiguous
+│ ┌──────────────────────────┐ │
+│ │ Running 10 mins late,    │ │  ← Polish mode (✏️ edit · ↺ exact words)
+│ │ sorry!                   │ │
+│ └──────────────────────────┘ │
+│ Route: reply via notification│  ← or "opens WhatsApp — tap Send"
+│                              │
+│  [ Cancel ]      [ Send ✓ ]  │
+│  🔊 "Send to Asha?" — say     │
+│     "send", "change…", "stop"│
+└──────────────────────────────┘
+```
+Entry points: in-app mic, Quick Settings tile, "🎤 Reply by voice" on Talaria's notifications, headset button, Talaria as default assistant (long-press power or home), and later watch and glasses.
+
+Incoming read aloud (opt-in, per app): *"Asha on WhatsApp: 'Dinner tonight?' Reply?"* → speak the answer → the same confirmation card.
+
+## 10. Design notes
 - Every agent has a fixed colour and avatar across chats, groups and workflows.
 - A model badge on each agent message makes cost visible without being noisy.
 - Spend is always one tap away: group info, agent profile, workflow header.

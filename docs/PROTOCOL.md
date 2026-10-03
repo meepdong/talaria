@@ -361,6 +361,20 @@ When an agent delegates work to sub-agents (Hermes `delegate_task` or Kanban), t
 
 `status` is one of `queued`, `running`, `done`, `failed` or `cancelled`. Clients render these as a live workflow view. A per-conversation budget, when set, is enforced by the bridge and reported with `BUDGET_EXCEEDED`.
 
+### 10.6 Voice replies to other messaging apps
+
+Voice replies ("Reply to Asha on WhatsApp: I'll be ten minutes late") are **handled almost entirely on the device**. Speech-to-text, contact matching, confirmation and delivery all happen locally, and contacts never leave the device.
+
+The only protocol involvement is the optional **Polish mode**:
+
+| Method | Direction | Purpose |
+|---|---|---|
+| `compose.polish` | device → bridge (request) | `{agent_id, text, recipient_first_name?, app?, tone?}` → `{text}`. Rewrites dictated intent ("tell her I'll be late") into a first-person message in the owner's style. |
+
+- Only the dictated text and, optionally, the recipient's **first name** are sent. No phone numbers, chat history or contact details.
+- **Exact mode** (the dictated words as spoken) needs no protocol call and no model cost.
+- Sent messages are logged **on the device only** ("what I sent by voice"). Nothing about them is reported to the bridge unless the user enables it.
+
 ## 11. Relayed devices (watch, glasses)
 
 A node MAY relay sub-devices it is connected to, e.g. a Wear OS watch over the Data Layer API, or glasses through the vendor SDK.

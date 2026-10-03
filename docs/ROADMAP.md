@@ -27,6 +27,14 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.
 - **Exit:** used daily for a week instead of Telegram, including voice and photo messages.
 
+## M2b — Voice replies (basic)
+- "Reply to <contact> on <app>: <message>": on-device speech-to-text, intent parsing, **local** contact matching with disambiguation.
+- Exact mode (free) and Polish mode (`compose.polish`).
+- Confirmation card, read aloud, with voice commands "send / change… / cancel".
+- Delivery: SMS direct; WhatsApp and Telegram **click-to-chat pre-fill** (you tap Send); Talaria agents natively.
+- Entry points: in-app mic, Quick Settings tile, Talaria as default assistant.
+- **Exit:** a week of replying to friends by voice with zero wrong-recipient sends.
+
 ## M3 — Multiple agents
 - Bridge agent registry (`agents.yaml`): Hermes profiles and OpenAI-compatible endpoints, with roles, modalities and cost tiers.
 - Chat list with agent picker; one conversation per agent.
@@ -62,6 +70,17 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 - Tier 2 approval engine and approval cards.
 - **Exit:** a week of automatic UPI expense logging with zero raw SMS stored off-device.
 
+## M8b — Voice replies (hands-free)
+- Deliver through the target chat's **notification Reply action** when one exists, which is fully hands-free.
+- **Incoming messages read aloud** (opt-in per app) with spoken replies: "Asha says… Reply?"
+- "Reply to that" for the most recent message; headset-button trigger.
+- **Exit:** a full drive (or walk with earphones) of reading and replying by voice without touching the phone.
+
+## M8c — Smart replies (optional, later)
+- **Draft mode:** the agent suggests replies to incoming messages and you send them with one tap.
+- **Auto mode** only for allow-listed contacts and situations (driving, sleeping, in a meeting), labelled as sent by your assistant, rate-limited, never in groups by default.
+- Telegram Business bot integration as the official "reply as you" route.
+
 ## M9 — Desktop (Windows and Linux)
 - Tray app, chat, notifications, `script.run` with manifests, shared folder, global hotkey; MSI/EXE and DEB/RPM builds.
 - **Exit:** "run my backup script on the laptop" from the phone, approved on the laptop.
@@ -70,8 +89,9 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 - `rules.propose` with diff UI; a Hermes skill teaching the rule schema; sandboxed JS.
 - **Exit:** five everyday automations created only by asking the agent.
 
-## M11 — Wearables
-- Wear OS relay (notifications, haptics, quick replies); one glasses SDK proof of concept.
+## M11 — Wearables and car
+- Wear OS relay (notifications, haptics, quick replies, voice replies); one glasses SDK proof of concept.
+- Talaria's own agent chats in **Android Auto** through standard messaging notifications (read aloud, reply by voice).
 
 ## M12 — iOS
 - Chat, notifications, location, camera, Shortcuts; APNs wake via relay (decision pending).

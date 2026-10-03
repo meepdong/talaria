@@ -33,6 +33,7 @@ Talaria turns your phone, laptop, and (later) watch or smart glasses into **devi
 - **Several agents, each with its own soul**: a personal assistant, a coder, a cheap researcher. Open any agent's profile to read its SOUL.md, model, tools and spend.
 - **Group chats with your agents, WhatsApp-style**: a conductor agent hands tasks to others, with reply caps and daily budgets so it never runs away.
 - **Watch multi-agent workflows live**: a strong conductor delegates to cheap worker models, and you see every worker's task, model, status and cost.
+- **Reply to anyone by voice**: "Reply to Asha on WhatsApp: I'll be ten minutes late." Talaria confirms (on screen and out loud) and delivers through the messaging app itself. Hands-free when possible, one tap otherwise.
 - **Notifications on your terms**: the agent pushes alerts into your own channels, priorities and sounds, with reply buttons.
 - **Device-aware automation**: "when a bank SMS says *debited*, log the expense and tell me if I've spent over ₹2,000 today." Rules run on the device; the agent can *propose* rules in plain language, and you approve them.
 - **Phone as a sensor**: location triggers, filtered notification forwarding, battery and connectivity state.

@@ -115,6 +115,7 @@ client/
 │   ├── storage/       # encrypted local DB (rules, history, event outbox)    (common, SQLDelight)
 │   ├── capabilities/  # Capability interface + registry                      (common)
 │   ├── voice/         # SpeechToText + TextToSpeech interfaces               (common + expect/actual)
+│   ├── replies/       # voice replies: intent parsing, local contact match, delivery routes (common + actual)
 │   └── media/         # image downscale, EXIF/GPS strip, PDF page picking    (common + expect/actual)
 ├── capability-impl/
 │   ├── android/       # notifications listener, SMS, geofence, camera, TTS, foreground service
@@ -219,6 +220,42 @@ sequenceDiagram
 | Files (output) | Agent writes in its sandbox → blob → downloadable card | — |
 
 If the selected agent lacks a modality, the client warns, or the conductor delegates that part to a capable worker. Hermes can also use a separate (cheaper) model for its auxiliary vision tasks.
+
+### 3.6 Voice reply to another app
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant D as Phone (Talaria)
+    participant B as Bridge / agent
+    participant W as WhatsApp
+    U->>D: "Reply to Asha on WhatsApp: tell her I'll be ten minutes late"
+    D->>D: On-device speech-to-text → parse {contact, app, message}
+    D->>D: Match "Asha" in local contacts (ask if ambiguous)
+    opt Polish mode
+        D->>B: compose.polish(text, first name only)
+        B-->>D: "Running 10 mins late, sorry!"
+    end
+    D->>U: Confirmation card + read aloud: "Send to Asha?"
+    U->>D: "Send"
+    alt Active notification from Asha's chat
+        D->>W: Fill the notification's Reply action (hands-free)
+    else No notification
+        D->>W: Open click-to-chat with text pre-filled → you tap Send
+    end
+    D->>D: Log locally ("sent by voice")
+```
+
+**Delivery routes, in order of preference**
+
+| Route | When | Hands-free | Notes |
+|---|---|---|---|
+| Notification **Reply** action | The target chat has an active notification | ✅ | The same public Android mechanism Android Auto and Wear OS use: the app's own reply action, filled with your dictated text. Needs notification access (M8). |
+| SMS send | Target is an SMS contact | ✅ | Needs SMS permission (sideloaded build) |
+| Click-to-chat pre-fill (WhatsApp `wa.me`, Telegram share) | No notification | One tap | Fully official; you press Send in the real app |
+| Telegram Business bot | Telegram, within 24 h of the contact's last message | ✅ | Official "reply as you" route |
+| Accessibility auto-tap | Opt-in only | ✅ | Fragile; off by default and not recommended |
+| Talaria agents / groups | Target is an agent or group | ✅ | Native `chat.send` |
 
 ## 4. The agent-facing MCP surface (fixed)
 

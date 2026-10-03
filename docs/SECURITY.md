@@ -25,6 +25,9 @@ Talaria gives an AI agent access to personal devices. That is only acceptable if
 | T11 | **Runaway cost** | Agents ping-pong in a group; a workflow spawns many workers | Per-turn agent reply cap, group and workflow budgets enforced by the bridge, lower `max_concurrent_children`, live spend shown in the app |
 | T12 | **Soul tampering** | Someone with a stolen, unlocked phone rewrites an agent's personality | Soul editing off by default (`allow_soul_edit`), revision checks, full version history on the bridge, app lock required for edits |
 | T13 | **Metadata leaks in attachments** | A photo reveals your home location | GPS/EXIF stripped on the device by default; per-message opt-out only |
+| T14 | **Voice reply goes wrong** | Misheard message, or sent to the wrong "Asha" | **Confirm before sending** by default (on screen and read aloud); ambiguous contacts always ask; groups only when named explicitly; local log of everything sent; per-contact "send immediately" is opt-in |
+| T15 | **Contact data leakage** | Contact lists sent to the agent or model provider | Contacts are matched on the device; Polish mode sends only the dictated text and optionally a first name |
+| T16 | **Third-party app terms** | A messaging app objects to its reply action being used by another app | Every message is dictated and confirmed by the user (never bulk, never automatic by default); click-to-chat pre-fill as the fully official fallback; the WhatsApp notification route is optional and clearly labelled in public builds |
 
 ## 3. Safe defaults
 

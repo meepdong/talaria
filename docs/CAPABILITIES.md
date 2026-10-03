@@ -93,6 +93,12 @@ These are app features rather than capabilities the agent can call.
 | Image downscale + GPS strip | ✅ | ✅ | ✅ | ✅ |
 | Agent / group chats, agent profiles | ✅ | ✅ | ✅ | ✅ |
 | Workflow view | ✅ | ✅ | ✅ | ✅ |
+| Voice replies: pre-filled chat (click-to-chat, share) | ✅ | ✅ (opens WhatsApp/Telegram desktop) | ✅ (web or desktop clients) | ✅ URL schemes |
+| Voice replies: hands-free via notification Reply action | ✅ (notification access) | ❌ | ❌ | ❌ |
+| Voice replies: SMS | ✅ (sideloaded build) | ❌ | ❌ | ⚠️ Compose sheet only |
+| Incoming messages read aloud | ✅ (notification access) | ⚠️ | ⚠️ | ❌ |
+| Default-assistant entry (long-press power/home) | ✅ `VoiceInteractionService` | ❌ | ❌ | ❌ (Action Button / Shortcut) |
+| Talaria agent chats in Android Auto | 🔜 Messaging notifications (MessagingStyle + reply/mark-read) | — | — | 🔜 CarPlay |
 
 ## 4. Platform notes
 
