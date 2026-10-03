@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
 import io.github.meepdong.talaria.chat.Attachment
@@ -51,6 +52,9 @@ class ChatScreensTest {
         override fun speak(key: String, text: String) { calls += "speak $key" }
         override fun stopSpeaking() { calls += "stop speaking" }
         override fun setReadAloud(on: Boolean) { calls += "read aloud $on" }
+        override fun pickModel(provider: String, model: String) { calls += "model $provider $model" }
+        override fun dismissAside(id: String) { calls += "dismiss $id" }
+        override fun closeStatus() { calls += "close status" }
     }
 
     private val status = StatusView(
@@ -85,7 +89,7 @@ class ChatScreensTest {
         assertEquals("You: milk", v.conversations[1].preview)
         assertEquals(true, v.conversations[0].running)
         assertEquals("t-2", v.runningTurnId)
-        assertEquals(false, v.canSend)
+        assertEquals(true, v.canSend, "a message sent now waits for the reply")
         assertEquals(listOf(ToolChip("web_search", "completed")), v.messages[1].tools)
         assertEquals(true, v.hasOlder)
         assertNull(v.listMessage)
@@ -206,5 +210,53 @@ class ChatScreensTest {
         waitForIdle()
         assertEquals(listOf("dictate", "speak h:2", "read aloud true", "taken 1", "stop speaking", "taken 2", "send book a table for two"),
             actions.calls)
+    }
+
+    @Test
+    fun modelsAsidesStatusAndCommands() = runComposeUiTest {
+        val actions = Recorder()
+        val s = state(streaming = true).copy(
+            models = io.github.meepdong.talaria.chat.ModelOptions(
+                io.github.meepdong.talaria.chat.ModelChoice("openrouter", "anthropic/claude-sonnet-4"),
+                listOf(io.github.meepdong.talaria.chat.ModelOptions.Provider("openrouter", "OpenRouter",
+                    listOf("anthropic/claude-sonnet-4", "openai/gpt-5")))),
+            asides = mapOf("c-1" to listOf(io.github.meepdong.talaria.chat.Aside("a-1", "what's Goa?", "A state in India"))),
+            status = io.github.meepdong.talaria.chat.ConversationStatus("c-1", null, 4, 1, 50, 9, 0.0123, true, 1),
+        )
+        var v by mutableStateOf(view(s))
+        assertEquals("claude-sonnet-4", v.model)
+        assertEquals(listOf(true, false), v.modelGroups.single().models.map { it.selected })
+        assertEquals(listOf("Messages" to "4", "Tool calls" to "1", "Tokens" to "50 in · 9 out", "Cost" to "$0.0123",
+            "Reply running" to "Yes", "Waiting" to "1 queued"), v.status!!.lines)
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1000.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        onNodeWithText("A state in India").assertExists()
+        onNodeWithText("Close").performClick()
+        v = v.copy(status = null)
+        waitForIdle()
+        onNodeWithTag("model").performClick()
+        onNodeWithTag("model-openai/gpt-5").performClick()
+        onNodeWithTag("dismiss-aside").performClick()
+        onNodeWithTag("composer").performTextInput("/st")
+        onNodeWithTag("command-status").assertExists()
+        onNodeWithTag("command-steer").performClick()
+        onNodeWithTag("composer").assertTextContains("/steer ")
+        onNodeWithTag("commands").assertDoesNotExist()
+        onNodeWithTag("composer").performTextReplacement("/steer go on")
+        onNodeWithTag("send").performClick()
+        assertEquals(listOf("close status", "model openrouter openai/gpt-5", "dismiss a-1", "send /steer go on"), actions.calls)
+    }
+
+    @Test
+    fun commandsParse() {
+        assertEquals(Command.Aside("is it safe?"), Command.parse(" /btw is it safe? "))
+        assertEquals(Command.Queue("then this"), Command.parse("/q then this"))
+        assertEquals(Command.Model(""), Command.parse("/MODEL"))
+        assertEquals(Command.Unknown("compress"), Command.parse("/compress"))
+        assertNull(Command.parse("//not a command"))
+        assertNull(Command.parse("a /btw in the middle"))
+        assertEquals(listOf("steer", "status", "stop"), Command.suggestions("/st").map { it.name })
+        assertEquals(emptyList(), Command.suggestions("/steer x"))
     }
 }

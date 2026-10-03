@@ -39,6 +39,7 @@
             },
             "status": {
               "enum": [
+                "queued",
                 "running",
                 "completed",
                 "failed",

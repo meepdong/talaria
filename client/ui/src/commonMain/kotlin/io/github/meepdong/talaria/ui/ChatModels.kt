@@ -9,7 +9,7 @@ data class ConversationItem(
     val running: Boolean,
 )
 
-enum class ItemState { SENDING, NOT_SENT, STREAMING, DONE, FAILED, CANCELLED }
+enum class ItemState { SENDING, NOT_SENT, QUEUED, STREAMING, DONE, FAILED, CANCELLED }
 
 /** A tool call in a reply: "🔧 web_search…", then ✓ or ✗. */
 data class ToolChip(val name: String, val state: String, val preview: String? = null)
@@ -62,7 +62,24 @@ data class ChatView(
     /** Whether this app can pick files (the 📎 button). */
     val canAttach: Boolean = false,
     val voice: VoiceView = VoiceView(),
+    /** The model chip in the header: the conversation's, or the agent's default. Null hides it. */
+    val model: String? = null,
+    /** What the model chip offers, by provider. */
+    val modelGroups: List<ModelGroup> = emptyList(),
+    /** Side questions (/btw) on the open conversation. */
+    val asides: List<AsideItem> = emptyList(),
+    /** /status, while it's showing. */
+    val status: ConversationStatusView? = null,
 )
+
+data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)
+
+data class ModelItem(val provider: String, val model: String, val label: String, val selected: Boolean)
+
+data class AsideItem(val id: String, val question: String, val answer: String?, val error: String?)
+
+/** /status as label and value lines. */
+data class ConversationStatusView(val title: String, val lines: List<Pair<String, String>>)
 
 /** Text for the composer, heard by dictation or shared from another app. [id] tells one from the next. */
 data class Dictation(val id: Long, val text: String, val send: Boolean)

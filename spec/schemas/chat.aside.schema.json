@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/chat.send.result.schema.json",
-  "title": "chat.send.result",
-  "description": "Result of chat.send. Sent before the turn's first chat.delta.",
+  "$id": "https://talaria.invalid/tnp/v0/chat.aside.schema.json",
+  "title": "chat.aside",
+  "description": "Device to bridge (request): a side question about a conversation, not added to it (\u00a711).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,13 +11,16 @@
     "tnp": {
       "const": 0
     },
+    "method": {
+      "const": "chat.aside"
+    },
     "id": {
       "type": [
         "string",
         "integer"
       ]
     },
-    "result": {
+    "params": {
       "type": "object",
       "properties": {
         "conversation_id": {
@@ -25,30 +28,23 @@
           "minLength": 1,
           "maxLength": 64
         },
-        "turn_id": {
+        "text": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 64
-        },
-        "title": {
-          "type": "string"
-        },
-        "queued": {
-          "type": "boolean",
-          "description": "The turn waits for the running one (\u00a711)."
+          "maxLength": 4000
         }
       },
       "required": [
         "conversation_id",
-        "turn_id",
-        "title"
+        "text"
       ]
     }
   },
   "required": [
     "jsonrpc",
     "tnp",
+    "method",
     "id",
-    "result"
+    "params"
   ]
 }

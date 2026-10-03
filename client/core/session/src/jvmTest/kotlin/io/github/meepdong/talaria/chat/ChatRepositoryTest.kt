@@ -108,6 +108,102 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun queuedMessagesWaitTheirTurn() = chatTest { scope ->
+        val api = FakeApi()
+        var sends = 0
+        api.answers["chat.send"] = {
+            sends++
+            if (sends == 1) json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""")
+            else json("""{"conversation_id":"c-1","turn_id":"t-$sends","title":"Hi","queued":true}""")
+        }
+        api.answers["chat.cancel"] = { json("""{"turn_id":"t-3","status":"cancelled"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        repo.send("Hi")
+        advanceUntilIdle()
+        api.push("chat.started", started)
+        advanceUntilIdle()
+        repo.send("And then?")
+        repo.send("Never mind")
+        advanceUntilIdle()
+        api.push("chat.queued", """{"conversation_id":"c-1","turn_id":"t-2","user_text":"And then?","position":1,"client_msg_id":"m-2"}""")
+        api.push("chat.queued", """{"conversation_id":"c-1","turn_id":"t-3","user_text":"Never mind","position":2,"client_msg_id":"m-3"}""")
+        advanceUntilIdle()
+        val waiting = repo.state.value.openMessages
+        assertEquals(listOf("Hi", "", "And then?", "Never mind"), waiting.map { it.text })
+        assertEquals(listOf(MessageState.QUEUED, MessageState.QUEUED), waiting.drop(2).map { it.state })
+        assertEquals(listOf("t-2", "t-3"), repo.state.value.conversations.single().queuedTurnIds)
+
+        // the second one is taken back, the first one starts when the reply ends
+        repo.stop("t-3")
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-3","seq":1,"status":"cancelled","text":""}""")
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-1","seq":1,"status":"completed","text":"Hello"}""")
+        api.push("chat.started", started.replace("t-1", "t-2").replace("m-1", "m-2").replace("\"Hi\",\"started", "\"And then?\",\"started"))
+        advanceUntilIdle()
+        val after = repo.state.value.openMessages
+        assertEquals(listOf("local:m-1", "reply:t-1", "local:m-2", "local:m-3", "reply:t-2"), after.map { it.key })
+        assertEquals(MessageState.DONE, after[2].state)
+        assertEquals(MessageState.CANCELLED, after[3].state)
+        assertEquals(MessageState.STREAMING, after[4].state)
+        assertEquals(emptyList(), repo.state.value.conversations.single().queuedTurnIds)
+    }
+
+    @Test
+    fun modelsAsidesStatusAndBalance() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[]}""") }
+        api.answers["agent.models"] = {
+            json("""{"agent_id":"hermes","current":{"provider":"openrouter","model":"anthropic/claude-sonnet-4"},
+                "providers":[{"id":"openrouter","name":"OpenRouter","models":["anthropic/claude-sonnet-4","x/y"]}]}""")
+        }
+        api.answers["account.balance"] = {
+            json("""{"accounts":[{"provider":"openrouter","name":"OpenRouter","remaining":74.75,"currency":"USD","top_up_url":"https://openrouter.ai/settings/credits"}]}""")
+        }
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }
+        api.answers["chat.aside"] = { json("""{"aside_id":"a-1"}""") }
+        api.answers["chat.status"] = { json("""{"conversation_id":"c-1","queued":0,"messages":4,"input_tokens":50,"cost_usd":0.01}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        val s0 = repo.state.value
+        assertEquals("claude-sonnet-4", s0.models!!.current!!.shortName)
+        assertEquals(listOf("x/y"), s0.models!!.providers.single().models.drop(1))
+        assertEquals(AccountBalance("OpenRouter", 74.75, "USD", "https://openrouter.ai/settings/credits", null), s0.balances.single())
+
+        // a model picked before the first message goes with it
+        repo.pickModel(ModelChoice("openrouter", "x/y"))
+        repo.send("Hi")
+        advanceUntilIdle()
+        val sent = api.calls.last { it.first == "chat.send" }.second
+        assertEquals("""{"provider":"openrouter","model":"x/y"}""", sent["model"].toString())
+        assertEquals(ModelChoice("openrouter", "x/y"), repo.state.value.conversations.single().model)
+        assertNull(repo.state.value.draftModel)
+
+        repo.aside("what did I ask?")
+        advanceUntilIdle()
+        assertEquals(listOf(Aside("a-1", "what did I ask?")), repo.state.value.asides["c-1"])
+        api.push("chat.aside.done", """{"conversation_id":"c-1","aside_id":"a-1","question":"what did I ask?","status":"completed","text":"Hi"}""")
+        advanceUntilIdle()
+        assertEquals("Hi", repo.state.value.asides.getValue("c-1").single().answer)
+
+        repo.loadStatus()
+        advanceUntilIdle()
+        val status = repo.state.value.status!!
+        assertEquals(listOf<Any?>(4L, 50L, null, 0.01, false), listOf(status.messages, status.inputTokens, status.outputTokens, status.costUsd, status.running))
+
+        api.answers["chat.steer"] = { json("""{"turn_id":"t-1","accepted":true}""") }
+        repo.steer("faster")
+        advanceUntilIdle()
+        assertEquals("""{"turn_id":"t-1","text":"faster"}""", api.calls.last().second.toString())
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-1","seq":1,"status":"completed","text":"Hello"}""")
+        advanceUntilIdle()
+        repo.steer("faster")
+        advanceUntilIdle()
+        assertEquals("Nothing is running to steer. Send it as a message instead.", repo.state.value.notice)
+    }
+
+    @Test
     fun startedBeforeTheSendResultDoesNotDuplicate() = chatTest { scope ->
         val api = FakeApi()
         api.gates["chat.send"] = CompletableDeferred()

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/chat.queued.schema.json",
+  "title": "chat.queued",
+  "description": "Bridge to every device (notification): a message waits for the running turn to end (\u00a711).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "chat.queued"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "user_text": {
+          "type": "string",
+          "maxLength": 32000
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "client_msg_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "image",
+                  "file"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "mime": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "mime"
+            ]
+          },
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "user_text",
+        "position"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

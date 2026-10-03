@@ -53,7 +53,11 @@ data class StatusView(
     val summary: String,
     /** Shows "← Chats" when the status page was opened from the chat. */
     val canGoBack: Boolean = false,
+    /** Provider credit, such as OpenRouter's, with a link to add more. */
+    val balances: List<BalanceItem> = emptyList(),
 )
+
+data class BalanceItem(val name: String, val amount: String?, val error: String?, val topUpUrl: String)
 
 /** What the screens can ask for. */
 interface TalariaActions {
@@ -88,6 +92,10 @@ interface TalariaActions {
     fun setReadAloud(on: Boolean) {}
     /** Send dictated text as soon as it's heard, rather than leaving it to edit. */
     fun setAutoSend(on: Boolean) {}
+
+    fun pickModel(provider: String, model: String) {}
+    fun dismissAside(id: String) {}
+    fun closeStatus() {}
     fun retryMessage(key: String) {}
     fun stopReply(turnId: String) {}
     fun loadOlder() {}

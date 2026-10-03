@@ -103,7 +103,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 | Method | Direction | Params → result |
 |---|---|---|
-| `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?, attachments?}` → `{conversation_id, turn_id, title}` |
+| `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?, attachments?, model?}` → `{conversation_id, turn_id, title, queued?}` |
 | `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at, client_msg_id?, attachments?}` |
 | `chat.delta` | notification | `{conversation_id, turn_id, seq, kind, text?, tool?}` |
 | `chat.done` | notification | `{conversation_id, turn_id, seq, status, text, error?, usage?, runtime?}` |
@@ -128,11 +128,11 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Catching up.** A device that reconnects while it was showing a running turn calls `chat.turn.get`. The snapshot has the turn's `status`, `user_text`, `text` so far, `tools`, `commentary`, `waiting_for_approval`, and `seq`, the last `seq` it covers. The device replaces what it showed with the snapshot and ignores any delta with `seq` at or below it. The bridge keeps the last 50 turns; an older `turn_id` gets `NOT_FOUND`, and the device reloads `chat.history` instead. `conversations.list` names a conversation's running turn as `active_turn_id`.
 
-**One turn at a time.** `chat.send` to a conversation whose turn is still running fails with `CONFLICT`. `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
+**One turn at a time.** A conversation runs one turn at a time; a `chat.send` while one runs is queued (§11). `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
 
 **History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?, attachments?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
 
-**Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) as above; `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
+**Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
 Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.
 
@@ -157,3 +157,32 @@ Photos and files travel over the session in chunks, so no second port or URL is 
 Clients SHOULD downscale photos to 1568 px on the long edge and MUST strip location metadata before upload (PROTOCOL §10.3).
 
 Schemas: `blob.begin`, `blob.begin.result`, `blob.put`, `blob.put.result`, `blob.commit`, `blob.commit.result`; `chat.send`, `chat.started`, `chat.turn.get.result` and `chat.history.result` gain `attachments`.
+
+## 11. Models and chat commands (M2)
+
+What Hermes offers as slash commands in its own chat apps (`/model`, `/queue`, `/steer`, `/btw`, `/status`), as protocol methods. Its API server doesn't run slash commands, so the bridge maps each one to the API, and devices show them as buttons and as a `/` menu in the composer. Hermes's `/retry` is the device sending the last question again, so it needs nothing here.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `agent.models` | request | `{agent_id?}` → `{agent_id, current, providers}` |
+| `conversations.set_model` | request | `{conversation_id, model}` → `{conversation_id, model}` |
+| `chat.queued` | notification | `{conversation_id, turn_id, user_text, position, client_msg_id?, attachments?}` |
+| `chat.steer` | request | `{turn_id, text}` → `{turn_id, accepted}` |
+| `chat.aside` | request | `{conversation_id, text}` → `{aside_id}` |
+| `chat.aside.done` | notification | `{conversation_id, aside_id, question, status, text, error?}` |
+| `chat.status` | request | `{conversation_id}` → `{conversation_id, model?, messages?, tool_calls?, input_tokens?, output_tokens?, cost_usd?, active_turn_id?, queued}` |
+| `account.balance` | request | `{}` → `{accounts}` |
+
+**Models.** A model is `{provider, model}`, both strings as Hermes names them (for example `{"provider": "anthropic", "model": "claude-sonnet-4"}`). `agent.models` lists the providers the agent has credentials for, each `{id, name, models}` with `models` a list of model names, and `current`, the agent's default. `conversations.set_model` pins a conversation to a model from then on, and `chat.send` with `model` does the same before its turn, which is how a new conversation starts on a chosen model. `conversations.list` gives each conversation's pinned `model`, if any. A model the agent can't route fails with `INVALID_PARAMS`.
+
+**Queue.** `chat.send` to a conversation whose turn is running is accepted and queued: the result has `queued: true`, and every device gets `chat.queued` with the turn's place in the queue, starting at 1. The bridge starts queued turns in order as each one ends, each with its usual `chat.started`. `chat.cancel` on a queued turn removes it, and the turn ends with `chat.done` with `status: cancelled`, without a `chat.started`. A conversation holds at most 5 queued turns; one more fails with `CONFLICT`. The queue lives on the bridge, so it keeps going when the device drops off, but not across a bridge restart: queued turns are then lost. `conversations.list` names a conversation's queued turns as `queued_turn_ids`. Until it starts, a queued turn's `chat.turn.get` snapshot has `status: queued`.
+
+**Steer.** `chat.steer` hands a note to a running turn without stopping it; the agent reads it after its next tool call. `accepted` is `false` when the turn was already finishing; a turn that isn't running fails with `CONFLICT`.
+
+**Aside.** `chat.aside` asks a side question about a conversation (Hermes's `/btw`) without adding to it or waiting for its running turn. The bridge asks the agent in a separate, throwaway request that carries the conversation's recent messages; the answer comes to every device as `chat.aside.done`, with `status` `completed` or `failed`. Asides are not saved: they are not in `chat.history`, and a device that was offline misses them.
+
+**Status.** `chat.status` reports on a conversation, from what Hermes keeps about its session: the pinned `model`, how many `messages` and `tool_calls` it has, the `input_tokens` and `output_tokens` it has used, the estimated `cost_usd`, the running turn and how many turns are `queued`. Fields Hermes doesn't report are left out.
+
+**Balance.** `account.balance` lists the provider accounts the bridge can check, each `{provider, name, remaining, currency, top_up_url}`: today only OpenRouter, when the operator has given the bridge an OpenRouter management key. That key never leaves the bridge. `remaining` is the credit left (purchased minus used) as a number in `currency` (`USD`), and `top_up_url` is the provider's page for adding credit. The list is empty when nothing is configured; a provider that can't be reached is listed with `error` instead of `remaining`.
+
+Schemas: `agent.models`, `agent.models.result`, `conversations.set_model`, `conversations.set_model.result`, `chat.queued`, `chat.steer`, `chat.steer.result`, `chat.aside`, `chat.aside.result`, `chat.aside.done`, `chat.status`, `chat.status.result`, `account.balance`, `account.balance.result`; `chat.send`, `chat.send.result` and `conversations.list.result` gain `model`, `queued` and `queued_turn_ids`.

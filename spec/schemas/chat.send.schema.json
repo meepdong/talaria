@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://talaria.invalid/tnp/v0/chat.send.schema.json",
   "title": "chat.send",
-  "description": "Device to bridge (request): send one message; the reply streams as chat.delta and chat.done (spec/README.md §9).",
+  "description": "Device to bridge (request): send one message; the reply streams as chat.delta and chat.done (spec/README.md \u00a79).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -48,7 +48,7 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 10,
-          "description": "Committed blobs (§10). Each blob can be sent once.",
+          "description": "Committed blobs (\u00a710). Each blob can be sent once.",
           "items": {
             "type": "object",
             "properties": {
@@ -62,6 +62,26 @@
               "blob_id"
             ]
           }
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "description": "Pin the conversation to this model before the turn (\u00a711)."
         }
       },
       "required": [

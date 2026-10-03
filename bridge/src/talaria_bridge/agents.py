@@ -32,6 +32,7 @@ class AgentConfig:
     api_url: str | None = None  # chat (M2): the Hermes API server, e.g. http://127.0.0.1:8642
     api_key_file: str | None = None  # a file holding its API_SERVER_KEY, readable only by the bridge
     inbox_dir: str | None = None  # chat attachments (§10): where the bridge saves files the agent can read
+    openrouter_key_file: str | None = None  # an OpenRouter management key, for account.balance (§11)
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -52,8 +53,11 @@ def load_agents(path: Path) -> list[AgentConfig]:
         inbox = entry.get("inbox_dir")
         if inbox is not None and not (isinstance(inbox, str) and Path(inbox).is_absolute()):
             raise ValueError(f"{path}: an agent's inbox_dir must be an absolute path")
+        balance_key = entry.get("openrouter_key_file")
+        if balance_key is not None and not (isinstance(balance_key, str) and Path(balance_key).is_absolute()):
+            raise ValueError(f"{path}: an agent's openrouter_key_file must be an absolute path")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
-                                  api_url, key_file if api_url is not None else None, inbox))
+                                  api_url, key_file if api_url is not None else None, inbox, balance_key))
     return agents
 
 

@@ -65,6 +65,34 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ]
+              },
+              "queued_turn_ids": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
               }
             },
             "required": [
