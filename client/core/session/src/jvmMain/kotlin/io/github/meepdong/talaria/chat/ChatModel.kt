@@ -31,6 +31,34 @@ enum class MessageState {
 /** One tool call in a running or finished reply. */
 data class ToolStep(val name: String, val state: String, val preview: String? = null)
 
+/** A photo or file on a user message (spec/README.md §10). */
+data class Attachment(
+    val kind: Kind,
+    val name: String,
+    val mime: String,
+    val size: Long? = null,
+    /** The photo itself, on the device that sent it; the bridge doesn't send image bytes back. */
+    val preview: ByteArray? = null,
+) {
+    enum class Kind { IMAGE, FILE }
+}
+
+/** A photo or file picked to send, already downscaled and stripped of location if it is a photo. */
+class OutgoingFile(val name: String, val mime: String, val bytes: ByteArray) {
+    val kind: Attachment.Kind
+        get() = if (mime in INLINE_IMAGE_MIMES && bytes.size <= MAX_INLINE_IMAGE) Attachment.Kind.IMAGE else Attachment.Kind.FILE
+
+    fun toAttachment() = Attachment(kind, name, mime, bytes.size.toLong(), bytes.takeIf { kind == Attachment.Kind.IMAGE })
+
+    companion object {
+        /** What the bridge passes to the agent as a photo; anything else goes to its inbox as a file. */
+        val INLINE_IMAGE_MIMES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
+        const val MAX_INLINE_IMAGE = 5 * 1024 * 1024
+        const val MAX_SIZE = 20 * 1024 * 1024
+        const val MAX_PER_MESSAGE = 10
+    }
+}
+
 data class ChatMessage(
     /** Stable across updates, for list keys. */
     val key: String,
@@ -48,6 +76,7 @@ data class ChatMessage(
     val commentary: String? = null,
     val waitingForApproval: Boolean = false,
     val error: String? = null,
+    val attachments: List<Attachment> = emptyList(),
 )
 
 /** The loaded part of one conversation. */

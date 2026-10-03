@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 
 from talaria_bridge.agents import AgentConfig, AgentMonitor
+from talaria_bridge.blobs import BlobStore
 from talaria_bridge.chat import ChatService, ChatStore
 from talaria_bridge.hermes import HermesClient
 from talaria_bridge.operator import create_pairing
@@ -101,7 +102,8 @@ async def main() -> None:
     async def unused(msg: dict) -> None:
         pass
 
-    chat = ChatService(ChatStore(home / "chat.db"), {"meep": hermes}, unused)
+    chat = ChatService(ChatStore(home / "chat.db"), {"meep": hermes}, unused,
+                       blobs=BlobStore(home / "blobs"), inboxes={"meep": home / "inbox"})
     server = (OldBridge if "--old" in sys.argv else BridgeServer)(registry, key, settings, monitor, chat)
     tokens: list[str] = []
 

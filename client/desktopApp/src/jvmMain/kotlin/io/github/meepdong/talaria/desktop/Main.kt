@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Notification
@@ -29,6 +30,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import org.jetbrains.skia.Image
 import java.io.File
 import java.net.InetAddress
 import javax.swing.JOptionPane
@@ -58,7 +61,17 @@ fun main(args: Array<String>) {
         platform = if (windows) "windows" else "linux",
         defaultDeviceName = defaultDeviceName(),
         log = ConnectionLog(ConnectionLog.fileSink(logFile)),
+        imageDecoder = { bytes -> Image.makeFromEncoded(bytes).toComposeImageBitmap() },
     )
+    controller.setFilePicker { photos ->
+        val files = Attachments.pick(photos)  // on the UI thread: the dialog is modal
+        if (files.isNotEmpty()) {
+            scope.launch(Dispatchers.IO) {
+                val (ready, problem) = Attachments.prepare(files)
+                controller.addAttachments(ready, problem)
+            }
+        }
+    }
     controller.start()
     val loginItem = LoginItem.forThisComputer()
     val startHidden = LoginItem.MINIMIZED_FLAG in args

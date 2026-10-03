@@ -4,11 +4,13 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,11 +18,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -29,6 +33,8 @@ import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.paired
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as TalariaApplication
@@ -54,6 +60,26 @@ class MainActivity : ComponentActivity() {
                 ) {
                     askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
+            }
+
+            // 📎: the photo picker for photos, the document picker for anything else
+            val io = rememberCoroutineScope()
+            val onPicked = { uris: List<Uri> ->
+                if (uris.isNotEmpty()) {
+                    io.launch(Dispatchers.IO) {
+                        val (files, problem) = AndroidAttachments.prepare(this@MainActivity, uris)
+                        controller.addAttachments(files, problem)
+                    }
+                }
+            }
+            val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { onPicked(it) }
+            val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { onPicked(it) }
+            DisposableEffect(controller) {
+                controller.setFilePicker { photos ->
+                    if (photos) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    else pickFiles.launch(arrayOf("*/*"))
+                }
+                onDispose { controller.setFilePicker(null) }
             }
 
             // Back: from a conversation to the list, and from Connection to the chats.

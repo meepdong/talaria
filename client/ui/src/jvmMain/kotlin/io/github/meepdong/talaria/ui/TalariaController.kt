@@ -1,8 +1,10 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.ui.graphics.ImageBitmap
 import io.github.meepdong.talaria.chat.ChatRepository
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.FinishedReply
+import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.protocol.Sas
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -71,6 +74,8 @@ class TalariaController(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val tickMs: Long = 1_000,
     private val networkEveryMs: Long = 5_000,
+    /** Decodes photo bytes for thumbnails; each platform has its own image codecs. */
+    imageDecoder: (ByteArray) -> ImageBitmap? = { null },
 ) : TalariaActions {
     private sealed interface Mode {
         data class Connect(val name: String, val error: String? = null, val busy: Boolean = false) : Mode
@@ -86,6 +91,16 @@ class TalariaController(
     private val network = MutableStateFlow<NetworkStatus?>(null)
     private val tick = MutableStateFlow(nowMs())
     private val page = MutableStateFlow(Page())
+    private val images = ImageCache(imageDecoder)
+
+    /** Photos and files picked for the next message. */
+    private val pending = MutableStateFlow<List<OutgoingFile>>(emptyList())
+
+    /**
+     * Opens the platform's file picker, which hands its choice to [addAttachments]. Null while
+     * the app can't pick files, which hides the 📎 button.
+     */
+    private val picker = MutableStateFlow<((photos: Boolean) -> Unit)?>(null)
     private var pairJob: Job? = null
     private var started = false
 
@@ -96,9 +111,16 @@ class TalariaController(
         if (m is Mode.Connected) combine(m.client.state, m.chat.state) { st, c -> Live(m, st, c) } else flowOf(Live(m, null, null))
     }
 
-    private data class Extras(val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page)
+    private data class Extras(
+        val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
+        val pending: List<OutgoingFile>, val canAttach: Boolean,
+    )
 
-    private val extras = combine(log.entries, network, test, page) { e, n, t, p -> Extras(e, n, t, p) }
+    private val extras = combine(combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) }, pending, picker) { q, files, pick ->
+        Extras(q.a, q.b, q.c, q.d, files, pick != null)
+    }
+
+    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     val screen: StateFlow<Screen> = combine(live, extras, tick) { l, x, now ->
         render(l, x, now)
@@ -228,7 +250,32 @@ class TalariaController(
     }
 
     override fun sendMessage(text: String) {
-        chat?.send(text)
+        val c = chat ?: return
+        c.send(text, pending.value)
+        pending.value = emptyList()
+    }
+
+    override fun attachFiles(photos: Boolean) {
+        picker.value?.invoke(photos)
+    }
+
+    override fun removeAttachment(index: Int) {
+        pending.update { files -> files.filterIndexed { i, _ -> i != index } }
+    }
+
+    /** The platform's file picker: set while the app can show it, null otherwise. */
+    fun setFilePicker(pick: ((photos: Boolean) -> Unit)?) {
+        picker.value = pick
+    }
+
+    /**
+     * Files the user picked, already prepared by the platform (photos downscaled, location
+     * removed). [problem] says why some couldn't be added.
+     */
+    fun addAttachments(files: List<OutgoingFile>, problem: String? = null) {
+        val (fit, tooBig) = files.partition { it.bytes.size <= OutgoingFile.MAX_SIZE }
+        (problem ?: tooBig.firstOrNull()?.let { "${it.name} is over 20 MB, too large to send" })?.let { chat?.notice(it) }
+        pending.update { (it + fit).take(OutgoingFile.MAX_PER_MESSAGE) }
     }
 
     override fun retryMessage(key: String) {
@@ -267,7 +314,7 @@ class TalariaController(
 
     /** A reply typed into a notification, sent without opening the app. */
     fun replyFromNotification(conversationId: String, text: String) {
-        chat?.send(text, conversationId)
+        chat?.send(text, conversationId = conversationId)
     }
 
     private fun currentName(): String = when (val m = mode.value) {
@@ -328,7 +375,7 @@ class TalariaController(
                 Screen.Status(status.copy(canGoBack = true))
             } else {
                 Screen.Chat(chatView(l.chat ?: ChatState(), x.page.conversationOpen,
-                    state.phase == ConnectionState.Phase.CONNECTED, status, now), status)
+                    state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images), status)
             }
         }
     }

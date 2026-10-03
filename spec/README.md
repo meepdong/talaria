@@ -103,8 +103,8 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 | Method | Direction | Params → result |
 |---|---|---|
-| `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?}` → `{conversation_id, turn_id, title}` |
-| `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at, client_msg_id?}` |
+| `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?, attachments?}` → `{conversation_id, turn_id, title}` |
+| `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at, client_msg_id?, attachments?}` |
 | `chat.delta` | notification | `{conversation_id, turn_id, seq, kind, text?, tool?}` |
 | `chat.done` | notification | `{conversation_id, turn_id, seq, status, text, error?, usage?, runtime?}` |
 | `chat.cancel` | request | `{turn_id}` → `{turn_id, status}` |
@@ -114,7 +114,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.rename` | request | `{conversation_id, title}` → `{conversation_id, title}` |
 | `conversations.delete` | request | `{conversation_id}` → `{conversation_id, deleted}` |
 
-**Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` is reserved and rejected with `MODALITY_UNSUPPORTED` until attachments land.
+**Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` lists photos and files uploaded first (§10); `text` may then be empty.
 
 **Every device sees every turn.** `chat.started`, `chat.delta` and `chat.done` go to every session past `ready`, including turns sent from another device, so the phone and the laptop show the same conversation live. `chat.started` repeats the sender's `client_msg_id`, so the sending device can match it to the message it already shows, even before the `chat.send` result is handled.
 
@@ -130,8 +130,30 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **One turn at a time.** `chat.send` to a conversation whose turn is still running fails with `CONFLICT`. `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
 
-**History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
+**History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?, attachments?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
 
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) as above; `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
 Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.
+
+## 10. Attachments (M2)
+
+Photos and files travel over the session in chunks, so no second port or URL is needed. This replaces the HTTPS `PUT` upload sketched in PROTOCOL §9.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `blob.begin` | request | `{name, mime, size, sha256}` → `{blob_id, chunk_bytes}` |
+| `blob.put` | request | `{blob_id, offset, data}` → `{blob_id, received}` |
+| `blob.commit` | request | `{blob_id}` → `{blob_id, kind, name, mime, size}` |
+
+**Uploading.** `size` is at most 20 MiB and `sha256` is the lowercase hex digest of the whole file. The device sends chunks in order: `offset` is the number of bytes sent so far and `data` is base64 (standard alphabet, with padding) of at most `chunk_bytes` bytes (512 KiB). A chunk at the wrong offset fails with `CONFLICT`. `blob.commit` checks the size and digest; a mismatch fails with `INVALID_PARAMS` and drops the blob. An upload that fails part way is started again with a new `blob.begin`.
+
+**Sending.** `chat.send` takes `attachments: [{blob_id}]`, up to 10. Each committed blob can be sent once, by any device past `ready`; the bridge drops blobs not sent within an hour. `kind` is `image` for `image/jpeg`, `image/png`, `image/webp` and `image/gif` up to 5 MiB, and `file` for anything else.
+
+**What the agent gets.** Images go to the agent inline with the message, at most 7 MiB of them per message. Hermes's API takes no other files, so the bridge saves a `file` to an inbox folder the agent can read and adds a line to the message: `Attached file: <path> (<mime>, <size> bytes)`. An agent with no inbox configured refuses files with `MODALITY_UNSUPPORTED`.
+
+**What devices see.** `chat.started`, the `chat.turn.get` snapshot and user messages in `chat.history` carry `attachments: [{kind, name, mime, size?}]`. `user_text` and history `text` leave out the `Attached file:` lines. Devices show their own copy of a photo they sent; the bridge does not send image bytes back, so other devices and history show a placeholder.
+
+Clients SHOULD downscale photos to 1568 px on the long edge and MUST strip location metadata before upload (PROTOCOL §10.3).
+
+Schemas: `blob.begin`, `blob.begin.result`, `blob.put`, `blob.put.result`, `blob.commit`, `blob.commit.result`; `chat.send`, `chat.started`, `chat.turn.get.result` and `chat.history.result` gain `attachments`.

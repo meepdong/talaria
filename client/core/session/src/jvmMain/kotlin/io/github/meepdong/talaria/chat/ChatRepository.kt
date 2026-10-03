@@ -29,6 +29,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.UUID
 
 /** What the chat needs from the bridge session; [TnpClient.asChatApi] is the real one. */
@@ -81,6 +83,9 @@ class ChatRepository(
     /** Bumped whenever a turn starts or ends in a conversation, so a history page fetched meanwhile is known to be stale. Guarded by [lock]. */
     private val changes = HashMap<String, Int>()
     private val lock = Mutex()
+
+    /** Files of messages not yet taken by the bridge, by client_msg_id, so a retry can upload them again. */
+    private val outgoing = java.util.concurrent.ConcurrentHashMap<String, List<OutgoingFile>>()
     private var job: Job? = null
 
     fun start() {
@@ -110,13 +115,18 @@ class ChatRepository(
         _state.update { s -> s.copy(openId = null, draft = s.draft.filter { it.state == MessageState.SENDING }) }
     }
 
-    /** Send [text] to [conversationId], the open conversation by default (null starts a new one). */
-    fun send(text: String, conversationId: String? = _state.value.openId) {
+    /**
+     * Send [text] and [files] to [conversationId], the open conversation by default (null starts
+     * a new one). Files are uploaded first (spec/README.md §10).
+     */
+    fun send(text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId) {
         val body = text.trim()
-        if (body.isEmpty()) return
+        if (body.isEmpty() && files.isEmpty()) return
         val cmid = newClientMsgId()
         val conv = conversationId
-        val msg = ChatMessage("local:$cmid", Role.USER, body, nowMs(), MessageState.SENDING, clientMsgId = cmid)
+        val msg = ChatMessage("local:$cmid", Role.USER, body, nowMs(), MessageState.SENDING, clientMsgId = cmid,
+            attachments = files.map { it.toAttachment() })
+        if (files.isNotEmpty()) outgoing[cmid] = files
         _state.update { s -> s.withMessages(conv) { it + msg } }
         scope.launch { deliver(conv, body, cmid) }
     }
@@ -181,17 +191,21 @@ class ChatRepository(
 
     fun dismissNotice() = _state.update { it.copy(notice = null) }
 
-    private fun notice(text: String) = _state.update { it.copy(notice = text) }
+    fun notice(text: String) = _state.update { it.copy(notice = text) }
 
     // requests
 
     private suspend fun deliver(conv: String?, text: String, cmid: String) {
         try {
+            // uploaded again on a retry: the bridge drops a blob once it is sent or an hour old
+            val blobs = outgoing[cmid].orEmpty().map { upload(it) }
             val r = api.request("chat.send", buildJsonObject {
                 put("text", text)
                 conv?.let { put("conversation_id", it) }
                 put("client_msg_id", cmid)
+                if (blobs.isNotEmpty()) put("attachments", JsonArray(blobs.map { id -> buildJsonObject { put("blob_id", id) } }))
             }, SEND_TIMEOUT_MS)
+            outgoing.remove(cmid)
             lock.withLock { onSent(r, cmid) }
         } catch (e: CancellationException) {
             throw e
@@ -201,6 +215,31 @@ class ChatRepository(
         } catch (e: TnpException) {
             markNotSent(conv, cmid, "Not connected to the bridge")
         }
+    }
+
+    /** Upload one file in chunks; returns its blob_id. */
+    private suspend fun upload(file: OutgoingFile): String {
+        val sha = MessageDigest.getInstance("SHA-256").digest(file.bytes).joinToString("") { "%02x".format(it) }
+        val begin = api.request("blob.begin", buildJsonObject {
+            put("name", file.name)
+            put("mime", file.mime)
+            put("size", file.bytes.size)
+            put("sha256", sha)
+        })
+        val id = begin.str("blob_id") ?: throw RpcException(0, "The bridge didn't start the upload")
+        val chunk = (begin.long("chunk_bytes")?.toInt() ?: CHUNK_BYTES).coerceIn(1, CHUNK_BYTES)
+        var offset = 0
+        while (offset < file.bytes.size) {
+            val end = minOf(file.bytes.size, offset + chunk)
+            api.request("blob.put", buildJsonObject {
+                put("blob_id", id)
+                put("offset", offset)
+                put("data", Base64.getEncoder().encodeToString(file.bytes.copyOfRange(offset, end)))
+            }, SEND_TIMEOUT_MS)
+            offset = end
+        }
+        api.request("blob.commit", buildJsonObject { put("blob_id", id) }, SEND_TIMEOUT_MS)
+        return id
     }
 
     private fun markNotSent(conv: String?, cmid: String, error: String) = _state.update { s ->
@@ -248,7 +287,7 @@ class ChatRepository(
                     if (before == null && changes[conv] != version && ++attempt < STALE_RETRIES) return@withLock false
                     _state.update { s ->
                         val old = s.threads[conv] ?: ConversationThread()
-                        val messages = if (before == null) page + liveTail(old.messages, page) else page + old.messages
+                        val messages = if (before == null) withPreviews(page, old.messages) + liveTail(old.messages, page) else page + old.messages
                         s.copy(threads = s.threads + (conv to old.copy(messages = messages, nextBefore = next, loaded = true, loading = false)))
                     }
                     true
@@ -272,6 +311,21 @@ class ChatRepository(
         val lastAsked = page.lastOrNull { it.role == Role.USER }?.text
         return old.filter {
             it.state in LOCAL_STATES || (it.role == Role.USER && it.turnId in streaming && it.text != lastAsked)
+        }
+    }
+
+    /** History has no photo bytes: keep the ones this device sent, matched by text and photo count. */
+    private fun withPreviews(page: List<ChatMessage>, old: List<ChatMessage>): List<ChatMessage> {
+        val donors = old.filter { m -> m.role == Role.USER && m.attachments.any { it.preview != null } }.toMutableList()
+        if (donors.isEmpty()) return page
+        return page.map { m ->
+            val images = m.attachments.count { it.kind == Attachment.Kind.IMAGE }
+            if (m.role != Role.USER || images == 0) return@map m
+            val donor = donors.firstOrNull { d -> d.text == m.text && d.attachments.count { it.kind == Attachment.Kind.IMAGE } == images }
+                ?: return@map m
+            donors.remove(donor)
+            val previews = donor.attachments.filter { it.kind == Attachment.Kind.IMAGE }.iterator()
+            m.copy(attachments = m.attachments.map { a -> if (a.kind == Attachment.Kind.IMAGE && previews.hasNext()) a.copy(preview = previews.next().preview, name = a.name) else a })
         }
     }
 
@@ -354,6 +408,7 @@ class ChatRepository(
         val userText = p.str("user_text").orEmpty()
         val at = (p.long("started_at") ?: (nowMs() / 1000)) * 1000
         val cmid = p.str("client_msg_id")
+        val attachments = parseAttachments(p)
         lastSeq.putIfAbsent(turn, 0)
         changed(conv)
         _state.update { s0 ->
@@ -367,20 +422,24 @@ class ChatRepository(
             if (cmid != null) s = s.claimDraft(cmid, conv)
             val thread = s.threads[conv]
             if (thread != null && thread.loaded) {
-                s = s.withMessages(conv) { list -> withTurn(list, turn, userText, at, cmid) }
+                s = s.withMessages(conv) { list -> withTurn(list, turn, userText, at, cmid, attachments) }
             }
             s
         }
     }
 
     /** Make sure [list] has this turn's user message and a streaming reply after it. */
-    private fun withTurn(list: List<ChatMessage>, turn: String, userText: String, atMs: Long, cmid: String?): List<ChatMessage> {
+    private fun withTurn(
+        list: List<ChatMessage>, turn: String, userText: String, atMs: Long, cmid: String?,
+        attachments: List<Attachment> = emptyList(),
+    ): List<ChatMessage> {
         var out = list
         val mine = out.indexOfFirst { (cmid != null && it.clientMsgId == cmid) || (it.role == Role.USER && it.turnId == turn) }
         out = if (mine >= 0) {
             out.mapIndexed { i, m -> if (i == mine) m.copy(state = MessageState.DONE, turnId = turn, error = null) else m }
         } else {
-            out + ChatMessage("user:$turn", Role.USER, userText, atMs, MessageState.DONE, turnId = turn, clientMsgId = cmid)
+            out + ChatMessage("user:$turn", Role.USER, userText, atMs, MessageState.DONE, turnId = turn, clientMsgId = cmid,
+                attachments = attachments)
         }
         if (out.none { it.key == "reply:$turn" }) {
             out = out + ChatMessage("reply:$turn", Role.ASSISTANT, "", null, MessageState.STREAMING, turnId = turn)
@@ -483,7 +542,7 @@ class ChatRepository(
                     val base = if (list.none { it.turnId == turn } && list.lastOrNull { it.role == Role.USER }?.text == userText) {
                         list.mapIndexed { i, m -> if (i == list.indexOfLast { it.role == Role.USER }) m.copy(turnId = turn) else m }
                     } else list
-                    withTurn(base, turn, userText, at, null).map { m ->
+                    withTurn(base, turn, userText, at, null, parseAttachments(t)).map { m ->
                         if (m.key != "reply:$turn") m
                         else m.copy(text = t.str("text").orEmpty(), tools = tools,
                             commentary = if (status == "running") commentary else null,
@@ -517,7 +576,14 @@ class ChatRepository(
             key = "h:${m.str("id")}", role = role, text = m.str("text").orEmpty(),
             atMs = m.long("ts")?.times(1000),
             toolNames = (m["tools"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
+            attachments = parseAttachments(m),
         )
+    }
+
+    private fun parseAttachments(o: JsonObject): List<Attachment> = (o["attachments"] as? JsonArray).orEmpty().mapNotNull { e ->
+        val a = e as? JsonObject ?: return@mapNotNull null
+        val kind = if (a.str("kind") == "image") Attachment.Kind.IMAGE else Attachment.Kind.FILE
+        Attachment(kind, a.str("name") ?: "file", a.str("mime") ?: "application/octet-stream", a.long("size"))
     }
 
     companion object {
@@ -525,6 +591,7 @@ class ChatRepository(
         const val PAGE = 50
         const val SEND_TIMEOUT_MS = 30_000L
         const val HISTORY_TIMEOUT_MS = 30_000L
+        const val CHUNK_BYTES = 512 * 1024
         private const val STALE_RETRIES = 3
         private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.STREAMING)
     }

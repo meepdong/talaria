@@ -24,7 +24,7 @@ Status: **draft, unstable**. Everything here may change before v1.0. The key wor
 | Subprotocol | `tnp.v0` (sent in `Sec-WebSocket-Protocol`) |
 | Endpoint | `wss://<bridge-host>/tnp` |
 | Framing | One JSON-RPC 2.0 message per text frame, UTF-8 |
-| Max frame | 1 MiB. Larger payloads use `blob.upload` (§9). |
+| Max frame | 1 MiB. Larger payloads go in chunks (§9). |
 | Network | A private network (Tailscale, Headscale, plain WireGuard or similar) is RECOMMENDED. The bridge SHOULD NOT be exposed to the public internet. |
 | TLS certificate | Either publicly trusted (e.g. via `tailscale serve`) or **self-signed and pinned**: the pairing payload carries `tls_spki_sha256`, and clients MUST then accept only that certificate key |
 
@@ -280,7 +280,7 @@ The agent can list rules (`rules.list`, tier 1) and propose changes. **It can ne
 ## 9. Blobs (photos, files)
 
 - Small (≤ 256 KiB): base64 inside the result, as `{"blob": {"mime": "image/jpeg", "b64": "…"}}`.
-- Large: the device calls `blob.upload` and receives a one-time HTTPS `PUT` URL on the bridge (valid 5 minutes, size-limited). The command result then references `blob_id`.
+- Large, or sent by the device (photos and files for chat): uploaded in 512 KiB chunks over the session with `blob.begin`, `blob.put` and `blob.commit`, then referenced by `blob_id`. No second port or URL. Details: spec/README.md §10.
 
 ## 10. Status, agents, chat and groups
 
@@ -332,7 +332,7 @@ Clients warn before sending a modality the target agent does not accept.
 
 - A Talaria conversation maps to a Hermes **session** on the API server's Sessions API (`/api/sessions/{id}/chat/stream`), so history lives on the server and survives app reinstalls. The Responses API's named conversations were the first plan, but Hermes keeps only the last 100 stored responses there.
 - **The bridge holds the stream to the agent.** Hermes stops a run when its stream client disconnects, so the device never holds it: a reply finishes even when the phone drops off, and every connected device receives it. Byte-level details and schemas: spec/README.md §9.
-- **Attachments** reference blobs (§9): `{"blob_id": "b-12", "mime": "image/jpeg", "name": "receipt.jpg"}`. Clients SHOULD downscale images (long edge ≤ 1568 px) and MUST strip location metadata (EXIF GPS) before upload unless the user opts out for that message.
+- **Attachments** reference uploaded blobs (§9): `{"blob_id": "b-12"}`. The bridge passes images to the agent inline and saves other files to an inbox the agent can read. Clients SHOULD downscale images (long edge ≤ 1568 px) and MUST strip location metadata (EXIF GPS) before upload unless the user opts out for that message.
 - **Voice** is converted to text **on the device** before sending. Audio is only uploaded if the user explicitly attaches an audio file.
 - **Assistant invocations** set `"origin": "assistant"` and MAY include `"context": {"screen_text": "…", "screenshot_blob": "b-31", "foreground_app": "com.example"}`. Context is included **only after the user confirms it for that request**. The bridge passes it to the agent marked as untrusted content.
 

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import __version__
 from .agents import AgentConfig, AgentMonitor, load_agents
+from .blobs import BlobStore
 from .chat import ChatService, ChatStore
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -70,7 +71,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
 
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
-    clients = {}
+    clients, inboxes = {}, {}
     for agent in agents:
         if agent.api_url is None:
             continue
@@ -80,13 +81,16 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
             print(f"WARNING: no chat for agent {agent.id}: cannot read its API key ({exc})", file=sys.stderr)
             continue
         clients[agent.id] = HermesClient(agent.api_url, api_key)
+        if agent.inbox_dir is not None:
+            inboxes[agent.id] = Path(agent.inbox_dir)
     if not clients:
         return None
 
     async def not_serving(msg: dict) -> None:  # replaced by BridgeServer.broadcast
         pass
 
-    return ChatService(ChatStore(home / "chat.db"), clients, not_serving)
+    return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
+                       blobs=BlobStore(home / "blobs"), inboxes=inboxes)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -152,6 +156,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(f"  agents:    {', '.join(a.id for a in agents) or 'none configured (agents.json)'}")
     print(f"  chat:      {', '.join(chat.agents) if chat else 'off (no agent has api_url in agents.json)'}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
+    sys.stdout.flush()  # under systemd stdout is a pipe, so these lines would wait in a buffer
 
     async def run() -> None:
         async with bridge.serve():

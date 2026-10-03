@@ -1,6 +1,9 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +48,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isShiftPressed
@@ -249,9 +254,14 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
 private fun MessageBubble(m: MessageItem, actions: TalariaActions) {
     if (m.fromUser) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-            Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(16.dp), modifier = Modifier.widthIn(max = 560.dp).testTag("user-${m.key}")) {
-                Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+            m.attachments.forEach { a ->
+                AttachmentView(a, Modifier.padding(bottom = 4.dp).testTag("attachment-${m.key}"))
+            }
+            if (m.text.isNotEmpty()) {
+                Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = RoundedCornerShape(16.dp), modifier = Modifier.widthIn(max = 560.dp).testTag("user-${m.key}")) {
+                    Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                }
             }
             val footer = when (m.state) {
                 ItemState.SENDING -> "Sending…"
@@ -301,11 +311,28 @@ private fun MessageBubble(m: MessageItem, actions: TalariaActions) {
     }
 }
 
+/** A photo as a thumbnail when its bytes are here, otherwise a chip with its name. */
+@Composable
+private fun AttachmentView(a: AttachmentChip, modifier: Modifier = Modifier) {
+    val image = a.image
+    if (image != null) {
+        Image(image, contentDescription = a.name, contentScale = ContentScale.Fit,
+            modifier = modifier.widthIn(max = 280.dp).heightIn(max = 280.dp).clip(RoundedCornerShape(12.dp)))
+    } else {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = modifier) {
+            Text((if (a.isImage) "📷 " else "📎 ") + a.name + (a.detail?.let { " · $it" } ?: ""),
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 @Composable
 private fun Composer(view: ChatView, actions: TalariaActions) {
     var text by remember { mutableStateOf("") }
+    val ready = view.canSend && (text.isNotBlank() || view.pending.isNotEmpty())
     fun send() {
-        if (view.canSend && text.isNotBlank()) {
+        if (ready) {
             actions.sendMessage(text)
             text = ""
         }
@@ -315,7 +342,36 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(4.dp).testTag("composer-hint"))
         }
+        if (view.pending.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp).testTag("pending"),
+                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                view.pending.forEachIndexed { i, a ->
+                    Box {
+                        AttachmentView(a, Modifier.heightIn(max = 72.dp))
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.inverseSurface,
+                            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                            modifier = Modifier.align(Alignment.TopEnd).size(22.dp)
+                                .clickable { actions.removeAttachment(i) }.testTag("remove-$i")) {
+                            Box(contentAlignment = Alignment.Center) { Text("✕", style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (view.canAttach) {
+                var menu by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { menu = true }, enabled = view.pending.size < 10,
+                        modifier = Modifier.heightIn(min = 52.dp).testTag("attach")) { Text("📎") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Photo") }, modifier = Modifier.testTag("attach-photo"),
+                            onClick = { menu = false; actions.attachFiles(photos = true) })
+                        DropdownMenuItem(text = { Text("File") }, modifier = Modifier.testTag("attach-file"),
+                            onClick = { menu = false; actions.attachFiles(photos = false) })
+                    }
+                }
+            }
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it.take(32000) },
@@ -335,7 +391,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
             if (running != null) {
                 OutlinedButton(onClick = { actions.stopReply(running) }, modifier = Modifier.testTag("stop")) { Text("■ Stop") }
             } else {
-                Button(onClick = ::send, enabled = view.canSend && text.isNotBlank(), modifier = Modifier.testTag("send")) {
+                Button(onClick = ::send, enabled = ready, modifier = Modifier.testTag("send")) {
                     Text("➤")
                 }
             }

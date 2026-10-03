@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import pytest
 from conftest import Bridge, check, paired_device
 
 from talaria_bridge.agents import AgentConfig, load_agents
+from talaria_bridge.blobs import BlobStore
 from talaria_bridge.chat import ChatService, ChatStore, history_messages
 from talaria_bridge.cli import make_chat
 from talaria_bridge.hermes import HermesClient, parse_sse
@@ -44,6 +47,7 @@ class FakeHermes:
         self.stopped: list[str] = []
         self.runs = 0
         self.down = False
+        self.messages: list = []  # every message a turn was sent with
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -80,6 +84,7 @@ class FakeHermes:
             return httpx.Response(200, json={"object": "list", "data": page})
         if path.endswith("/chat/stream"):
             text = json.loads(req.content)["message"]
+            self.messages.append(text)
             return httpx.Response(200, headers={"content-type": "text/event-stream"},
                                   content=self.stream(session, text))
         return httpx.Response(404)
@@ -116,7 +121,8 @@ async def chat_bridge(tmp_path: Path, settings: ServerSettings):
     async def unused(msg: dict) -> None:
         pass
 
-    chat = ChatService(ChatStore(tmp_path / "chat.db"), {"hermes": client}, unused)
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), {"hermes": client}, unused,
+                       blobs=BlobStore(tmp_path / "blobs"), inboxes={"hermes": tmp_path / "inbox"})
     registry = Registry(tmp_path / "bridge.db")
     server = BridgeServer(registry, keys.generate_key(), settings, chat=chat)
     async with server.serve() as ws_server:
@@ -267,7 +273,7 @@ async def test_errors(chat_bridge):
         reply = await recv(ws)
         assert reply["error"]["code"] == code, (method, params, reply)
     await ws.send(m.encode(m.request("a1", "chat.send", {"text": "x", "attachments": [{"blob_id": "b-1"}]})))
-    assert (await recv(ws))["error"]["code"] == m.MODALITY_UNSUPPORTED
+    assert (await recv(ws))["error"]["code"] == m.NOT_FOUND
 
     hermes.down = True
     reply = await call(ws, "d1", "chat.send", {"text": "Anyone there?"})
@@ -330,13 +336,17 @@ def test_history_messages():
     rows = [
         {"id": 3, "role": "assistant", "content": None, "timestamp": 12,
          "tool_calls": [{"function": {"name": "web_search"}}]},
-        {"id": 2, "role": "user", "content": [{"type": "text", "text": "Look"}, {"type": "image_url"}], "timestamp": 11},
+        {"id": 2, "role": "user", "content": [
+            {"type": "text", "text": "Look\n\nAttached file: /in/c-1/b-0123456789abcdef01234567-a (1).pdf (application/pdf, 12 bytes)"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}], "timestamp": 11},
         {"id": 4, "role": "tool", "content": "results", "timestamp": 13},
         {"id": 5, "role": "assistant", "content": "Found it", "timestamp": 14.5},
         {"id": 6, "role": "user", "content": "hidden", "timestamp": 15, "display_kind": "hidden"},
     ]
     assert history_messages(rows) == [
-        {"id": "2", "role": "user", "text": "Look\n[image]", "ts": 11},
+        {"id": "2", "role": "user", "text": "Look", "ts": 11, "attachments": [
+            {"kind": "image", "name": "Photo", "mime": "image/png"},
+            {"kind": "file", "name": "a (1).pdf", "mime": "application/pdf", "size": 12}]},
         {"id": "5", "role": "assistant", "text": "Found it", "ts": 14, "tools": ["web_search"]},
     ]
 
@@ -367,3 +377,124 @@ def test_load_agents_with_chat(tmp_path: Path):
     path.write_text(json.dumps({"agents": [{"id": "hermes", "health_url": "http://x/h", "api_url": "http://x"}]}))
     with pytest.raises(ValueError):
         load_agents(path)
+
+
+async def upload(ws, name: str, mime: str, data: bytes, chunk: int | None = None) -> dict:
+    begin = check("blob.begin.result", await call(ws, "b0", "blob.begin", {
+        "name": name, "mime": mime, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}))["result"]
+    step = chunk or begin["chunk_bytes"]
+    for offset in range(0, len(data), step):
+        put = check("blob.put.result", await call(ws, f"b{offset}", "blob.put", {
+            "blob_id": begin["blob_id"], "offset": offset,
+            "data": base64.b64encode(data[offset:offset + step]).decode()}))["result"]
+        assert put["received"] == min(len(data), offset + step)
+    return check("blob.commit.result", await call(ws, "bc", "blob.commit", {"blob_id": begin["blob_id"]}))["result"]
+
+
+async def test_photo_and_file_reach_the_agent(chat_bridge, tmp_path: Path):
+    bridge, hermes = chat_bridge
+    ws = await connected(bridge)
+    photo = b"\xff\xd8jpeg" * 100
+    pdf = b"%PDF-1.7 report" * 70_000  # about 1 MiB: three chunks
+    image = await upload(ws, "IMG_1.jpg", "image/jpeg", photo, chunk=500)
+    assert image["kind"] == "image" and image["size"] == len(photo)
+    doc = await upload(ws, "../Q3 report.pdf", "application/pdf", pdf)
+    assert doc == {"blob_id": doc["blob_id"], "kind": "file", "name": "../Q3 report.pdf",
+                   "mime": "application/pdf", "size": len(pdf)}
+
+    res = check("chat.send.result", await call(ws, "s1", "chat.send", {
+        "text": "", "attachments": [{"blob_id": image["blob_id"]}, {"blob_id": doc["blob_id"]}]}))["result"]
+    assert res["title"] == "IMG_1.jpg"
+    events = await until_done(ws, res["turn_id"])
+    started = events[0]["params"]
+    assert started["user_text"] == ""
+    assert started["attachments"] == [
+        {"kind": "image", "name": "IMG_1.jpg", "mime": "image/jpeg", "size": len(photo)},
+        {"kind": "file", "name": "../Q3 report.pdf", "mime": "application/pdf", "size": len(pdf)}]
+
+    sent = hermes.messages[-1]
+    saved = tmp_path / "inbox" / res["conversation_id"] / f"{doc['blob_id']}-Q3 report.pdf"
+    assert saved.read_bytes() == pdf
+    assert sent == [
+        {"type": "text", "text": f"Attached file: {saved} (application/pdf, {len(pdf)} bytes)"},
+        {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(photo).decode()}]
+
+    # each blob is sent once
+    again = await call(ws, "s2", "chat.send", {"text": "again", "conversation_id": res["conversation_id"],
+                                               "attachments": [{"blob_id": image["blob_id"]}]})
+    assert again["error"]["code"] == m.NOT_FOUND
+    listed = (await call(ws, "l1", "conversations.list"))["result"]["conversations"]
+    assert listed[0]["last_message"]["role"] == "assistant"
+
+    history = (await call(ws, "h1", "chat.history", {"conversation_id": res["conversation_id"]}))["result"]
+    assert history["messages"][0]["text"] == ""
+    assert history["messages"][0]["attachments"] == [
+        {"kind": "image", "name": "Photo", "mime": "image/jpeg"},
+        {"kind": "file", "name": "Q3 report.pdf", "mime": "application/pdf", "size": len(pdf)}]
+    await ws.close()
+
+
+async def test_upload_errors(chat_bridge):
+    bridge, hermes = chat_bridge
+    ws = await connected(bridge)
+    data = b"hello world"
+    digest = hashlib.sha256(data).hexdigest()
+    bad_begins = [
+        {"name": "a", "mime": "text/plain", "size": 21 * 1024 * 1024, "sha256": digest},
+        {"name": "a", "mime": "not a type", "size": 11, "sha256": digest},
+        {"name": "a", "mime": "text/plain", "size": 11, "sha256": "ABC"},
+    ]
+    for i, params in enumerate(bad_begins):
+        await ws.send(m.encode(m.request(f"x{i}", "blob.begin", params)))
+        assert (await recv(ws))["error"]["code"] == m.INVALID_PARAMS
+
+    blob = (await call(ws, "b1", "blob.begin", {"name": "a.txt", "mime": "text/plain", "size": 11, "sha256": digest}))
+    blob_id = blob["result"]["blob_id"]
+    wrong_offset = await call(ws, "p1", "blob.put", {"blob_id": blob_id, "offset": 3, "data": "aGVsbG8="})
+    assert wrong_offset["error"]["code"] == m.CONFLICT
+    not_b64 = await call(ws, "p2", "blob.put", {"blob_id": blob_id, "offset": 0, "data": "@@@@"})
+    assert not_b64["error"]["code"] == m.INVALID_PARAMS
+    await call(ws, "p3", "blob.put", {"blob_id": blob_id, "offset": 0, "data": base64.b64encode(b"hello").decode()})
+    short = await call(ws, "c1", "blob.commit", {"blob_id": blob_id})
+    assert short["error"]["code"] == m.INVALID_PARAMS  # 5 of 11 bytes, so the blob is dropped
+    gone = await call(ws, "c2", "blob.commit", {"blob_id": blob_id})
+    assert gone["error"]["code"] == m.NOT_FOUND
+
+    unfinished = (await call(ws, "b2", "blob.begin", {"name": "a", "mime": "text/plain", "size": 11, "sha256": digest}))
+    send = await call(ws, "s1", "chat.send", {"text": "x", "attachments": [{"blob_id": unfinished["result"]["blob_id"]}]})
+    assert send["error"]["code"] == m.NOT_FOUND
+    await ws.close()
+
+
+async def test_files_need_an_inbox_and_a_failed_send_keeps_the_blob(chat_bridge):
+    bridge, hermes = chat_bridge
+    bridge.server.chat.inboxes.clear()
+    ws = await connected(bridge)
+    doc = await upload(ws, "notes.txt", "text/plain", b"notes")
+    refused = await call(ws, "s1", "chat.send", {"text": "read this", "attachments": [{"blob_id": doc["blob_id"]}]})
+    assert refused["error"]["code"] == m.MODALITY_UNSUPPORTED
+    photo = await upload(ws, "p.png", "image/png", b"png")
+    hermes.down = True
+    failed = await call(ws, "s2", "chat.send", {"text": "look", "attachments": [{"blob_id": photo["blob_id"]}]})
+    assert failed["error"]["code"] == m.AGENT_UNAVAILABLE
+    hermes.down = False
+    ok = await call(ws, "s3", "chat.send", {"text": "look", "attachments": [{"blob_id": photo["blob_id"]}]})
+    await until_done(ws, ok["result"]["turn_id"])
+    assert hermes.messages[-1][0] == {"type": "text", "text": "look"}
+    await ws.close()
+
+
+def test_blob_store_expires_and_clears_leftovers(tmp_path: Path):
+    now = [0.0]
+    (tmp_path / "blobs").mkdir()
+    (tmp_path / "blobs" / "b-old").write_bytes(b"left over")
+    store = BlobStore(tmp_path / "blobs", clock=lambda: now[0])
+    assert list((tmp_path / "blobs").iterdir()) == []
+    data = b"x"
+    begin = store.begin({"name": "x", "mime": "text/plain", "size": 1, "sha256": hashlib.sha256(data).hexdigest()})
+    store.put({"blob_id": begin["blob_id"], "offset": 0, "data": "eA=="})
+    store.commit({"blob_id": begin["blob_id"]})
+    now[0] = 3601
+    with pytest.raises(Exception, match="Unknown"):
+        store.take(begin["blob_id"])
+    assert list((tmp_path / "blobs").iterdir()) == []

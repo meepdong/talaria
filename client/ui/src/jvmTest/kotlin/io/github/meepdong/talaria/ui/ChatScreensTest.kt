@@ -14,11 +14,13 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import io.github.meepdong.talaria.chat.Attachment
 import io.github.meepdong.talaria.chat.ChatMessage
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.ConversationSummary
 import io.github.meepdong.talaria.chat.ConversationThread
 import io.github.meepdong.talaria.chat.MessageState
+import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ToolStep
 import kotlin.test.Test
@@ -42,6 +44,8 @@ class ChatScreensTest {
         override fun retryMessage(key: String) { calls += "retry $key" }
         override fun stopReply(turnId: String) { calls += "stop $turnId" }
         override fun showStatus() { calls += "status" }
+        override fun attachFiles(photos: Boolean) { calls += "attach $photos" }
+        override fun removeAttachment(index: Int) { calls += "remove $index" }
     }
 
     private val status = StatusView(
@@ -146,5 +150,27 @@ class ChatScreensTest {
         val inline = inlineMarkdown("a **b** `c` *d* 2*3*4 snake_case_name", androidx.compose.ui.graphics.Color.Gray)
         assertEquals("a b c d 2*3*4 snake_case_name", inline.text)
         assertEquals(3, inline.spanStyles.size)
+    }
+
+    @Test
+    fun attachments() = runComposeUiTest {
+        val actions = Recorder()
+        val sent = ChatMessage("h:9", Role.USER, "", 1_700_000_000_000, attachments = listOf(
+            Attachment(Attachment.Kind.IMAGE, "Photo", "image/jpeg"),
+            Attachment(Attachment.Kind.FILE, "report.pdf", "application/pdf", 12 * 1024)))
+        val s = state().let { it.copy(threads = it.threads.mapValues { (_, t) -> t.copy(messages = t.messages + sent) }) }
+        val pending = listOf(OutgoingFile("notes.txt", "text/plain", ByteArray(10)))
+        val v = chatView(s, true, true, status, 1_700_000_100_000, pending, canAttach = true)
+        assertEquals(listOf(AttachmentChip("Photo", true, null), AttachmentChip("report.pdf", false, "12 KB")), v.messages.last().attachments)
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        onNodeWithText("📎 report.pdf · 12 KB").assertExists()
+        onNodeWithText("📎 notes.txt · 10 B").assertExists()
+        onNodeWithTag("remove-0").performClick()
+        onNodeWithTag("attach").performClick()
+        onNodeWithTag("attach-file").performClick()
+        onNodeWithTag("send").performClick() // a file alone can be sent without text
+        assertEquals(listOf("remove 0", "attach false", "send "), actions.calls)
     }
 }
