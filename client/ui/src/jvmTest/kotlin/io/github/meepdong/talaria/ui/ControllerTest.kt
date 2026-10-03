@@ -136,6 +136,60 @@ class ControllerTest {
         assertTrue(c.await<Screen.Connect> { it.error != null }.error!!.contains("pair again"))
     }
 
+    private class FakeInput : SpeechInput {
+        var listener: SpeechInput.Listener? = null
+        var stops = 0
+        override fun start(listener: SpeechInput.Listener) { this.listener = listener }
+        override fun stop() { stops++ }
+    }
+
+    private class FakeOutput : SpeechOutput {
+        val said = mutableListOf<String>()
+        var onDone: (() -> Unit)? = null
+        override fun speak(text: String, onDone: () -> Unit) { said += text; this.onDone = onDone }
+        override fun stop() { onDone?.invoke() }
+    }
+
+    @Test
+    fun dictationAndReadingAloud() = runBlocking {
+        val key = keys.create()
+        store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
+        val prefs = Prefs.Memory()
+        val output = FakeOutput()
+        val c = TalariaController(scope, keys, store, "linux", "Laptop", transport = unreachable, pairer = pairer,
+            networkCheck = { NetworkStatus(NetworkStatus.Kind.NONE, "off") }, speechOutput = output, prefs = prefs)
+        c.start()
+        assertEquals(false, c.await<Screen.Chat>().view.voice.canDictate)
+        val input = FakeInput()
+        c.setSpeechInput(input)
+        c.await<Screen.Chat> { it.view.voice.canDictate && it.view.voice.canSpeak }
+
+        c.toggleDictation()
+        input.listener!!.partial("book a")
+        assertEquals("book a", c.await<Screen.Chat> { it.view.voice.heard == "book a" }.view.voice.heard)
+        c.toggleDictation()
+        assertEquals(1, input.stops)
+        input.listener!!.done(" book a table ")
+        val dictation = c.await<Screen.Chat> { it.view.voice.dictation != null }.view.voice
+        assertEquals(false, dictation.listening)
+        assertEquals("book a table", dictation.dictation!!.text)
+        assertEquals(false, dictation.dictation!!.send)
+        c.dictationTaken(dictation.dictation!!.id)
+        c.await<Screen.Chat> { it.view.voice.dictation == null }
+
+        c.speak("h:2", "**Goa** it is")
+        assertEquals(listOf("Goa it is"), output.said)
+        c.await<Screen.Chat> { it.view.voice.speakingKey == "h:2" }
+        c.speak("h:2", "**Goa** it is") // a second tap stops it
+        c.await<Screen.Chat> { it.view.voice.speakingKey == null }
+
+        c.setReadAloud(true)
+        c.setAutoSend(true)
+        assertTrue(prefs.get(TalariaController.PREF_READ_ALOUD, false))
+        assertTrue(c.await<Screen.Chat> { it.view.voice.autoSend }.view.voice.readAloud)
+        c.close()
+    }
+
     @Test
     fun forgetClearsThePairingAndKey() = runBlocking {
         val key: DeviceKey = keys.create()

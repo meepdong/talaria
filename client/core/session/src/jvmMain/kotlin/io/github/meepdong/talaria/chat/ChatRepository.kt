@@ -80,6 +80,9 @@ class ChatRepository(
     private val lastSeq = HashMap<String, Int>()
     private val syncing = HashSet<String>()
 
+    /** Turns asked from this device. Guarded by [lock]. */
+    private val mine = HashSet<String>()
+
     /** Bumped whenever a turn starts or ends in a conversation, so a history page fetched meanwhile is known to be stale. Guarded by [lock]. */
     private val changes = HashMap<String, Int>()
     private val lock = Mutex()
@@ -389,6 +392,7 @@ class ChatRepository(
         val title = r.str("title") ?: "Conversation"
         lastSeq.putIfAbsent(turn, 0)
         changed(conv)
+        mine += turn
         _state.update { s0 ->
             var s = s0.claimDraft(cmid, conv)
             s = s.withMessages(conv) { list ->
@@ -411,6 +415,9 @@ class ChatRepository(
         val attachments = parseAttachments(p)
         lastSeq.putIfAbsent(turn, 0)
         changed(conv)
+        if (cmid != null && _state.value.let { s -> (s.draft + s.threads.values.flatMap { it.messages }).any { it.key == "local:$cmid" } }) {
+            mine += turn
+        }
         _state.update { s0 ->
             val existing = s0.conversations.firstOrNull { it.id == conv }
             var s = s0.upsert(
@@ -510,7 +517,7 @@ class ChatRepository(
             s
         }
         val title = _state.value.conversations.firstOrNull { it.id == conv }?.title ?: "Talaria"
-        _replies.tryEmit(FinishedReply(conv, title, text, state, error))
+        _replies.tryEmit(FinishedReply(conv, title, text, state, error, fromThisDevice = mine.remove(turn)))
     }
 
     private fun applySnapshot(t: JsonObject) {

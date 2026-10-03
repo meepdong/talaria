@@ -24,6 +24,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -80,6 +81,22 @@ class MainActivity : ComponentActivity() {
                     else pickFiles.launch(arrayOf("*/*"))
                 }
                 onDispose { controller.setFilePicker(null) }
+            }
+
+            // 🎤: the speech recogniser, which asks for the microphone the first time
+            var onMicAnswer by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+            val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                onMicAnswer?.invoke(granted)
+                onMicAnswer = null
+            }
+            DisposableEffect(controller) {
+                if (AndroidDictation.isAvailable(this@MainActivity)) {
+                    controller.setSpeechInput(AndroidDictation(this@MainActivity) { answer ->
+                        onMicAnswer = answer
+                        askMic.launch(Manifest.permission.RECORD_AUDIO)
+                    })
+                }
+                onDispose { controller.setSpeechInput(null) }
             }
 
             // Back: from a conversation to the list, and from Connection to the chats.

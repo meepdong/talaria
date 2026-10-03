@@ -104,7 +104,7 @@ class ChatRepositoryTest {
         val summary = repo.state.value.conversations.single()
         assertNull(summary.activeTurnId)
         assertEquals("Hello!", summary.lastText)
-        assertEquals(listOf(FinishedReply("c-1", "Hi", "Hello!", MessageState.DONE, null)), replies)
+        assertEquals(listOf(FinishedReply("c-1", "Hi", "Hello!", MessageState.DONE, null, fromThisDevice = true)), replies)
     }
 
     @Test
@@ -123,6 +123,30 @@ class ChatRepositoryTest {
         val messages = repo.state.value.openMessages
         assertEquals(listOf("local:m-1", "reply:t-1"), messages.map { it.key })
         assertEquals("c-1", repo.state.value.openId)
+    }
+
+    @Test
+    fun onlyRepliesToThisDeviceAreMarkedAsItsOwn() = chatTest { scope ->
+        val api = FakeApi()
+        api.gates["chat.send"] = CompletableDeferred()
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        val replies = mutableListOf<FinishedReply>()
+        scope.launch { repo.replies.collect { replies += it } }
+        repo.send("Hi")
+        advanceUntilIdle()
+        // the turn starts before chat.send answers: still this device's question
+        api.push("chat.started", started)
+        advanceUntilIdle()
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-1","seq":1,"status":"completed","text":"Hello"}""")
+        api.gates.getValue("chat.send").complete(Unit)
+        advanceUntilIdle()
+        // another device's question in the same conversation
+        api.push("chat.started", started.replace("t-1", "t-2").replace("m-1", "m-other"))
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-2","seq":1,"status":"completed","text":"Yo"}""")
+        advanceUntilIdle()
+        assertEquals(listOf("Hello" to true, "Yo" to false), replies.map { it.text to it.fromThisDevice })
     }
 
     @Test

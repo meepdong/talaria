@@ -61,4 +61,23 @@ data class ChatView(
     val pending: List<AttachmentChip> = emptyList(),
     /** Whether this app can pick files (the 📎 button). */
     val canAttach: Boolean = false,
+    val voice: VoiceView = VoiceView(),
+)
+
+/** Text heard by dictation, for the composer. [id] tells one dictation from the next. */
+data class Dictation(val id: Long, val text: String, val send: Boolean)
+
+/** The 🎤 and 🔊 controls. */
+data class VoiceView(
+    val canDictate: Boolean = false,
+    val listening: Boolean = false,
+    /** What dictation has heard so far, shown while listening. */
+    val heard: String = "",
+    /** Finished dictation waiting to go into the composer. */
+    val dictation: Dictation? = null,
+    val canSpeak: Boolean = false,
+    /** The message being read aloud. */
+    val speakingKey: String? = null,
+    val readAloud: Boolean = false,
+    val autoSend: Boolean = false,
 )

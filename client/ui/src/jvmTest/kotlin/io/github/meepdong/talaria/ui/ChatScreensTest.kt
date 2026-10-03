@@ -46,6 +46,11 @@ class ChatScreensTest {
         override fun showStatus() { calls += "status" }
         override fun attachFiles(photos: Boolean) { calls += "attach $photos" }
         override fun removeAttachment(index: Int) { calls += "remove $index" }
+        override fun toggleDictation() { calls += "dictate" }
+        override fun dictationTaken(id: Long) { calls += "taken $id" }
+        override fun speak(key: String, text: String) { calls += "speak $key" }
+        override fun stopSpeaking() { calls += "stop speaking" }
+        override fun setReadAloud(on: Boolean) { calls += "read aloud $on" }
     }
 
     private val status = StatusView(
@@ -172,5 +177,34 @@ class ChatScreensTest {
         onNodeWithTag("attach-file").performClick()
         onNodeWithTag("send").performClick() // a file alone can be sent without text
         assertEquals(listOf("remove 0", "attach false", "send "), actions.calls)
+    }
+
+    @Test
+    fun voice() = runComposeUiTest {
+        val actions = Recorder()
+        val base = view(state())
+        var v by mutableStateOf(base.copy(voice = VoiceView(canDictate = true, canSpeak = true, listening = true, heard = "book a")))
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        onNodeWithTag("heard").assertTextContains("🎤 book a")
+        onNodeWithTag("dictate").performClick()
+        onNodeWithTag("speak-h:2").performClick()
+        onNodeWithTag("menu").performClick()
+        onNodeWithTag("read-aloud").performClick()
+
+        // what was heard goes into the composer to edit, and isn't sent yet
+        v = v.copy(voice = v.voice.copy(listening = false, heard = "", dictation = Dictation(1, "book a table", send = false),
+            speakingKey = "h:2"))
+        waitForIdle()
+        onNodeWithTag("composer").assertTextContains("book a table")
+        onNodeWithTag("speak-h:2").assertTextContains("■")
+        onNodeWithTag("stop-speaking").performClick()
+
+        // with auto-send on, it's sent straight away
+        v = v.copy(voice = v.voice.copy(dictation = Dictation(2, "for two", send = true)))
+        waitForIdle()
+        assertEquals(listOf("dictate", "speak h:2", "read aloud true", "taken 1", "stop speaking", "taken 2", "send book a table for two"),
+            actions.calls)
     }
 }
