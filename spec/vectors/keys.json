@@ -1,0 +1,23 @@
+{
+  "description": "Wire public keys (base64url DER SPKI) and ids (base32 SHA-256, 26 chars).",
+  "keys": [
+    {
+      "role": "bridge",
+      "private_scalar_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+      "id": "O2AFUY5GTAGBQB2UESQT6MTXFU"
+    },
+    {
+      "role": "device",
+      "private_scalar_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1lqTl3yqPRsIGFL_V6eeRl8WYFdzBLrq1QXdOkhYnPNQGF6JU3LfYiHqOhN1V-Rz_dtnVfBb1QfDxTP86ckShQ",
+      "id": "X7F2FN2CVAD3XNZLKIX2I2KMIY"
+    },
+    {
+      "role": "other",
+      "private_scalar_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUadYCDOJjqGxg8vXNQpAmQeMbvHB4Y6XDNdoMDXyXn0BEFInErC1p8_wgWhUhphKlOaDHtrEbnNg-p2DSnqBoQ",
+      "id": "SPXD43PFAAUFQWEJACUDQ46EJY"
+    }
+  ]
+}

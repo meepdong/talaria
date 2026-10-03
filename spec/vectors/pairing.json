@@ -1,0 +1,51 @@
+{
+  "description": "Links are talaria://pair# + base64url(compact JSON with sorted keys). Decoders must accept any key order. Short codes normalize typed input.",
+  "links": [
+    {
+      "payload": {
+        "tnp": 0,
+        "url": "wss://meep-vps.tailnet.ts.net/tnp",
+        "bridge_id": "O2AFUY5GTAGBQB2UESQT6MTXFU",
+        "bridge_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+        "pair_token": "AAECAwQFBgcICQoLDA0ODw",
+        "exp": 1790000300
+      },
+      "link": "talaria://pair#eyJicmlkZ2VfaWQiOiJPMkFGVVk1R1RBR0JRQjJVRVNRVDZNVFhGVSIsImJyaWRnZV9wayI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRUFoZm1GX0MyUkRrb0o0LVdtWjVwb2pwUExCVXIzMjFzMzJibHVBS0MxTzBaU24zcnk1ZHhMUzNhUEtoYXFIWmFWdlJmeDFoWmxsTHlpWHhsTUc1WGxBIiwiZXhwIjoxNzkwMDAwMzAwLCJwYWlyX3Rva2VuIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdyIsInRucCI6MCwidXJsIjoid3NzOi8vbWVlcC12cHMudGFpbG5ldC50cy5uZXQvdG5wIn0"
+    },
+    {
+      "payload": {
+        "tnp": 0,
+        "url": "wss://100.101.102.103:8765/tnp",
+        "bridge_id": "O2AFUY5GTAGBQB2UESQT6MTXFU",
+        "bridge_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+        "pair_token": "AAECAwQFBgcICQoLDA0ODw",
+        "exp": 1790000300,
+        "tls_spki_sha256": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU"
+      },
+      "link": "talaria://pair#eyJicmlkZ2VfaWQiOiJPMkFGVVk1R1RBR0JRQjJVRVNRVDZNVFhGVSIsImJyaWRnZV9wayI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRUFoZm1GX0MyUkRrb0o0LVdtWjVwb2pwUExCVXIzMjFzMzJibHVBS0MxTzBaU24zcnk1ZHhMUzNhUEtoYXFIWmFWdlJmeDFoWmxsTHlpWHhsTUc1WGxBIiwiZXhwIjoxNzkwMDAwMzAwLCJwYWlyX3Rva2VuIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdyIsInRsc19zcGtpX3NoYTI1NiI6IjQ3REVRcGo4SEJTYS1fVEltVy01SkNldVFlUmttNU5NcEpXWkczaFN1RlUiLCJ0bnAiOjAsInVybCI6IndzczovLzEwMC4xMDEuMTAyLjEwMzo4NzY1L3RucCJ9"
+    }
+  ],
+  "short_codes": [
+    {
+      "typed": "hx49-2kq7",
+      "normalized": "HX492KQ7"
+    },
+    {
+      "typed": "HX49 2KQ7",
+      "normalized": "HX492KQ7"
+    },
+    {
+      "typed": "HX492KQ7",
+      "normalized": "HX492KQ7"
+    },
+    {
+      "typed": "hx49-2kqo",
+      "normalized": "HX492KQ0"
+    }
+  ],
+  "short_codes_invalid": [
+    "HX49-2KQ",
+    "HX49-2KQ7U",
+    "HX49-2KQ!"
+  ]
+}

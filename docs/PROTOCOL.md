@@ -34,7 +34,10 @@ TLS protects the channel. **Authentication does not rely on TLS**: both sides pr
 
 ### 3.1 Keys
 
-- **Bridge identity:** an ECDSA P-256 key pair created on first start. `bridge_id` = base32(SHA-256(public key))[0:26].
+Exact byte formats (encodings, what `‖` means, signature and SAS derivation) and test vectors are in [spec/](../spec/README.md). Where this document and spec/ differ, spec/ wins.
+
+
+- **Bridge identity:** an ECDSA P-256 key pair created on first start. `bridge_id` = base32(SHA-256(public key DER SPKI))[0:26].
 - **Device identity:** an ECDSA P-256 key pair created on the device inside the OS keystore and marked non-exportable. `device_id` is derived the same way.
 - P-256 is chosen because it is the one curve hardware-backed on every target: Android Keystore/StrongBox, Apple Secure Enclave, and Windows CNG/TPM.
 
@@ -46,14 +49,14 @@ TLS protects the channel. **Authentication does not rely on TLS**: both sides pr
 █▀▀▀▀▀█ ▄▀▄ █▀▀▀▀▀█     Scan with the Talaria app
 █ ███ █ ▀█▀ █ ███ █     or paste this link (expires in 5:00):
 █ ▀▀▀ █ █▀█ █ ▀▀▀ █     talaria://pair#v0.meep-vps.ts.net.K7Q2….8fJ2…
-▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀     or enter code: HX4-92K
+▀▀▀▀▀▀▀ ▀ ▀ ▀▀▀▀▀▀▀     or enter code: HX49-2KQ7
 ```
 
 | Method | For | Carries |
 |---|---|---|
 | **QR code** (rendered in the terminal) | Phones, tablets | The full pairing payload below |
 | **Pairing link** `talaria://pair#…` | Devices without cameras (desktop, glasses), or pasting over a trusted channel | The same payload, base64url-encoded after `#` |
-| **Short code** (8 characters) | Last resort, typed by hand | A lookup key. The device must also be given the bridge URL. Rate-limited to 5 attempts per code. |
+| **Short code** (8 characters) | Last resort, typed by hand | A lookup key. The device must also be given the bridge URL, and learns the bridge key from `hello` (the SAS check protects it). Rate-limited to 5 wrong attempts. |
 
 Pairing payload:
 ```json
@@ -69,8 +72,8 @@ Pairing payload:
 
 Flow:
 1. The device reads the payload, **pins `bridge_pk`**, generates its key pair in the OS keystore, and connects.
-2. The device sends `pair.request` with `pair_token`, its public key, name and platform.
-3. The bridge verifies the token, then both sides derive a **short authentication string (SAS)**: 6 digits and 3 emoji computed from `SHA-256(bridge_pk ‖ device_pk ‖ pair_token)`.
+2. The device sends `pair.request` with `pair_token` (or `short_code`), its public key, name and platform, signed with its new key over the connection's `nonce_b` (spec/README.md §3).
+3. The bridge verifies the token, then both sides derive a **short authentication string (SAS)**: 6 digits and 3 emoji computed from `SHA-256("tnp0-sas" ‖ bridge_pk ‖ device_pk ‖ pair_token)`.
 4. **Confirmation:** the device shows the SAS, and the terminal asks:
    `Approve "OnePlus 10 Pro"?  Code 482 913  🦊🌙🎸  [y/N]`
    The operator approves only if the codes match. This stops someone who saw the QR code or link (on a screen share, in a screenshot) from pairing a device of their own.
@@ -85,7 +88,7 @@ Management: `talaria devices list` and `talaria devices revoke <device_id>`. Rev
 ```
 Device                                Bridge
   │── WebSocket connect (tnp.v0) ──────▶│
-  │◀── hello {bridge_id, nonce_b, ts, sig_b} ─│   sig_b = Sign_bridge("tnp0-hello" ‖ bridge_id ‖ nonce_b ‖ ts)
+  │◀── hello {bridge_id, bridge_pk, nonce_b, ts, sig_b} ─│   sig_b = Sign_bridge("tnp0-hello" ‖ bridge_id ‖ nonce_b ‖ ts)
   │   verify sig_b with pinned bridge_pk  │
   │── auth {device_id, nonce_d, ts, sig_d, resume} ─▶│
   │                                       │   sig_d = Sign_device("tnp0-auth" ‖ bridge_id ‖ device_id ‖ nonce_b ‖ nonce_d ‖ ts)

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/pair.accepted.schema.json",
+  "title": "pair.accepted",
+  "description": "Bridge to device after the operator approved the SAS (notification). The bridge then closes with 1000.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "pair.accepted"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^[A-Z2-7]{26}$"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "name"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

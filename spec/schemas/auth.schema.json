@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/auth.schema.json",
+  "title": "auth",
+  "description": "Device to bridge, after hello (request).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "auth"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^[A-Z2-7]{26}$"
+        },
+        "nonce_d": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{22}$",
+          "description": "16 random bytes, base64url"
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sig_d": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "resume": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "device_id",
+        "nonce_d",
+        "ts",
+        "sig_d"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ]
+}

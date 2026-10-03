@@ -1,0 +1,44 @@
+{
+  "description": "h = SHA-256(frame(\"tnp0-sas\", bridge_pk, device_pk, pairing_secret)); digits = uint32_be(h[0:4]) mod 10^6, zero-padded; emoji = h[4], h[5], h[6] mod 64 into spec/sas-emoji.json.",
+  "cases": [
+    {
+      "name": "pair_token",
+      "bridge_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+      "device_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1lqTl3yqPRsIGFL_V6eeRl8WYFdzBLrq1QXdOkhYnPNQGF6JU3LfYiHqOhN1V-Rz_dtnVfBb1QfDxTP86ckShQ",
+      "pairing_secret": "AAECAwQFBgcICQoLDA0ODw",
+      "digits": "414818",
+      "emoji_indices": [
+        40,
+        35,
+        3
+      ],
+      "emoji": "🍎🌻🐹"
+    },
+    {
+      "name": "short code",
+      "bridge_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+      "device_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1lqTl3yqPRsIGFL_V6eeRl8WYFdzBLrq1QXdOkhYnPNQGF6JU3LfYiHqOhN1V-Rz_dtnVfBb1QfDxTP86ckShQ",
+      "pairing_secret": "HX492KQ7",
+      "digits": "610539",
+      "emoji_indices": [
+        3,
+        1,
+        50
+      ],
+      "emoji": "🐹🐱🎸"
+    },
+    {
+      "name": "other device key",
+      "bridge_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0ZSn3ry5dxLS3aPKhaqHZaVvRfx1hZllLyiXxlMG5XlA",
+      "device_pk": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUadYCDOJjqGxg8vXNQpAmQeMbvHB4Y6XDNdoMDXyXn0BEFInErC1p8_wgWhUhphKlOaDHtrEbnNg-p2DSnqBoQ",
+      "pairing_secret": "AAECAwQFBgcICQoLDA0ODw",
+      "digits": "654312",
+      "emoji_indices": [
+        5,
+        46,
+        42
+      ],
+      "emoji": "🦊🍉🍇"
+    }
+  ]
+}

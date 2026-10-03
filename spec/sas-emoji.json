@@ -1,0 +1,389 @@
+{
+  "description": "SAS emoji table: index 0-63 to emoji (single code point) and English name.",
+  "emoji": [
+    {
+      "index": 0,
+      "emoji": "🐶",
+      "codepoint": "U+1F436",
+      "name": "dog"
+    },
+    {
+      "index": 1,
+      "emoji": "🐱",
+      "codepoint": "U+1F431",
+      "name": "cat"
+    },
+    {
+      "index": 2,
+      "emoji": "🐭",
+      "codepoint": "U+1F42D",
+      "name": "mouse"
+    },
+    {
+      "index": 3,
+      "emoji": "🐹",
+      "codepoint": "U+1F439",
+      "name": "hamster"
+    },
+    {
+      "index": 4,
+      "emoji": "🐰",
+      "codepoint": "U+1F430",
+      "name": "rabbit"
+    },
+    {
+      "index": 5,
+      "emoji": "🦊",
+      "codepoint": "U+1F98A",
+      "name": "fox"
+    },
+    {
+      "index": 6,
+      "emoji": "🐻",
+      "codepoint": "U+1F43B",
+      "name": "bear"
+    },
+    {
+      "index": 7,
+      "emoji": "🐼",
+      "codepoint": "U+1F43C",
+      "name": "panda"
+    },
+    {
+      "index": 8,
+      "emoji": "🐨",
+      "codepoint": "U+1F428",
+      "name": "koala"
+    },
+    {
+      "index": 9,
+      "emoji": "🐯",
+      "codepoint": "U+1F42F",
+      "name": "tiger"
+    },
+    {
+      "index": 10,
+      "emoji": "🦁",
+      "codepoint": "U+1F981",
+      "name": "lion"
+    },
+    {
+      "index": 11,
+      "emoji": "🐮",
+      "codepoint": "U+1F42E",
+      "name": "cow"
+    },
+    {
+      "index": 12,
+      "emoji": "🐷",
+      "codepoint": "U+1F437",
+      "name": "pig"
+    },
+    {
+      "index": 13,
+      "emoji": "🐸",
+      "codepoint": "U+1F438",
+      "name": "frog"
+    },
+    {
+      "index": 14,
+      "emoji": "🐵",
+      "codepoint": "U+1F435",
+      "name": "monkey"
+    },
+    {
+      "index": 15,
+      "emoji": "🐔",
+      "codepoint": "U+1F414",
+      "name": "chicken"
+    },
+    {
+      "index": 16,
+      "emoji": "🐧",
+      "codepoint": "U+1F427",
+      "name": "penguin"
+    },
+    {
+      "index": 17,
+      "emoji": "🐦",
+      "codepoint": "U+1F426",
+      "name": "bird"
+    },
+    {
+      "index": 18,
+      "emoji": "🦆",
+      "codepoint": "U+1F986",
+      "name": "duck"
+    },
+    {
+      "index": 19,
+      "emoji": "🦉",
+      "codepoint": "U+1F989",
+      "name": "owl"
+    },
+    {
+      "index": 20,
+      "emoji": "🐴",
+      "codepoint": "U+1F434",
+      "name": "horse"
+    },
+    {
+      "index": 21,
+      "emoji": "🦄",
+      "codepoint": "U+1F984",
+      "name": "unicorn"
+    },
+    {
+      "index": 22,
+      "emoji": "🐝",
+      "codepoint": "U+1F41D",
+      "name": "bee"
+    },
+    {
+      "index": 23,
+      "emoji": "🐛",
+      "codepoint": "U+1F41B",
+      "name": "caterpillar"
+    },
+    {
+      "index": 24,
+      "emoji": "🦋",
+      "codepoint": "U+1F98B",
+      "name": "butterfly"
+    },
+    {
+      "index": 25,
+      "emoji": "🐌",
+      "codepoint": "U+1F40C",
+      "name": "snail"
+    },
+    {
+      "index": 26,
+      "emoji": "🐢",
+      "codepoint": "U+1F422",
+      "name": "turtle"
+    },
+    {
+      "index": 27,
+      "emoji": "🐍",
+      "codepoint": "U+1F40D",
+      "name": "snake"
+    },
+    {
+      "index": 28,
+      "emoji": "🐙",
+      "codepoint": "U+1F419",
+      "name": "octopus"
+    },
+    {
+      "index": 29,
+      "emoji": "🦀",
+      "codepoint": "U+1F980",
+      "name": "crab"
+    },
+    {
+      "index": 30,
+      "emoji": "🐬",
+      "codepoint": "U+1F42C",
+      "name": "dolphin"
+    },
+    {
+      "index": 31,
+      "emoji": "🐳",
+      "codepoint": "U+1F433",
+      "name": "whale"
+    },
+    {
+      "index": 32,
+      "emoji": "🌵",
+      "codepoint": "U+1F335",
+      "name": "cactus"
+    },
+    {
+      "index": 33,
+      "emoji": "🌲",
+      "codepoint": "U+1F332",
+      "name": "tree"
+    },
+    {
+      "index": 34,
+      "emoji": "🍄",
+      "codepoint": "U+1F344",
+      "name": "mushroom"
+    },
+    {
+      "index": 35,
+      "emoji": "🌻",
+      "codepoint": "U+1F33B",
+      "name": "sunflower"
+    },
+    {
+      "index": 36,
+      "emoji": "🌙",
+      "codepoint": "U+1F319",
+      "name": "moon"
+    },
+    {
+      "index": 37,
+      "emoji": "⭐",
+      "codepoint": "U+2B50",
+      "name": "star"
+    },
+    {
+      "index": 38,
+      "emoji": "🔥",
+      "codepoint": "U+1F525",
+      "name": "fire"
+    },
+    {
+      "index": 39,
+      "emoji": "🌈",
+      "codepoint": "U+1F308",
+      "name": "rainbow"
+    },
+    {
+      "index": 40,
+      "emoji": "🍎",
+      "codepoint": "U+1F34E",
+      "name": "apple"
+    },
+    {
+      "index": 41,
+      "emoji": "🍌",
+      "codepoint": "U+1F34C",
+      "name": "banana"
+    },
+    {
+      "index": 42,
+      "emoji": "🍇",
+      "codepoint": "U+1F347",
+      "name": "grapes"
+    },
+    {
+      "index": 43,
+      "emoji": "🍓",
+      "codepoint": "U+1F353",
+      "name": "strawberry"
+    },
+    {
+      "index": 44,
+      "emoji": "🍒",
+      "codepoint": "U+1F352",
+      "name": "cherries"
+    },
+    {
+      "index": 45,
+      "emoji": "🍋",
+      "codepoint": "U+1F34B",
+      "name": "lemon"
+    },
+    {
+      "index": 46,
+      "emoji": "🍉",
+      "codepoint": "U+1F349",
+      "name": "watermelon"
+    },
+    {
+      "index": 47,
+      "emoji": "🍕",
+      "codepoint": "U+1F355",
+      "name": "pizza"
+    },
+    {
+      "index": 48,
+      "emoji": "🍩",
+      "codepoint": "U+1F369",
+      "name": "doughnut"
+    },
+    {
+      "index": 49,
+      "emoji": "🎂",
+      "codepoint": "U+1F382",
+      "name": "cake"
+    },
+    {
+      "index": 50,
+      "emoji": "🎸",
+      "codepoint": "U+1F3B8",
+      "name": "guitar"
+    },
+    {
+      "index": 51,
+      "emoji": "🎺",
+      "codepoint": "U+1F3BA",
+      "name": "trumpet"
+    },
+    {
+      "index": 52,
+      "emoji": "🥁",
+      "codepoint": "U+1F941",
+      "name": "drum"
+    },
+    {
+      "index": 53,
+      "emoji": "🎲",
+      "codepoint": "U+1F3B2",
+      "name": "dice"
+    },
+    {
+      "index": 54,
+      "emoji": "🚀",
+      "codepoint": "U+1F680",
+      "name": "rocket"
+    },
+    {
+      "index": 55,
+      "emoji": "🚲",
+      "codepoint": "U+1F6B2",
+      "name": "bicycle"
+    },
+    {
+      "index": 56,
+      "emoji": "⚓",
+      "codepoint": "U+2693",
+      "name": "anchor"
+    },
+    {
+      "index": 57,
+      "emoji": "🔑",
+      "codepoint": "U+1F511",
+      "name": "key"
+    },
+    {
+      "index": 58,
+      "emoji": "🔔",
+      "codepoint": "U+1F514",
+      "name": "bell"
+    },
+    {
+      "index": 59,
+      "emoji": "💡",
+      "codepoint": "U+1F4A1",
+      "name": "light bulb"
+    },
+    {
+      "index": 60,
+      "emoji": "📚",
+      "codepoint": "U+1F4DA",
+      "name": "books"
+    },
+    {
+      "index": 61,
+      "emoji": "🎈",
+      "codepoint": "U+1F388",
+      "name": "balloon"
+    },
+    {
+      "index": 62,
+      "emoji": "🏆",
+      "codepoint": "U+1F3C6",
+      "name": "trophy"
+    },
+    {
+      "index": 63,
+      "emoji": "🧲",
+      "codepoint": "U+1F9F2",
+      "name": "magnet"
+    }
+  ]
+}

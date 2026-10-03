@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/auth.ok.schema.json",
+  "title": "auth.ok",
+  "description": "Bridge to device: the successful result of auth.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "last_acked_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "server_time": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "session_id",
+        "last_acked_seq",
+        "server_time"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}

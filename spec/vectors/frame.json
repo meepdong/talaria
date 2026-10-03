@@ -1,0 +1,42 @@
+{
+  "description": "frame(): each field as a 4-byte big-endian length then its UTF-8 bytes.",
+  "cases": [
+    {
+      "fields": [],
+      "hex": ""
+    },
+    {
+      "fields": [
+        ""
+      ],
+      "hex": "00000000"
+    },
+    {
+      "fields": [
+        "tnp0-hello"
+      ],
+      "hex": "0000000a746e70302d68656c6c6f"
+    },
+    {
+      "fields": [
+        "a",
+        "bc"
+      ],
+      "hex": "0000000161000000026263"
+    },
+    {
+      "fields": [
+        "ab",
+        "c"
+      ],
+      "hex": "0000000261620000000163"
+    },
+    {
+      "fields": [
+        "🦊",
+        "1790000000"
+      ],
+      "hex": "00000004f09fa68a0000000a31373930303030303030"
+    }
+  ]
+}

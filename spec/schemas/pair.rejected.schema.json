@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/pair.rejected.schema.json",
+  "title": "pair.rejected",
+  "description": "Bridge to device when pairing fails (notification). The bridge then closes with 1000.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "pair.rejected"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "enum": [
+            "invalid_request",
+            "unknown_token",
+            "expired",
+            "already_used",
+            "revoked",
+            "bad_signature",
+            "rate_limited",
+            "sas_rejected",
+            "timeout"
+          ]
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}
