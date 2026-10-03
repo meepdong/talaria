@@ -93,6 +93,17 @@ fun main(args: Array<String>) {
         val trayState = rememberTrayState()
         var focused by remember { mutableStateOf(false) }
 
+        // A toast for automation results for Home (the morning summary), unless Home is in front of you.
+        LaunchedEffect(Unit) {
+            controller.automationResults.collect { ran ->
+                val home = (controller.screen.value as? Screen.Chat)?.tab == Tab.HOME
+                if (!(visible && focused && home) && tray) {
+                    val text = if (ran.run.status == "error") "It failed: ${ran.run.error ?: "unknown error"}" else ran.run.text.orEmpty()
+                    trayState.sendNotification(Notification(ran.name, text.take(240)))
+                }
+            }
+        }
+
         // A toast for replies that finish while their conversation isn't in front of you.
         LaunchedEffect(Unit) {
             controller.replies.collect { reply ->

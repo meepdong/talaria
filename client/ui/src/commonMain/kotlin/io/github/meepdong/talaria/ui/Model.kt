@@ -35,6 +35,7 @@ sealed interface Screen {
         val menu: MenuView = MenuView(),
         val menuOpen: Boolean = false,
         val files: FilesView = FilesView(),
+        val schedule: ScheduleView = ScheduleView(),
     ) : Screen
 }
 
@@ -53,6 +54,13 @@ data class HomeView(
     val todosAvailable: Boolean = true,
     /** Ticked off earlier and not shown. */
     val doneEarlier: Int = 0,
+    /** Today's results from automations that report to Home, newest first. */
+    val day: List<DayResult> = emptyList(),
+    /** The next events and automation runs. */
+    val nextUp: List<NextItem> = emptyList(),
+    val automationsOn: List<AutomationItem> = emptyList(),
+    /** False when the bridge has no automations, which hides those cards. */
+    val automationsAvailable: Boolean = true,
 )
 
 /** A to-do on Home (spec/README.md §13). */
@@ -189,6 +197,16 @@ interface TalariaActions {
     fun deleteTodo(id: String) {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
+
+    // Automations (§14)
+
+    fun addAutomation(draft: AutomationDraft) {}
+    /** Ask Hermes to set one up from words. */
+    fun describeAutomation(text: String) {}
+    fun clearDescribeReply() {}
+    fun setAutomationPaused(id: String, paused: Boolean) {}
+    fun runAutomation(id: String) {}
+    fun deleteAutomation(id: String) {}
 }
 
 /** The tray icon's colour. */

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
 import io.github.meepdong.talaria.chat.ChatState
@@ -70,7 +71,7 @@ class MainScreenTest {
         onNodeWithTag("home").assertExists()
         onNodeWithTag("bottom-tabs").assertExists()
         onNodeWithText("Trip plans").assertExists()
-        onNodeWithTag("recent-c-2").performClick()
+        onNodeWithTag("recent-c-2").performScrollTo().performClick()
         onNodeWithTag("start-chat").performClick()
         onNodeWithTag("talk").performClick()
         onNodeWithTag("tab-chats").performClick()
