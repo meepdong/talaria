@@ -47,7 +47,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // after a rotation the same intent comes back; it was handled the first time
-        if (savedInstanceState == null) handleLink(intent)
+        if (savedInstanceState == null) {
+            handleLink(intent)
+            OpenedFiles.clear(this)
+        }
         setContent {
             val controller = app.controller
             val screen by controller.screen.collectAsState()
@@ -85,6 +88,12 @@ class MainActivity : ComponentActivity() {
                     else pickFiles.launch(arrayOf("*/*"))
                 }
                 onDispose { controller.setFilePicker(null) }
+            }
+
+            // Open on the Files page: a copy lent to the app that opens it
+            DisposableEffect(controller) {
+                controller.setFileOpener { name, mime, bytes -> OpenedFiles.open(this@MainActivity, name, mime, bytes) }
+                onDispose { controller.setFileOpener(null) }
             }
 
             // 🎤: the speech recogniser, which asks for the microphone the first time

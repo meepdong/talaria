@@ -60,6 +60,10 @@ Failures name the broken layer and the fix: "Server unreachable — is your priv
 ```
 Paired apps open on Home. The menu bar runs down the side on a wide window and along the bottom on a phone; a phone hides it while a conversation is open. ☰ opens a panel with what's running now, provider balances with Add credits, and the connection rows, linking to the full connection page (§2). Chat starts a new chat; Talk starts one by voice: what's heard is sent at once and the answer is read aloud. Design mockup: the Talaria redesign canvas (Home, Files, Schedule).
 
+## 2b. Files (M2)
+
+The folders the bridge shares (spec/README.md §12): what was sent from Talaria, and whatever the owner adds in `agents.json`, such as Hermes's workspace. A chip per folder, then the folder's files, newest first, with a search by name. Tapping a folder opens it; **Open** fetches a file and hands it to the device's own viewer (a desktop refuses program files); **Ask Hermes** starts a chat with that file attached by name, so the agent reads it where it is and nothing is uploaded.
+
 ## 3. Chat list
 
 ```

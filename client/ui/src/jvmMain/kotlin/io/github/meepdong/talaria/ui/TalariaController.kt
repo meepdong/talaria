@@ -7,6 +7,9 @@ import io.github.meepdong.talaria.chat.FinishedReply
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
+import io.github.meepdong.talaria.chat.ServerFile
+import io.github.meepdong.talaria.files.FilesRepository
+import io.github.meepdong.talaria.files.FilesState
 import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.protocol.Sas
@@ -85,7 +88,9 @@ class TalariaController(
     private sealed interface Mode {
         data class Connect(val name: String, val error: String? = null, val busy: Boolean = false) : Mode
         data class Confirm(val sas: Sas, val deadlineMs: Long) : Mode
-        data class Connected(val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository) : Mode
+        data class Connected(
+            val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
+        ) : Mode
     }
 
     /** Which page shows while paired. */
@@ -105,6 +110,16 @@ class TalariaController(
 
     /** Photos and files picked for the next message. */
     private val pending = MutableStateFlow<List<OutgoingFile>>(emptyList())
+
+    /** Files already on the server (Files page, §12) attached to the next message. */
+    private val pendingServer = MutableStateFlow<List<ServerFile>>(emptyList())
+
+    /** A server file being fetched to open, and why the last one couldn't be. */
+    private data class FileTask(val opening: String? = null, val notice: String? = null)
+    private val fileTask = MutableStateFlow(FileTask())
+
+    /** Opens fetched file bytes with the device's own app; set by the platform. */
+    private var fileOpener: ((name: String, mime: String, bytes: ByteArray) -> Unit)? = null
 
     /**
      * Opens the platform's file picker, which hands its choice to [addAttachments]. Null while
@@ -127,22 +142,29 @@ class TalariaController(
     private var pairJob: Job? = null
     private var started = false
 
-    private data class Live(val mode: Mode, val state: ConnectionState?, val chat: ChatState?)
+    private data class Live(val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val live = mode.flatMapLatest { m ->
-        if (m is Mode.Connected) combine(m.client.state, m.chat.state) { st, c -> Live(m, st, c) } else flowOf(Live(m, null, null))
+        if (m is Mode.Connected) {
+            combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Live(m, st, c, f) }
+        } else {
+            flowOf(Live(m, null, null))
+        }
     }
 
     private data class Extras(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
         val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
+        val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(),
     )
 
     private val extras = combine(
-        combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) }, pending, picker, voice, speechInput,
+        combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
+        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) }, picker, voice, speechInput,
     ) { q, files, pick, v, input ->
-        Extras(q.a, q.b, q.c, q.d, files, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null))
+        Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
+            files.second, files.third)
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -156,6 +178,7 @@ class TalariaController(
     val replies: Flow<FinishedReply> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.replies else emptyFlow() }
 
     private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
+    private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
 
     /** Load the saved pairing and connect, and start the clock and the network check. */
     fun start() {
@@ -287,6 +310,7 @@ class TalariaController(
     override fun selectTab(tab: Tab) {
         page.update { it.copy(tab = tab, status = false, menuOpen = false) }
         if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
+        if (tab == Tab.FILES) files?.load()
     }
 
     override fun setMenuOpen(open: Boolean) {
@@ -317,18 +341,20 @@ class TalariaController(
         val c = chat ?: return
         val command = Command.parse(text)
         if (command == null) {
-            c.send(text, pending.value)
+            c.send(text, pending.value, serverFiles = pendingServer.value)
             pending.value = emptyList()
+            pendingServer.value = emptyList()
             return
         }
         when (command) {
             is Command.Model -> pickModelByName(c, command.query)
             Command.Retry -> c.retryLast()
-            is Command.Queue -> if (command.text.isBlank() && pending.value.isEmpty()) {
+            is Command.Queue -> if (command.text.isBlank() && pending.value.isEmpty() && pendingServer.value.isEmpty()) {
                 c.notice("Type the message after /queue")
             } else {
-                c.send(command.text, pending.value)
+                c.send(command.text, pending.value, serverFiles = pendingServer.value)
                 pending.value = emptyList()
+                pendingServer.value = emptyList()
             }
             is Command.Steer -> if (command.text.isBlank()) c.notice("Type the note after /steer") else c.steer(command.text)
             is Command.Aside -> if (command.text.isBlank()) c.notice("Type the question after /btw") else c.aside(command.text)
@@ -384,7 +410,72 @@ class TalariaController(
     }
 
     override fun removeAttachment(index: Int) {
-        pending.update { files -> files.filterIndexed { i, _ -> i != index } }
+        val local = pending.value.size
+        if (index < local) {
+            pending.update { files -> files.filterIndexed { i, _ -> i != index } }
+        } else {
+            pendingServer.update { files -> files.filterIndexed { i, _ -> i != index - local } }
+        }
+    }
+
+    // Files (§12)
+
+    /** How the platform opens a fetched server file (a temp copy and the system's viewer). */
+    fun setFileOpener(open: ((name: String, mime: String, bytes: ByteArray) -> Unit)?) {
+        fileOpener = open
+    }
+
+    override fun openRoot(id: String) {
+        fileTask.value = FileTask()
+        files?.list(id)
+    }
+
+    override fun filesUp() {
+        fileTask.value = FileTask()
+        files?.up()
+    }
+
+    override fun searchFiles(query: String) {
+        val f = files ?: return
+        fileTask.value = FileTask()
+        if (query.isBlank()) f.state.value.root?.let { f.list(it, f.state.value.path) } else f.search(query)
+    }
+
+    override fun openFile(path: String) {
+        val f = files ?: return
+        val entry = f.state.value.entries.firstOrNull { it.path == path } ?: return
+        if (entry.folder) {
+            fileTask.value = FileTask()
+            f.open(entry)
+            return
+        }
+        val root = f.state.value.root ?: return
+        val open = fileOpener ?: run {
+            fileTask.value = FileTask(notice = "This device can't open files from here yet")
+            return
+        }
+        if (fileTask.value.opening != null) return
+        fileTask.value = FileTask(opening = path)
+        scope.launch(io) {
+            val notice = try {
+                val bytes = f.read(root, path)
+                open(entry.name, entry.mime ?: "application/octet-stream", bytes)
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Couldn't open ${entry.name}: ${e.message ?: e::class.simpleName}"
+            }
+            fileTask.value = FileTask(notice = notice)
+        }
+    }
+
+    override fun askAboutFile(path: String) {
+        val f = files ?: return
+        val file = f.state.value.entries.firstOrNull { it.path == path }?.let(f::serverFile) ?: return
+        newConversation()
+        pending.value = emptyList()
+        pendingServer.value = listOf(file)
     }
 
     /** The platform's file picker: set while the app can show it, null otherwise. */
@@ -413,6 +504,7 @@ class TalariaController(
         chat?.newConversation()
         page.value = Page(conversationOpen = true, tab = Tab.CHATS)
         pending.value = emptyList()
+        pendingServer.value = emptyList()
         addAttachments(files, problem)
         val words = text?.trim().orEmpty()
         if (words.isNotEmpty()) {
@@ -572,7 +664,7 @@ class TalariaController(
         test.value = null
         page.value = Page()
         chat.start()
-        mode.value = Mode.Connected(bridge, client, chat)
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()))
         client.start()
     }
 
@@ -592,8 +684,8 @@ class TalariaController(
             } else {
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
-                    state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images)
-                    .copy(voice = x.voice)
+                    state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
+                    x.serverPending).copy(voice = x.voice)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,
@@ -601,6 +693,7 @@ class TalariaController(
                     home = homeView(view, now),
                     menu = menuView(view, withBalance),
                     menuOpen = x.page.menuOpen,
+                    files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
                 )
             }
         }
@@ -620,7 +713,7 @@ class TalariaController(
         const val READ_ALOUD_KEY = "read-aloud"
 
         /** The pages in the menu bar. */
-        val TABS = listOf(Tab.HOME, Tab.CHATS)
+        val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.FILES)
 
         /** What people type for a short-code pairing: a host, host:port, or a wss:// URL. */
         fun bridgeUrl(address: String): String? {

@@ -60,6 +60,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Lends a file fetched from the server to the app that opens it (OpenedFiles). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Holds the bridge session while the app is in the background. -->
         <service
             android:name=".ConnectionService"

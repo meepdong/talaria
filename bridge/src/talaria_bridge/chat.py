@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .accounts import OpenRouterAccount
+from .files import FILES_METHODS, FilesError, FilesService, Found
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
@@ -297,8 +298,10 @@ def history_messages(rows: list[dict]) -> list[dict]:
 class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
-                 inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None):
+                 inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None,
+                 files: FilesService | None = None):
         self.store = store
+        self.files = files  # browsing the agent's folders (§12)
         self.agents = agents
         self.blobs = blobs
         self.inboxes = inboxes or {}  # agent_id -> folder the agent can read, for files
@@ -333,7 +336,13 @@ class ChatService:
         if refs is not None and not (isinstance(refs, list) and 0 < len(refs) <= MAX_ATTACHMENTS
                                      and all(isinstance(r, dict) for r in refs)):
             raise RpcError(m.INVALID_PARAMS, f"attachments must list 1 to {MAX_ATTACHMENTS} blobs")
-        if not text.strip() and not refs:
+        file_refs = p.get("files")
+        if file_refs is not None and not (isinstance(file_refs, list) and 0 < len(file_refs) <= MAX_ATTACHMENTS
+                                          and all(isinstance(r, dict) for r in file_refs)):
+            raise RpcError(m.INVALID_PARAMS, f"files must list 1 to {MAX_ATTACHMENTS} server files")
+        if len(refs or []) + len(file_refs or []) > MAX_ATTACHMENTS:
+            raise RpcError(m.INVALID_PARAMS, f"A message can carry {MAX_ATTACHMENTS} attachments")
+        if not text.strip() and not refs and not file_refs:
             raise RpcError(m.INVALID_PARAMS, "Send some text or an attachment")
         client_msg_id = p.get("client_msg_id")
         if client_msg_id is not None:
@@ -344,15 +353,32 @@ class ChatService:
                     del self._client_msgs[k]
             if client_msg_id in self._client_msgs:
                 return dict(self._client_msgs[client_msg_id][1]), None
+        found = await asyncio.to_thread(self._server_files, p, file_refs or [])
         blobs = self._blobs(refs or [])
         try:
-            return await self._send(p, text, blobs, client_msg_id)
+            return await self._send(p, text, blobs, client_msg_id, found)
         except BaseException:
             for blob in blobs:
                 self.blobs.release(blob)  # not sent: the device may retry with the same blobs
             raise
 
-    async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None) -> tuple[dict, Turn]:
+    def _server_files(self, p: dict, refs: list[dict]) -> list[Found]:
+        """chat.send's `files` (§12): files already on the server, named to the agent where they are."""
+        if not refs:
+            return []
+        if self.files is None:
+            raise RpcError(m.MODALITY_UNSUPPORTED, "This bridge shares no folders")
+        agent_id = p.get("agent_id")
+        if p.get("conversation_id") is not None:
+            conv = self.store.get(_id(p["conversation_id"], "conversation_id"))
+            agent_id = conv.agent_id if conv is not None else agent_id
+        try:
+            return [self.files.file(agent_id, r.get("root"), r.get("path")) for r in refs]
+        except FilesError as exc:
+            raise RpcError(exc.code, exc.message) from None
+
+    async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None,
+                    found: list[Found] = ()) -> tuple[dict, Turn]:
         model = _model(p["model"]) if p.get("model") is not None else None
         conv_id = p.get("conversation_id")
         if conv_id is not None:
@@ -368,19 +394,22 @@ class ChatService:
                 _id(agent_id, "agent_id")
             client = self._client(agent_id)
             self._check_files(agent_id, blobs)
-            conv = await self._new_conversation(agent_id, client, text.strip() or blobs[0].name)
+            conv = await self._new_conversation(agent_id, client,
+                                                text.strip() or (blobs[0].name if blobs else found[0].name))
             conv_id = conv.id
 
         if model is not None and conv.model != {"provider": model[0], "model": model[1]}:
             await self._pin(conv, client, *model)
         self._check_queue(conv_id)  # again: other sends may have come in while this one waited
-        content = await asyncio.to_thread(self._content, conv, text, blobs) if blobs else None
+        content = await asyncio.to_thread(self._content, conv, text, blobs, found) if blobs or found else None
         self._check_queue(conv_id)
         queued = conv_id in self._active
         now_s = int(time.time())
         turn = Turn(conversation_id=conv_id, turn_id="t-" + secrets.token_hex(8), agent_id=conv.agent_id,
                     title=conv.title, user_text=text, started_at=now_s, client_msg_id=client_msg_id,
-                    attachments=[b.meta() for b in blobs], content=content,
+                    attachments=[b.meta() for b in blobs] + [
+                        {"kind": "file", "name": f.name, "mime": f.mime, "size": f.size} for f in found],
+                    content=content,
                     status="queued" if queued else "running")
         if queued:
             self._queues.setdefault(conv_id, []).append(turn)
@@ -436,7 +465,7 @@ class ChatService:
         if any(b.kind == "file" for b in blobs) and self.inboxes.get(agent_id) is None:
             raise RpcError(m.MODALITY_UNSUPPORTED, "This agent can only receive photos, not files")
 
-    def _content(self, conv: Conversation, text: str, blobs: list[Blob]) -> str | list:
+    def _content(self, conv: Conversation, text: str, blobs: list[Blob], found: list[Found] = ()) -> str | list:
         """The message for the agent: images inline, files saved to its inbox with a line each.
         The blobs are used up once this returns."""
         lines = [text] if text.strip() else []
@@ -456,6 +485,8 @@ class ChatService:
         except OSError as exc:
             log.warning("could not prepare attachments: %s", exc)
             raise RpcError(m.INTERNAL_ERROR, "The bridge could not store the attachment") from None
+        for f in found:
+            lines.append(f"Attached file: {f.agent_path} ({f.mime}, {f.size} bytes)")
         for blob in blobs:
             self.blobs.discard(blob.blob_id)
         message = "\n\n".join(lines)
@@ -878,6 +909,13 @@ class ChatService:
                 return await asyncio.to_thread(self.blobs.handle, method, p), None
             except BlobError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method in FILES_METHODS:
+            if self.files is None:
+                raise RpcError(m.MODALITY_UNSUPPORTED, "This bridge shares no folders")
+            try:
+                return await asyncio.to_thread(self.files.handle, method, p), None
+            except FilesError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method == "chat.send":
             return await self.send(p)
         if method == "chat.cancel":
@@ -910,7 +948,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "chat.steer", "chat.aside", "chat.status",
-                          "account.balance"}) | BLOB_METHODS
+                          "account.balance"}) | BLOB_METHODS | FILES_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

@@ -136,6 +136,7 @@ private fun Page(screen: Screen.Chat, actions: TalariaActions, modifier: Modifie
             Box(Modifier.weight(1f)) {
                 when (screen.tab) {
                     Tab.HOME -> HomeScreen(screen, actions)
+                    Tab.FILES -> FilesScreen(screen.files, actions)
                     else -> Text("Coming soon", Modifier.padding(24.dp))
                 }
             }

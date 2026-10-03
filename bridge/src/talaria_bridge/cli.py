@@ -19,6 +19,7 @@ from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
 from .chat import ChatService, ChatStore
+from .files import INBOX, FileRoot, FilesService
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
@@ -72,7 +73,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
 
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
-    clients, inboxes, accounts = {}, {}, []
+    clients, inboxes, accounts, roots = {}, {}, [], {}
     for agent in agents:
         if agent.api_url is None:
             continue
@@ -84,6 +85,7 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
         clients[agent.id] = HermesClient(agent.api_url, api_key)
         if agent.inbox_dir is not None:
             inboxes[agent.id] = Path(agent.inbox_dir)
+        roots[agent.id] = file_roots(agent)
         if agent.openrouter_key_file is not None:
             try:
                 accounts.append(OpenRouterAccount(read_api_key(Path(agent.openrouter_key_file))))
@@ -96,7 +98,18 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
         pass
 
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
-                       blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts)
+                       blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
+                       files=FilesService(roots))
+
+
+def file_roots(agent: AgentConfig) -> list[FileRoot]:
+    """The folders devices can browse (§12): the inbox, then what agents.json shares."""
+    roots = []
+    if agent.inbox_dir is not None:
+        roots.append(FileRoot(INBOX, "Sent from Talaria", Path(agent.inbox_dir), agent.inbox_dir))
+    for f in agent.files:
+        roots.append(FileRoot(f["id"], f.get("name") or f["id"], Path(f["path"]), f.get("agent_path") or f["path"]))
+    return roots
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
