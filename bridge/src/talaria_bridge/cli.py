@@ -20,6 +20,7 @@ from .blobs import BlobStore
 from .accounts import OpenRouterAccount
 from .chat import ChatService, ChatStore
 from .todos import TodoStore
+from .automations import AutomationStore, Automations
 from .files import INBOX, FileRoot, FilesService
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -74,7 +75,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
 
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
-    clients, inboxes, accounts, roots = {}, {}, [], {}
+    clients, inboxes, accounts, roots, calendars = {}, {}, [], {}, {}
     for agent in agents:
         if agent.api_url is None:
             continue
@@ -87,6 +88,8 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
         if agent.inbox_dir is not None:
             inboxes[agent.id] = Path(agent.inbox_dir)
         roots[agent.id] = file_roots(agent)
+        if agent.calendar_command:
+            calendars[agent.id] = agent.calendar_command
         if agent.openrouter_key_file is not None:
             try:
                 accounts.append(OpenRouterAccount(read_api_key(Path(agent.openrouter_key_file))))
@@ -100,7 +103,8 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
 
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
-                       files=FilesService(roots), todos=TodoStore(home / "chat.db"))
+                       files=FilesService(roots), todos=TodoStore(home / "chat.db"),
+                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars))
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:

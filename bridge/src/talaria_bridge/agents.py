@@ -34,6 +34,7 @@ class AgentConfig:
     inbox_dir: str | None = None  # chat attachments (§10): where the bridge saves files the agent can read
     openrouter_key_file: str | None = None  # an OpenRouter management key, for account.balance (§11)
     files: tuple[dict, ...] = ()  # shared folders (§12): {"id", "name", "path", "agent_path"?}
+    calendar_command: tuple[str, ...] = ()  # calendar.day (§14): a command printing a day's events as JSON
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -64,9 +65,14 @@ def load_agents(path: Path) -> list[AgentConfig]:
                 and isinstance(f.get("agent_path", f["path"]), str) for f in files)):
             raise ValueError(f"{path}: an agent's files must list {{id, name, path, agent_path?}} with absolute paths"
                              " (the id inbox is taken)")
+        calendar = entry.get("calendar_command", [])
+        if not (isinstance(calendar, list) and all(isinstance(a, str) and a for a in calendar)
+                and (not calendar or Path(calendar[0]).is_absolute())):
+            raise ValueError(f"{path}: an agent's calendar_command must be a list of arguments starting with an"
+                             " absolute path")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
-                                  tuple(files)))
+                                  tuple(files), tuple(calendar)))
     return agents
 
 
