@@ -107,11 +107,12 @@ class ChatRepository(
         _state.update { s -> s.copy(openId = null, draft = s.draft.filter { it.state == MessageState.SENDING }) }
     }
 
-    fun send(text: String) {
+    /** Send [text] to [conversationId], the open conversation by default (null starts a new one). */
+    fun send(text: String, conversationId: String? = _state.value.openId) {
         val body = text.trim()
         if (body.isEmpty()) return
         val cmid = newClientMsgId()
-        val conv = _state.value.openId
+        val conv = conversationId
         val msg = ChatMessage("local:$cmid", Role.USER, body, nowMs(), MessageState.SENDING, clientMsgId = cmid)
         _state.update { s -> s.withMessages(conv) { it + msg } }
         scope.launch { deliver(conv, body, cmid) }

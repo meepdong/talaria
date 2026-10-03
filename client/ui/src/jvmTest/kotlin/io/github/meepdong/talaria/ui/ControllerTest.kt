@@ -66,7 +66,10 @@ class ControllerTest {
         assertEquals(PairingTarget.Code("wss://vps.example", "ABCD1234"), target)
 
         approve.complete(Unit)
-        val status = c.await<Screen.Status> { it.view.failure != null }.view
+        val chat = c.await<Screen.Chat> { it.status.failure != null }
+        val status = chat.status
+        assertEquals("Not connected. ${status.failure}", chat.view.composerHint)
+        assertEquals(false, chat.view.canSend)
         assertEquals("My laptop", status.deviceName)
         assertEquals("Unreachable", status.rows[1].value)
         assertEquals(Health.BAD, status.overall)
@@ -115,8 +118,12 @@ class ControllerTest {
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
         val c = controller()
         c.start()
-        val status = c.await<Screen.Status>().view
+        val status = c.await<Screen.Chat>().status
         assertEquals("wss://vps.example", status.server)
+        c.showStatus()
+        assertTrue(c.await<Screen.Status>().view.canGoBack)
+        c.showChats()
+        c.await<Screen.Chat>()
         assertTrue(status.keyWarning, "the in-memory store reports a file-only key")
         c.close()
     }
@@ -135,7 +142,7 @@ class ControllerTest {
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
         val c = controller()
         c.start()
-        c.await<Screen.Status>()
+        c.await<Screen.Chat>()
         c.forgetServer()
         assertIs<Screen.Connect>(c.await<Screen.Connect>())
         withTimeout(5_000) { while (store.saved != null || keys.load() != null) kotlinx.coroutines.delay(20) }

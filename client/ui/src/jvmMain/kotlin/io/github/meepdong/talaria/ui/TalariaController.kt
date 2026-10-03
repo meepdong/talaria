@@ -1,5 +1,9 @@
 package io.github.meepdong.talaria.ui
 
+import io.github.meepdong.talaria.chat.ChatRepository
+import io.github.meepdong.talaria.chat.ChatState
+import io.github.meepdong.talaria.chat.FinishedReply
+import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.protocol.Sas
 import io.github.meepdong.talaria.protocol.SAS_EMOJI
@@ -27,13 +31,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,24 +75,40 @@ class TalariaController(
     private sealed interface Mode {
         data class Connect(val name: String, val error: String? = null, val busy: Boolean = false) : Mode
         data class Confirm(val sas: Sas, val deadlineMs: Long) : Mode
-        data class Connected(val bridge: PairedBridge, val client: TnpClient) : Mode
+        data class Connected(val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository) : Mode
     }
+
+    /** Which page shows while paired. */
+    private data class Page(val status: Boolean = false, val conversationOpen: Boolean = false)
 
     private val mode = MutableStateFlow<Mode>(Mode.Connect(defaultDeviceName))
     private val test = MutableStateFlow<TestView?>(null)
     private val network = MutableStateFlow<NetworkStatus?>(null)
     private val tick = MutableStateFlow(nowMs())
+    private val page = MutableStateFlow(Page())
     private var pairJob: Job? = null
     private var started = false
 
+    private data class Live(val mode: Mode, val state: ConnectionState?, val chat: ChatState?)
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val modeAndState = mode.flatMapLatest { m ->
-        if (m is Mode.Connected) m.client.state.map { m to it } else flowOf(m to null)
+    private val live = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) combine(m.client.state, m.chat.state) { st, c -> Live(m, st, c) } else flowOf(Live(m, null, null))
     }
 
-    val screen: StateFlow<Screen> = combine(modeAndState, log.entries, network, test, tick) { (m, state), entries, net, t, now ->
-        render(m, state, entries, net, t, now)
+    private data class Extras(val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page)
+
+    private val extras = combine(log.entries, network, test, page) { e, n, t, p -> Extras(e, n, t, p) }
+
+    val screen: StateFlow<Screen> = combine(live, extras, tick) { l, x, now ->
+        render(l, x, now)
     }.stateIn(scope, SharingStarted.Eagerly, Screen.Connect(defaultDeviceName))
+
+    /** Every reply that finishes, for notifications. The apps decide whether one is needed. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val replies: Flow<FinishedReply> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.replies else emptyFlow() }
+
+    private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
 
     /** Load the saved pairing and connect, and start the clock and the network check. */
     fun start() {
@@ -124,7 +145,10 @@ class TalariaController(
     /** Stop the session, for example when the app quits. */
     fun close() {
         pairJob?.cancel()
-        (mode.value as? Mode.Connected)?.client?.stop()
+        (mode.value as? Mode.Connected)?.let {
+            it.chat.stop()
+            it.client.stop()
+        }
     }
 
     override fun pairWithLink(link: String, deviceName: String) {
@@ -173,7 +197,9 @@ class TalariaController(
 
     override fun forgetServer() {
         val current = mode.value as? Mode.Connected ?: return
+        current.chat.stop()
         current.client.stop()
+        page.value = Page()
         test.value = null
         mode.value = Mode.Connect(current.bridge.deviceName)
         log.add(nowMs(), "Forgot the server", current.bridge.url)
@@ -182,6 +208,66 @@ class TalariaController(
             // A fresh key for the next pairing: the old one may be revoked or refused.
             runCatching { keyStore.delete() }
         }
+    }
+
+    // chat
+
+    override fun openConversation(id: String) {
+        chat?.open(id)
+        page.value = Page(conversationOpen = true)
+    }
+
+    override fun newConversation() {
+        chat?.newConversation()
+        page.value = Page(conversationOpen = true)
+    }
+
+    override fun closeConversation() {
+        page.value = Page()
+        chat?.refresh()
+    }
+
+    override fun sendMessage(text: String) {
+        chat?.send(text)
+    }
+
+    override fun retryMessage(key: String) {
+        chat?.retry(key)
+    }
+
+    override fun stopReply(turnId: String) {
+        chat?.stop(turnId)
+    }
+
+    override fun loadOlder() {
+        val c = chat ?: return
+        c.state.value.openId?.let { c.loadOlder(it) }
+    }
+
+    override fun renameConversation(id: String, title: String) {
+        if (title.isNotBlank()) chat?.rename(id, title)
+    }
+
+    override fun deleteConversation(id: String) {
+        chat?.delete(id)
+        if (chat?.state?.value?.openId == id) page.value = Page()
+    }
+
+    override fun dismissNotice() {
+        chat?.dismissNotice()
+    }
+
+    override fun showStatus() {
+        page.value = page.value.copy(status = true)
+    }
+
+    override fun showChats() {
+        page.value = page.value.copy(status = false)
+    }
+
+    /** A reply typed into a notification, sent without opening the app. */
+    fun replyFromNotification(conversationId: String, text: String) {
+        chat?.send(text, conversationId)
     }
 
     private fun currentName(): String = when (val m = mode.value) {
@@ -219,19 +305,15 @@ class TalariaController(
 
     private fun connect(bridge: PairedBridge, key: DeviceKey) {
         val client = newClient(bridge, key)
+        val chat = ChatRepository(scope, client.asChatApi())
         test.value = null
-        mode.value = Mode.Connected(bridge, client)
+        page.value = Page()
+        chat.start()
+        mode.value = Mode.Connected(bridge, client, chat)
         client.start()
     }
 
-    private fun render(
-        m: Mode,
-        state: ConnectionState?,
-        entries: List<ConnectionLog.Entry>,
-        net: NetworkStatus?,
-        t: TestView?,
-        now: Long,
-    ): Screen = when (m) {
+    private fun render(l: Live, x: Extras, now: Long): Screen = when (val m = l.mode) {
         is Mode.Connect -> Screen.Connect(m.name, m.error, m.busy)
         is Mode.Confirm -> Screen.Confirm(
             digits = "${m.sas.digits.take(3)} ${m.sas.digits.drop(3)}",
@@ -239,9 +321,16 @@ class TalariaController(
             emojiNames = m.sas.emojiIndices.map { SAS_EMOJI[it].second },
             secondsLeft = ((m.deadlineMs - now).coerceAtLeast(0) / 1000).toInt(),
         )
-        is Mode.Connected -> Screen.Status(
-            statusView(state ?: ConnectionState(), m.bridge, net, keyStore.protection, entries, t, now)
-        )
+        is Mode.Connected -> {
+            val state = l.state ?: ConnectionState()
+            val status = statusView(state, m.bridge, x.net, keyStore.protection, x.entries, x.test, now)
+            if (x.page.status) {
+                Screen.Status(status.copy(canGoBack = true))
+            } else {
+                Screen.Chat(chatView(l.chat ?: ChatState(), x.page.conversationOpen,
+                    state.phase == ConnectionState.Phase.CONNECTED, status, now), status)
+            }
+        }
     }
 
     companion object {

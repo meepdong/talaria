@@ -1,9 +1,15 @@
 package io.github.meepdong.talaria.android
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,9 +24,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.TalariaApp
+import io.github.meepdong.talaria.ui.paired
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as TalariaApplication
@@ -35,8 +43,23 @@ class MainActivity : ComponentActivity() {
             var scanning by rememberSaveable { mutableStateOf(false) }
 
             // Once paired, the service holds the session in the background.
-            val paired = screen is Screen.Status
+            val paired = screen.paired
             LaunchedEffect(paired) { if (paired) ConnectionService.start(this@MainActivity) }
+
+            // Reply notifications need permission on Android 13+; ask once paired.
+            val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+            LaunchedEffect(paired) {
+                if (paired && Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
+            // Back: from a conversation to the list, and from Connection to the chats.
+            val current = screen
+            BackHandler(enabled = current is Screen.Chat && current.view.conversationOpen) { controller.closeConversation() }
+            BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
 
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                 if (scanning && screen is Screen.Connect) {
@@ -69,6 +92,16 @@ class MainActivity : ComponentActivity() {
         resumed++
     }
 
+    override fun onStart() {
+        super.onStart()
+        app.visible = true
+    }
+
+    override fun onStop() {
+        app.visible = false
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleLink(intent)
@@ -76,6 +109,13 @@ class MainActivity : ComponentActivity() {
 
     /** A tapped talaria://pair#… link starts pairing, if this phone isn't paired yet. */
     private fun handleLink(intent: Intent?) {
+        intent?.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)?.let { conv ->
+            // opened from a reply notification
+            intent.removeExtra(ReplyNotifier.EXTRA_CONVERSATION)
+            app.controller.showChats()
+            app.controller.openConversation(conv)
+            return
+        }
         val link = intent?.dataString ?: return
         if (!link.startsWith(PairingPayload.LINK_PREFIX)) return
         val screen = app.controller.screen.value

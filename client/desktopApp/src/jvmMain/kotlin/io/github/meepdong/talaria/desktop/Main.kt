@@ -1,19 +1,25 @@
 package io.github.meepdong.talaria.desktop
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Notification
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.isTraySupported
+import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
+import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.security.desktop.DesktopKeyStore
 import io.github.meepdong.talaria.session.ConnectionLog
 import io.github.meepdong.talaria.session.FilePairingStore
+import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.TalariaController
 import io.github.meepdong.talaria.ui.color
@@ -64,6 +70,23 @@ fun main(args: Array<String>) {
         var visible by remember { mutableStateOf(!(startHidden && tray)) }
         val icon = remember { loadAppIcon() }
         val trayIcon = remember(screen.overall) { TrayIconPainter(icon, screen.overall.color()) }
+        val trayState = rememberTrayState()
+        var focused by remember { mutableStateOf(false) }
+
+        // A toast for replies that finish while their conversation isn't in front of you.
+        LaunchedEffect(Unit) {
+            controller.replies.collect { reply ->
+                val open = (controller.screen.value as? Screen.Chat)?.view?.openId == reply.conversationId
+                if (!(visible && focused && open) && tray) {
+                    val text = when (reply.state) {
+                        MessageState.DONE -> reply.text.ifBlank { "(empty reply)" }
+                        MessageState.CANCELLED -> "Stopped"
+                        else -> "The reply failed: ${reply.error ?: "unknown error"}"
+                    }
+                    trayState.sendNotification(Notification(reply.title, text.take(240)))
+                }
+            }
+        }
 
         fun quit() {
             controller.close()
@@ -74,6 +97,7 @@ fun main(args: Array<String>) {
 
         if (tray) {
             Tray(
+                state = trayState,
                 icon = trayIcon,
                 tooltip = "Talaria: ${screen.summary}",
                 onAction = { visible = true },
@@ -91,8 +115,11 @@ fun main(args: Array<String>) {
             visible = visible,
             title = "Talaria",
             icon = icon,
-            state = rememberWindowState(width = 540.dp, height = 800.dp),
+            // Wide enough for the chat list beside the conversation.
+            state = rememberWindowState(width = 1040.dp, height = 760.dp),
         ) {
+            val windowFocused = LocalWindowInfo.current.isWindowFocused
+            LaunchedEffect(windowFocused) { focused = windowFocused }
             TalariaApp(screen, controller) {
                 DesktopSettings(loginItem, logFile, keepsRunning = tray)
             }
