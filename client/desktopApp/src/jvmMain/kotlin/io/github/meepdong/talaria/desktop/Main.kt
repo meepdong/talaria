@@ -22,6 +22,7 @@ import io.github.meepdong.talaria.session.ConnectionLog
 import io.github.meepdong.talaria.session.FilePairingStore
 import io.github.meepdong.talaria.ui.Prefs
 import io.github.meepdong.talaria.ui.Screen
+import io.github.meepdong.talaria.ui.Tab
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.TalariaController
 import io.github.meepdong.talaria.ui.color
@@ -93,7 +94,8 @@ fun main(args: Array<String>) {
         // A toast for replies that finish while their conversation isn't in front of you.
         LaunchedEffect(Unit) {
             controller.replies.collect { reply ->
-                val open = (controller.screen.value as? Screen.Chat)?.view?.openId == reply.conversationId
+                val open = (controller.screen.value as? Screen.Chat)?.takeIf { it.tab == Tab.CHATS }?.view?.openId ==
+                    reply.conversationId
                 if (!(visible && focused && open) && tray) {
                     val text = when (reply.state) {
                         MessageState.DONE -> reply.text.ifBlank { "(empty reply)" }

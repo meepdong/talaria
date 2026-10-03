@@ -89,7 +89,12 @@ class TalariaController(
     }
 
     /** Which page shows while paired. */
-    private data class Page(val status: Boolean = false, val conversationOpen: Boolean = false)
+    private data class Page(
+        val status: Boolean = false,
+        val conversationOpen: Boolean = false,
+        val tab: Tab = Tab.HOME,
+        val menuOpen: Boolean = false,
+    )
 
     private val mode = MutableStateFlow<Mode>(Mode.Connect(defaultDeviceName))
     private val test = MutableStateFlow<TestView?>(null)
@@ -113,6 +118,12 @@ class TalariaController(
         VoiceView(readAloud = prefs.get(PREF_READ_ALOUD, false), autoSend = prefs.get(PREF_AUTO_SEND, false)),
     )
     private var dictations = 0L
+
+    /** The mic button is listening: send what's heard, and read the answer aloud. */
+    @Volatile private var talking = false
+
+    /** Read the next reply to this device aloud, after talking. */
+    @Volatile private var speakNextReply = false
     private var pairJob: Job? = null
     private var started = false
 
@@ -164,7 +175,10 @@ class TalariaController(
         }
         scope.launch {
             replies.collect { r ->
-                if (r.fromThisDevice && r.state == MessageState.DONE && voice.value.readAloud) say(READ_ALOUD_KEY, r.text)
+                if (r.fromThisDevice && r.state == MessageState.DONE && (voice.value.readAloud || speakNextReply)) {
+                    speakNextReply = false
+                    say(READ_ALOUD_KEY, r.text)
+                }
             }
         }
         scope.launch {
@@ -257,17 +271,46 @@ class TalariaController(
 
     override fun openConversation(id: String) {
         chat?.open(id)
-        page.value = Page(conversationOpen = true)
+        page.value = Page(conversationOpen = true, tab = Tab.CHATS)
     }
 
     override fun newConversation() {
         chat?.newConversation()
-        page.value = Page(conversationOpen = true)
+        page.value = Page(conversationOpen = true, tab = Tab.CHATS)
     }
 
     override fun closeConversation() {
-        page.value = Page()
+        page.value = Page(tab = Tab.CHATS)
         chat?.refresh()
+    }
+
+    override fun selectTab(tab: Tab) {
+        page.update { it.copy(tab = tab, status = false, menuOpen = false) }
+        if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
+    }
+
+    override fun setMenuOpen(open: Boolean) {
+        if (open) chat?.loadBalance()
+        page.update { it.copy(menuOpen = open) }
+    }
+
+    override fun startChat() {
+        newConversation()
+    }
+
+    override fun talk() {
+        if (speechInput.value == null) {
+            newConversation()
+            chat?.notice("This device can't take dictation, so type your message")
+            return
+        }
+        if (voice.value.listening) {
+            toggleDictation()
+            return
+        }
+        newConversation()
+        talking = true
+        toggleDictation()
     }
 
     override fun sendMessage(text: String) {
@@ -368,7 +411,7 @@ class TalariaController(
      */
     fun receiveShare(files: List<OutgoingFile>, text: String?, problem: String? = null) {
         chat?.newConversation()
-        page.value = Page(conversationOpen = true)
+        page.value = Page(conversationOpen = true, tab = Tab.CHATS)
         pending.value = emptyList()
         addAttachments(files, problem)
         val words = text?.trim().orEmpty()
@@ -401,13 +444,17 @@ class TalariaController(
 
             override fun done(text: String) {
                 val heard = text.trim()
+                val talked = talking
+                talking = false
+                if (talked && heard.isNotEmpty()) speakNextReply = true
                 voice.update { v ->
                     v.copy(listening = false, heard = "",
-                        dictation = if (heard.isEmpty()) v.dictation else Dictation(++dictations, heard, v.autoSend))
+                        dictation = if (heard.isEmpty()) v.dictation else Dictation(++dictations, heard, v.autoSend || talked))
                 }
             }
 
             override fun failed(message: String) {
+                talking = false
                 voice.update { it.copy(listening = false, heard = "") }
                 chat?.notice(message)
             }
@@ -465,7 +512,7 @@ class TalariaController(
 
     override fun deleteConversation(id: String) {
         chat?.delete(id)
-        if (chat?.state?.value?.openId == id) page.value = Page()
+        if (chat?.state?.value?.openId == id) page.value = Page(tab = Tab.CHATS)
     }
 
     override fun dismissNotice() {
@@ -474,7 +521,7 @@ class TalariaController(
 
     override fun showStatus() {
         chat?.loadBalance()
-        page.value = page.value.copy(status = true)
+        page.update { it.copy(status = true, menuOpen = false) }
     }
 
     override fun showChats() {
@@ -543,9 +590,18 @@ class TalariaController(
             if (x.page.status) {
                 Screen.Status(status.copy(canGoBack = true, balances = balanceItems(l.chat?.balances.orEmpty())))
             } else {
-                Screen.Chat(chatView(l.chat ?: ChatState(), x.page.conversationOpen,
+                val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
+                val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images)
-                    .copy(voice = x.voice), status.copy(balances = balanceItems(l.chat?.balances.orEmpty())))
+                    .copy(voice = x.voice)
+                Screen.Chat(
+                    view, withBalance,
+                    tab = x.page.tab,
+                    tabs = TABS,
+                    home = homeView(view, now),
+                    menu = menuView(view, withBalance),
+                    menuOpen = x.page.menuOpen,
+                )
             }
         }
     }
@@ -562,6 +618,9 @@ class TalariaController(
 
         /** [VoiceView.speakingKey] while a reply is read aloud on its own. */
         const val READ_ALOUD_KEY = "read-aloud"
+
+        /** The pages in the menu bar. */
+        val TABS = listOf(Tab.HOME, Tab.CHATS)
 
         /** What people type for a short-code pairing: a host, host:port, or a wss:// URL. */
         fun bridgeUrl(address: String): String? {

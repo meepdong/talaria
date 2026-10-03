@@ -24,7 +24,7 @@ fun TalariaApp(
                 is Screen.Connect -> ConnectScreen(screen, actions, connectExtras)
                 is Screen.Confirm -> ConfirmScreen(screen, actions)
                 is Screen.Status -> StatusScreen(screen.view, actions, statusExtras)
-                is Screen.Chat -> ChatHome(screen.view, actions)
+                is Screen.Chat -> MainScreen(screen, actions)
             }
         }
     }

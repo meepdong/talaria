@@ -61,20 +61,23 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/** Two panes on a wide window (desktop), list then conversation on a phone (UI.md §3–4). */
+/**
+ * Two panes on a wide window (desktop), list then conversation on a phone (UI.md §3–4).
+ * [menu] is the ☰ button, shown at the top of the list, and of a conversation on a phone.
+ */
 @Composable
-fun ChatHome(view: ChatView, actions: TalariaActions) {
+fun ChatHome(view: ChatView, actions: TalariaActions, menu: @Composable () -> Unit = {}) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {
-                ConversationList(view, actions, Modifier.width(320.dp).fillMaxHeight())
+                ConversationList(view, actions, menu, Modifier.width(320.dp).fillMaxHeight())
                 VerticalDivider()
-                Conversation(view, actions, showBack = false, modifier = Modifier.weight(1f).fillMaxHeight())
+                Conversation(view, actions, showBack = false, menu = {}, modifier = Modifier.weight(1f).fillMaxHeight())
             }
         } else if (view.conversationOpen) {
-            Conversation(view, actions, showBack = true, modifier = Modifier.fillMaxSize())
+            Conversation(view, actions, showBack = true, menu = menu, modifier = Modifier.fillMaxSize())
         } else {
-            ConversationList(view, actions, Modifier.fillMaxSize())
+            ConversationList(view, actions, menu, Modifier.fillMaxSize())
         }
     }
 }
@@ -93,11 +96,12 @@ private fun ConnectionDot(view: ChatView, actions: TalariaActions) {
 }
 
 @Composable
-private fun ConversationList(view: ChatView, actions: TalariaActions, modifier: Modifier) {
+private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Composable () -> Unit, modifier: Modifier) {
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Chats", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
             ConnectionDot(view, actions)
+            menu()
         }
         Button(onClick = actions::newConversation, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("new-chat")) {
             Text("✎ New chat")
@@ -135,7 +139,9 @@ private fun ConversationRow(c: ConversationItem, selected: Boolean, actions: Tal
 }
 
 @Composable
-private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Boolean, modifier: Modifier) {
+private fun Conversation(
+    view: ChatView, actions: TalariaActions, showBack: Boolean, menu: @Composable () -> Unit, modifier: Modifier,
+) {
     var renaming by remember(view.openId) { mutableStateOf(false) }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -147,6 +153,7 @@ private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Bool
             if (showBack) ConnectionDot(view, actions)
             view.model?.let { ModelChip(it, view.modelGroups, actions) }
             ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
+            menu()
         }
         HorizontalDivider()
 

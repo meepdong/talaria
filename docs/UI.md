@@ -42,6 +42,24 @@ Low-fidelity layouts for the Android reference client. Desktop uses the same scr
 ```
 Failures name the broken layer and the fix: "Server unreachable — is your private network (Tailscale/WireGuard) on?", "This device was revoked — pair again", "Server identity changed ⚠️ — do not continue unless you re-installed the bridge".
 
+## 2a. Home and menu bar (M2)
+
+```
+┌──────────┬───────────────────────────────────────────┐
+│ Talaria  │ Monday 5 October                      ☰  │
+│          │ Today                                     │
+│ ▣ Home   │ ┌ Your day ─────────────────────────────┐ │
+│ ▢ Chats  │ │ from the 10:00 catch-up · calendar    │ │
+│ ▢ Files  │ └───────────────────────────────────────┘ │
+│ ▢ Sched. │ ┌ To do ────────┐ ┌ Next up ────────────┐ │
+│          │ │ ☐ …           │ │ 11:30 Summary  auto │ │
+│          │ └───────────────┘ │ 14:00 Meeting  cal  │ │
+│          │                   └─────────────────────┘ │
+│          │        [ Chat with Hermes ]  [ 🎤 Talk ]  │
+└──────────┴───────────────────────────────────────────┘
+```
+Paired apps open on Home. The menu bar runs down the side on a wide window and along the bottom on a phone; a phone hides it while a conversation is open. ☰ opens a panel with what's running now, provider balances with Add credits, and the connection rows, linking to the full connection page (§2). Chat starts a new chat; Talk starts one by voice: what's heard is sent at once and the answer is read aloud. Design mockup: the Talaria redesign canvas (Home, Files, Schedule).
+
 ## 3. Chat list
 
 ```

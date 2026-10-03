@@ -22,9 +22,43 @@ sealed interface Screen {
 
     data class Status(val view: StatusView) : Screen
 
-    /** Paired: the chat list and the open conversation, with the connection state at hand. */
-    data class Chat(val view: ChatView, val status: StatusView) : Screen
+    /**
+     * Paired: the main app, with its menu bar. [tab] picks the page; [menu] is the ☰ panel
+     * (running work, balance, connection), shown while [menuOpen].
+     */
+    data class Chat(
+        val view: ChatView,
+        val status: StatusView,
+        val tab: Tab = Tab.CHATS,
+        val tabs: List<Tab> = listOf(Tab.HOME, Tab.CHATS),
+        val home: HomeView = HomeView(),
+        val menu: MenuView = MenuView(),
+        val menuOpen: Boolean = false,
+    ) : Screen
 }
+
+/** The pages in the menu bar. */
+enum class Tab(val label: String) { HOME("Home"), CHATS("Chats"), FILES("Files"), SCHEDULE("Schedule") }
+
+/** The Home page: today at a glance. */
+data class HomeView(
+    /** "Monday 5 October". */
+    val date: String = "",
+    /** The latest chats, newest first. */
+    val recent: List<ConversationItem> = emptyList(),
+)
+
+/** The ☰ panel. */
+data class MenuView(
+    /** Replies that are running right now, and anything else at work. */
+    val running: List<RunningItem> = emptyList(),
+    val balances: List<BalanceItem> = emptyList(),
+    /** Network, Bridge and agents, as on the connection page. */
+    val connection: List<StatusRow> = emptyList(),
+)
+
+/** Something at work: a reply being written. [conversationId] opens it. */
+data class RunningItem(val title: String, val detail: String, val conversationId: String? = null)
 
 /** One line of the status card: Network, Bridge, or an agent. */
 data class StatusRow(val label: String, val health: Health, val value: String, val detail: String? = null)
@@ -104,6 +138,17 @@ interface TalariaActions {
     fun dismissNotice() {}
     fun showStatus() {}
     fun showChats() {}
+
+    // the menu bar and Home
+
+    fun selectTab(tab: Tab) {}
+    fun setMenuOpen(open: Boolean) {}
+
+    /** The Chat button: a new chat, ready to type. */
+    fun startChat() {}
+
+    /** The mic button: say something to Hermes and hear the answer, in a new chat. */
+    fun talk() {}
 }
 
 /** The tray icon's colour. */
