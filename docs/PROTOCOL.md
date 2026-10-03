@@ -376,6 +376,21 @@ The only protocol involvement is the optional **Polish mode**:
 - **Exact mode** (the dictated words as spoken) needs no protocol call and no model cost.
 - Sent messages are logged **on the device only** ("what I sent by voice"). Nothing about them is reported to the bridge unless the user enables it.
 
+### 10.7 Schedules
+
+A schedule lives in **exactly one place**: on the device (a local rule with a time trigger, §8) or on the server (a Hermes cron job). The client shows both in one list.
+
+| Method | Direction | Purpose |
+|---|---|---|
+| `schedules.list` | device → bridge (request) | Server schedules (Hermes cron jobs, read via the bridge). The client merges them with its local time rules. |
+| `schedules.create` / `schedules.update` | device → bridge (request) | Create or edit a **server** schedule: `{name, when, prompt, agent_id, model?, deliver_to: ["device:<id>", …], budget_per_run?}` |
+| `schedules.pause` / `schedules.resume` / `schedules.delete` | device → bridge (request) | Lifecycle for server schedules |
+| `schedules.run_now` | device → bridge (request) | Trigger a server schedule once, for testing |
+
+Server schedule entries include `runs_on: "server"`, `next_run_at`, `last_run` (`status`, `cost`) and the pinned `model`. Local schedules are never sent to the bridge; they appear in the list with `runs_on: "device"`.
+
+A server job that needs phone data at run time calls the normal device tools (`device_location`, `device_events_query`, …). If the device is unreachable, the bridge answers from its **last known** event data and labels it stale (e.g. `"as_of": "2026-10-03T07:41:00+05:30"`).
+
 ## 11. Relayed devices (watch, glasses)
 
 A node MAY relay sub-devices it is connected to, e.g. a Wear OS watch over the Data Layer API, or glasses through the vendor SDK.

@@ -71,6 +71,7 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 ## M7 — Events and rules v1
 - Outbox with acks; bridge event store; webhook forwarding to Hermes.
 - Triggers: time, geofence, Wi-Fi, power. Actions: notify, speak, emit event, ask agent.
+- **Schedules:** a unified Schedules screen; the scheduling router (device rule vs Hermes cron); `schedules.*` via the bridge; per-run cost display and a cheap model pinned by default; server jobs reading device data with stale fallback.
 - **Exit:** "arrive at office → agenda" and an 8am briefing run reliably for a week.
 
 ## M8 — Phone data, safely

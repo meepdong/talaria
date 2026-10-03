@@ -31,6 +31,7 @@ Talaria gives an AI agent access to personal devices. That is only acceptable if
 | T17 | **Assistant on a locked phone** | Someone picks up your locked phone and asks it to read your messages | Locked mode allows only safe actions (timers, alarms, general questions). Personal data, messages and device actions require unlocking. |
 | T18 | **Screen context leakage** | "What's on my screen?" sends a banking app screen to the model provider | Off by default; confirmed per use with a preview of what will be sent; never automatic; apps on a deny-list (banking, password managers) are never captured |
 | T19 | **Always-on microphone** | A wake-word service listens all the time | Experimental and opt-in; wake word detected **on device** with no audio streamed before it triggers; Android's mic indicator stays visible; schedule limits (e.g. only while charging) |
+| T20 | **Scheduled jobs misbehaving** | A server schedule repeatedly reads phone data or burns credit unattended | Server jobs use the same device tiers (tier 2 still needs on-device approval, which unattended jobs cannot get, so they fail closed); `budget_per_run` and the cheap-model default; last-run status and cost visible in the Schedules screen; pause from the app |
 
 ## 3. Safe defaults
 

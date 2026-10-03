@@ -293,6 +293,28 @@ Rules:
 - **Wake word** ("Hey Meep"): low-power hotword hardware is reserved for preinstalled system assistants. A third-party wake word needs a foreground service with the microphone open and an on-device engine (e.g. openWakeWord). It costs battery and shows a permanent microphone indicator, so it is **experimental and opt-in** (e.g. only while charging or driving).
 - "Hey Google" and the Android Auto assistant stay with Google. Talaria coexists with them.
 
+### 3.8 Scheduling: phone or server?
+
+When the user creates a schedule ("every morning at 8…", "at 10pm turn on DND"), the client's **scheduling router** decides where it runs and shows the result (📱 Phone / ☁️ Server), with an option to override.
+
+| The schedule… | Runs on | Mechanism |
+|---|---|---|
+| Acts on the phone or needs phone sensors (alarms, DND, geofence reminders, silent mode) | 📱 Device | Local rule with a `time.*` / `geofence.*` trigger (PROTOCOL §8); Android `AlarmManager` exact alarms |
+| Needs the agent (briefings, summaries, web checks, monitoring) | ☁️ Server | Hermes cron job (per-job model pin, skills, delivery), created via `schedules.create` |
+| Needs both (e.g. a briefing that includes current location) | ☁️ Server | Cron job calls device tools at run time; falls back to the bridge's last known data, labelled stale |
+
+Trade-offs:
+
+| | Device | Server |
+|---|---|---|
+| Works offline | ✅ | Runs, but delivery needs network (wake push + queue) |
+| Runs with the phone off | ❌ | ✅ |
+| Exact timing | Needs the Android "alarms & reminders" permission and OEM battery exemptions | ✅ |
+| Cost | Free | Tokens per run; cheap model pinned by default; optional `budget_per_run` |
+| Privacy | Data stays local | Only what the job needs |
+
+Rule of thumb: **no AI needed → device; AI needed → server.** A plain "remind me at 7" is a device rule. "Remind me at 7 and suggest what to talk about" is a server job.
+
 ## 4. The agent-facing MCP surface (fixed)
 
 The tool list is **fixed and independent of which devices are connected**. In Hermes, changing the tool set invalidates the provider prompt cache, so dynamic per-device tools would make every turn more expensive.

@@ -208,7 +208,25 @@ Incoming read aloud (opt-in, per app): *"Asha on WhatsApp: 'Dinner tonight?' Rep
 ```
 Agent answers stream into the same sheet and are spoken as they arrive. "⤢ Open" continues the conversation in the full app. On the lock screen, the sheet shows a 🔒 badge, and personal requests ask for an unlock.
 
-## 11. Design notes
+## 11. Schedules
+
+```
+┌────────────────────────────────────────┐
+│ ← Schedules                        ＋  │
+├────────────────────────────────────────┤
+│ ⏰ Weekday alarm   06:30   📱 Phone     │
+│ 🌙 DND on          22:00   📱 Phone     │
+│ ☀️ Morning brief   08:00   ☁️ Server    │
+│     Meep · Haiku · ~₹0.40/run          │
+│     last run ✅ 08:00 · ₹0.38           │
+│ 📊 Weekly spend    Sun 20:00 ☁️ Server  │
+├────────────────────────────────────────┤
+│ Runs on: decided automatically ⓘ       │
+└────────────────────────────────────────┘
+```
+Creating a schedule (typed or spoken) shows where it will run and why ("Needs your agent, so it runs on your server, even when your phone is off"), with "Run on phone instead / Run on server instead" when both are possible. Server schedules show agent, model, cost per run, last result and a "Run now" button.
+
+## 12. Design notes
 - Every agent has a fixed colour and avatar across chats, groups and workflows.
 - A model badge on each agent message makes cost visible without being noisy.
 - Spend is always one tap away: group info, agent profile, workflow header.
