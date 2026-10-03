@@ -29,6 +29,8 @@ class AgentConfig:
     id: str
     name: str
     health_url: str
+    api_url: str | None = None  # chat (M2): the Hermes API server, e.g. http://127.0.0.1:8642
+    api_key_file: str | None = None  # a file holding its API_SERVER_KEY, readable only by the bridge
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -42,7 +44,12 @@ def load_agents(path: Path) -> list[AgentConfig]:
         if not (isinstance(agent_id, str) and agent_id and isinstance(url, str)
                 and url.startswith(("http://", "https://"))):
             raise ValueError(f"{path}: each agent needs an id and an http(s) health_url")
-        agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url))
+        api_url, key_file = entry.get("api_url"), entry.get("api_key_file")
+        if api_url is not None and not (isinstance(api_url, str) and api_url.startswith(("http://", "https://"))
+                                        and isinstance(key_file, str) and key_file):
+            raise ValueError(f"{path}: an agent's api_url must be http(s) and come with api_key_file")
+        agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
+                                  api_url, key_file if api_url is not None else None))
     return agents
 
 

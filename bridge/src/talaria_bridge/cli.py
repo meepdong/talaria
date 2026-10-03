@@ -15,7 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .agents import AgentMonitor, load_agents
+from .agents import AgentConfig, AgentMonitor, load_agents
+from .chat import ChatService, ChatStore
+from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
 from .protocol.encoding import b64u_encode, now
@@ -64,6 +66,27 @@ def cert_spki_sha256(cert_path: Path) -> str:
     spki = cert.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     return b64u_encode(hashlib.sha256(spki).digest())
+
+
+def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
+    """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
+    clients = {}
+    for agent in agents:
+        if agent.api_url is None:
+            continue
+        try:
+            api_key = read_api_key(Path(agent.api_key_file))
+        except (OSError, ValueError) as exc:
+            print(f"WARNING: no chat for agent {agent.id}: cannot read its API key ({exc})", file=sys.stderr)
+            continue
+        clients[agent.id] = HermesClient(agent.api_url, api_key)
+    if not clients:
+        return None
+
+    async def not_serving(msg: dict) -> None:  # replaced by BridgeServer.broadcast
+        pass
+
+    return ChatService(ChatStore(home / "chat.db"), clients, not_serving)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -118,7 +141,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         registry.db.execute("DELETE FROM meta WHERE key = 'tls_spki_sha256'")
 
     agents = load_agents(args.home / "agents.json")
-    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents))
+    chat = make_chat(args.home, agents)
+    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
     if args.behind_proxy:
@@ -126,6 +150,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     else:
         print(f"  listening: {url}  (data in {args.home})")
     print(f"  agents:    {', '.join(a.id for a in agents) or 'none configured (agents.json)'}")
+    print(f"  chat:      {', '.join(chat.agents) if chat else 'off (no agent has api_url in agents.json)'}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
 
     async def run() -> None:
