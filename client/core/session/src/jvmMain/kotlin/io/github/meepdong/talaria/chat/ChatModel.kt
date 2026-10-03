@@ -10,7 +10,40 @@ data class ConversationSummary(
     val lastRole: Role? = null,
     val lastText: String? = null,
     val activeTurnId: String? = null,
+    /** The model this conversation is pinned to, if any (spec/README.md §11). */
+    val model: ModelChoice? = null,
+    val queuedTurnIds: List<String> = emptyList(),
 )
+
+/** A model as Hermes names it, e.g. openrouter / anthropic/claude-sonnet-4. */
+data class ModelChoice(val provider: String, val model: String) {
+    /** The part people recognise: "claude-sonnet-4" rather than "anthropic/claude-sonnet-4". */
+    val shortName: String get() = model.substringAfterLast('/')
+}
+
+/** What `agent.models` offers. */
+data class ModelOptions(val current: ModelChoice?, val providers: List<Provider>) {
+    data class Provider(val id: String, val name: String, val models: List<String>)
+}
+
+/** A side question (Hermes's /btw) and its answer, once it comes. Not saved in history. */
+data class Aside(val id: String, val question: String, val answer: String? = null, val error: String? = null)
+
+/** What `chat.status` reports about a conversation. */
+data class ConversationStatus(
+    val conversationId: String,
+    val model: ModelChoice?,
+    val messages: Long?,
+    val toolCalls: Long?,
+    val inputTokens: Long?,
+    val outputTokens: Long?,
+    val costUsd: Double?,
+    val running: Boolean,
+    val queued: Int,
+)
+
+/** Credit left on a provider account (`account.balance`). */
+data class AccountBalance(val name: String, val remaining: Double?, val currency: String?, val topUpUrl: String, val error: String?)
 
 enum class Role { USER, ASSISTANT }
 
@@ -20,6 +53,9 @@ enum class MessageState {
 
     /** A user message the bridge didn't take; it can be retried. */
     NOT_SENT,
+
+    /** A user message waiting for the running reply to end (spec/README.md §11). */
+    QUEUED,
 
     /** An assistant reply that is still streaming. */
     STREAMING,
@@ -102,6 +138,14 @@ data class ChatState(
     val unavailable: String? = null,
     /** A one-off problem to show, such as a failed rename. */
     val notice: String? = null,
+    /** Side questions by conversation, newest last. */
+    val asides: Map<String, List<Aside>> = emptyMap(),
+    val models: ModelOptions? = null,
+    /** The model picked for the next new conversation. */
+    val draftModel: ModelChoice? = null,
+    /** Shown by /status until dismissed. */
+    val status: ConversationStatus? = null,
+    val balances: List<AccountBalance> = emptyList(),
 ) {
     val openMessages: List<ChatMessage>
         get() = openId?.let { threads[it]?.messages } ?: draft

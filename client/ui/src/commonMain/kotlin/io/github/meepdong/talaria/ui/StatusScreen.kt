@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -59,6 +60,26 @@ fun StatusScreen(view: StatusView, actions: TalariaActions, extras: @Composable 
                 view.rows.forEachIndexed { i, row ->
                     if (i > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                     StatusRowItem(row)
+                }
+            }
+        }
+
+        view.balances.forEach { b ->
+            val open = LocalUriHandler.current
+            Card(Modifier.fillMaxWidth().testTag("balance")) {
+                Row(Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${b.name} balance", style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (b.amount != null) {
+                            Text(b.amount, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.testTag("balance-amount"))
+                        } else {
+                            Text(b.error ?: "Unknown", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Button(onClick = { runCatching { open.openUri(b.topUpUrl) } }, modifier = Modifier.testTag("top-up")) {
+                        Text("Add credits")
+                    }
                 }
             }
         }

@@ -145,6 +145,7 @@ private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Bool
             Text(view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
             if (showBack) ConnectionDot(view, actions)
+            view.model?.let { ModelChip(it, view.modelGroups, actions) }
             ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
         }
         HorizontalDivider()
@@ -162,11 +163,55 @@ private fun Conversation(view: ChatView, actions: TalariaActions, showBack: Bool
         Messages(view, actions, Modifier.weight(1f))
         Composer(view, actions)
     }
+    view.status?.let { st ->
+        AlertDialog(
+            onDismissRequest = actions::closeStatus,
+            title = { Text(st.title) },
+            text = {
+                Column(Modifier.testTag("status-lines"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    st.lines.forEach { (label, value) ->
+                        Row {
+                            Text(label, Modifier.width(120.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(value)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = actions::closeStatus) { Text("Close") } },
+        )
+    }
     if (renaming && view.openId != null) {
         RenameDialog(view.title, onDone = { title ->
             renaming = false
             if (title != null) actions.renameConversation(view.openId, title)
         })
+    }
+}
+
+/** The model this chat uses; tap to pick another (Hermes's /model). */
+@Composable
+private fun ModelChip(label: String, groups: List<ModelGroup>, actions: TalariaActions) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(enabled = groups.isNotEmpty()) { open = true }
+                .testTag("model")) {
+            Text("$label ▾", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 420.dp)) {
+            groups.forEach { g ->
+                Text(g.name, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                g.models.forEach { m ->
+                    DropdownMenuItem(
+                        text = { Text((if (m.selected) "✓ " else "") + m.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier.testTag("model-${m.model}"),
+                        onClick = { open = false; actions.pickModel(m.provider, m.model) },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -257,6 +302,7 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                     }
                 }
                 items(view.messages, key = { it.key }) { m -> MessageBubble(m, view.voice, actions) }
+                items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
             }
         }
     }
@@ -277,6 +323,8 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
             }
             val footer = when (m.state) {
                 ItemState.SENDING -> "Sending…"
+                ItemState.QUEUED -> "Queued: sends when the reply ends"
+                ItemState.CANCELLED -> "Removed from the queue"
                 ItemState.NOT_SENT -> "Not sent: ${m.error ?: "try again"}"
                 else -> m.time
             }
@@ -330,6 +378,27 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
     }
 }
 
+/** A /btw side question and its answer, beside the conversation rather than in it. */
+@Composable
+private fun AsideCard(a: AsideItem, actions: TalariaActions) {
+    Card(Modifier.fillMaxWidth().testTag("aside-${a.id}"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("By the way: ${a.question}", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
+                    fontStyle = FontStyle.Italic)
+                TextButton(onClick = { actions.dismissAside(a.id) }, modifier = Modifier.testTag("dismiss-aside")) { Text("✕") }
+            }
+            when {
+                a.error != null -> Text(a.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                a.answer == null -> Text("Thinking…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> MarkdownText(a.answer)
+            }
+        }
+    }
+}
+
 /** A photo as a thumbnail when its bytes are here, otherwise a chip with its name. */
 @Composable
 private fun AttachmentView(a: AttachmentChip, modifier: Modifier = Modifier) {
@@ -371,6 +440,20 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         }
         if (voice.speakingKey != null) {
             TextButton(onClick = actions::stopSpeaking, modifier = Modifier.testTag("stop-speaking")) { Text("🔊 Stop reading") }
+        }
+        val suggestions = Command.suggestions(text)
+        if (suggestions.isNotEmpty()) {
+            Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("commands")) {
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    suggestions.forEach { c ->
+                        Row(Modifier.fillMaxWidth().clickable { text = "/${c.name} " }.padding(horizontal = 14.dp, vertical = 8.dp)
+                            .testTag("command-${c.name}"), verticalAlignment = Alignment.CenterVertically) {
+                            Text(c.usage, Modifier.width(150.dp), style = MaterialTheme.typography.labelLarge)
+                            Text(c.what, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
         }
         if (voice.listening) {
             Text("🎤 " + voice.heard.ifEmpty { "Listening…" }, style = MaterialTheme.typography.bodyMedium,
@@ -415,7 +498,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it.take(32000) },
-                placeholder = { Text("Message…") },
+                placeholder = { Text(if (view.runningTurnId != null) "Message… (sends after this reply)" else "Message… or / for commands") },
                 maxLines = 8,
                 modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("composer").onPreviewKeyEvent { e ->
                     // Enter sends, Shift+Enter starts a new line (hardware keyboards)
@@ -429,11 +512,10 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
             )
             val running = view.runningTurnId
             if (running != null) {
-                OutlinedButton(onClick = { actions.stopReply(running) }, modifier = Modifier.testTag("stop")) { Text("■ Stop") }
-            } else {
-                Button(onClick = ::send, enabled = ready, modifier = Modifier.testTag("send")) {
-                    Text("➤")
-                }
+                OutlinedButton(onClick = { actions.stopReply(running) }, modifier = Modifier.testTag("stop")) { Text("■") }
+            }
+            Button(onClick = ::send, enabled = ready, modifier = Modifier.testTag("send")) {
+                Text("➤")
             }
         }
     }

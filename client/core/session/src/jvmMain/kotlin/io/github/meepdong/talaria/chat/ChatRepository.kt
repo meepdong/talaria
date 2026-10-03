@@ -194,6 +194,156 @@ class ChatRepository(
 
     fun dismissNotice() = _state.update { it.copy(notice = null) }
 
+    // models and commands (spec/README.md §11)
+
+    fun loadModels() {
+        scope.launch {
+            try {
+                val r = api.request("agent.models", JsonObject(emptyMap()))
+                val providers = (r["providers"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    val o = e as? JsonObject ?: return@mapNotNull null
+                    val id = o.str("id") ?: return@mapNotNull null
+                    ModelOptions.Provider(id, o.str("name") ?: id,
+                        (o["models"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content })
+                }
+                _state.update { it.copy(models = ModelOptions(parseModel(r.obj("current")), providers)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // no picker until the next session: the bridge or Hermes may be older
+            }
+        }
+    }
+
+    /** Pin the open conversation to [choice], or start the next new one on it. */
+    fun pickModel(choice: ModelChoice) {
+        val conv = _state.value.openId
+        if (conv == null) {
+            _state.update { it.copy(draftModel = choice) }
+            return
+        }
+        scope.launch {
+            try {
+                api.request("conversations.set_model", buildJsonObject {
+                    put("conversation_id", conv)
+                    put("model", choice.json())
+                })
+                _state.update { s -> s.copy(conversations = s.conversations.map { if (it.id == conv) it.copy(model = choice) else it }) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't switch the model: ${e.message}")
+            }
+        }
+    }
+
+    /** A note for the open conversation's running reply (Hermes's /steer). */
+    fun steer(text: String) {
+        val turn = _state.value.openSummary?.activeTurnId
+            ?: _state.value.openMessages.lastOrNull { it.state == MessageState.STREAMING }?.turnId
+        if (turn == null) {
+            notice("Nothing is running to steer. Send it as a message instead.")
+            return
+        }
+        scope.launch {
+            try {
+                val r = api.request("chat.steer", buildJsonObject {
+                    put("turn_id", turn)
+                    put("text", text.trim())
+                })
+                if ((r["accepted"] as? JsonPrimitive)?.content != "true") notice("Too late to steer: the reply was finishing")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't steer: ${e.message}")
+            }
+        }
+    }
+
+    /** A side question about the open conversation (Hermes's /btw), answered beside it. */
+    fun aside(text: String) {
+        val conv = _state.value.openId
+        if (conv == null) {
+            notice("Side questions are about a conversation. Open one first.")
+            return
+        }
+        scope.launch {
+            try {
+                val r = api.request("chat.aside", buildJsonObject {
+                    put("conversation_id", conv)
+                    put("text", text.trim())
+                })
+                val id = r.str("aside_id") ?: return@launch
+                lock.withLock {
+                    _state.update { s ->
+                        val list = s.asides[conv].orEmpty()
+                        if (list.any { it.id == id }) s else s.copy(asides = s.asides + (conv to list + Aside(id, text.trim())))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't ask: ${e.message}")
+            }
+        }
+    }
+
+    fun dismissAside(conversationId: String, id: String) = _state.update { s ->
+        s.copy(asides = s.asides + (conversationId to s.asides[conversationId].orEmpty().filter { it.id != id }))
+    }
+
+    /** Ask the open conversation's last question again (Hermes's /retry). */
+    fun retryLast() {
+        val last = _state.value.openMessages.lastOrNull { it.role == Role.USER && it.text.isNotBlank() }
+        if (last == null) notice("Nothing to retry yet") else send(last.text)
+    }
+
+    /** What Hermes reports about the open conversation (Hermes's /status). */
+    fun loadStatus() {
+        val conv = _state.value.openId
+        if (conv == null) {
+            notice("Start the conversation first: there's nothing to report yet")
+            return
+        }
+        scope.launch {
+            try {
+                val r = api.request("chat.status", buildJsonObject { put("conversation_id", conv) })
+                _state.update {
+                    it.copy(status = ConversationStatus(
+                        conv, parseModel(r.obj("model")), r.long("messages"), r.long("tool_calls"), r.long("input_tokens"),
+                        r.long("output_tokens"), (r["cost_usd"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                        r.str("active_turn_id") != null, r.long("queued")?.toInt() ?: 0))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't get the status: ${e.message}")
+            }
+        }
+    }
+
+    fun closeStatus() = _state.update { it.copy(status = null) }
+
+    /** Credit left on the agent's provider accounts, such as OpenRouter. */
+    fun loadBalance() {
+        scope.launch {
+            try {
+                val r = api.request("account.balance", JsonObject(emptyMap()))
+                val list = (r["accounts"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    val o = e as? JsonObject ?: return@mapNotNull null
+                    val url = o.str("top_up_url")?.takeIf { it.startsWith("https://") } ?: return@mapNotNull null
+                    AccountBalance(o.str("name") ?: "Account", (o["remaining"] as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                        o.str("currency"), url, o.str("error"))
+                }
+                _state.update { it.copy(balances = list) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // an older bridge: no balance to show
+            }
+        }
+    }
+
     fun notice(text: String) = _state.update { it.copy(notice = text) }
 
     // requests
@@ -205,6 +355,7 @@ class ChatRepository(
             val r = api.request("chat.send", buildJsonObject {
                 put("text", text)
                 conv?.let { put("conversation_id", it) }
+                if (conv == null) _state.value.draftModel?.let { put("model", it.json()) }
                 put("client_msg_id", cmid)
                 if (blobs.isNotEmpty()) put("attachments", JsonArray(blobs.map { id -> buildJsonObject { put("blob_id", id) } }))
             }, SEND_TIMEOUT_MS)
@@ -334,6 +485,8 @@ class ChatRepository(
 
     private suspend fun onNewSession() {
         refreshList()
+        loadModels()
+        loadBalance()
         val s = _state.value
         for ((conv, thread) in s.threads) {
             if (!thread.loaded) continue
@@ -378,6 +531,8 @@ class ChatRepository(
                 "chat.started" -> onStarted(p)
                 "chat.delta" -> onDelta(p)
                 "chat.done" -> onDone(p)
+                "chat.queued" -> onQueued(p)
+                "chat.aside.done" -> onAside(p)
             }
         }
     }
@@ -390,17 +545,25 @@ class ChatRepository(
         val conv = r.str("conversation_id") ?: return
         val turn = r.str("turn_id") ?: return
         val title = r.str("title") ?: "Conversation"
-        lastSeq.putIfAbsent(turn, 0)
+        val queued = (r["queued"] as? JsonPrimitive)?.content == "true"
+        if (!queued) lastSeq.putIfAbsent(turn, 0)
         changed(conv)
         mine += turn
         _state.update { s0 ->
+            val draftModel = s0.draftModel
             var s = s0.claimDraft(cmid, conv)
             s = s.withMessages(conv) { list ->
-                list.map { if (it.clientMsgId == cmid) it.copy(state = MessageState.DONE, turnId = turn, error = null) else it }
+                list.map {
+                    if (it.clientMsgId != cmid) it
+                    // chat.started may have come first and already marked it sent
+                    else if (queued && it.state != MessageState.SENDING) it.copy(turnId = turn)
+                    else it.copy(state = if (queued) MessageState.QUEUED else MessageState.DONE, turnId = turn, error = null)
+                }
             }
             if (s.conversations.none { it.id == conv }) {
                 val now = nowMs()
-                s = s.upsert(ConversationSummary(conv, "", title, now, now, Role.USER, null, turn))
+                s = s.upsert(ConversationSummary(conv, "", title, now, now, Role.USER, null, turn, model = draftModel))
+                s = s.copy(draftModel = null)
             }
             s
         }
@@ -422,7 +585,7 @@ class ChatRepository(
             val existing = s0.conversations.firstOrNull { it.id == conv }
             var s = s0.upsert(
                 existing?.copy(title = p.str("title") ?: existing.title, updatedAt = at / 1000, lastRole = Role.USER,
-                    lastText = userText, activeTurnId = turn)
+                    lastText = userText, activeTurnId = turn, queuedTurnIds = existing.queuedTurnIds - turn)
                     ?: ConversationSummary(conv, p.str("agent_id").orEmpty(), p.str("title") ?: "Conversation",
                         at / 1000, at / 1000, Role.USER, userText, turn)
             )
@@ -432,6 +595,45 @@ class ChatRepository(
                 s = s.withMessages(conv) { list -> withTurn(list, turn, userText, at, cmid, attachments) }
             }
             s
+        }
+    }
+
+    private fun onQueued(p: JsonObject) {
+        val conv = p.str("conversation_id") ?: return
+        val turn = p.str("turn_id") ?: return
+        val cmid = p.str("client_msg_id")
+        val userText = p.str("user_text").orEmpty()
+        val attachments = parseAttachments(p)
+        if (cmid != null && _state.value.let { s -> (s.draft + s.threads.values.flatMap { it.messages }).any { it.key == "local:$cmid" } }) {
+            mine += turn
+        }
+        _state.update { s0 ->
+            var s = s0.copy(conversations = s0.conversations.map {
+                if (it.id == conv && turn !in it.queuedTurnIds) it.copy(queuedTurnIds = it.queuedTurnIds + turn) else it
+            })
+            if (cmid != null) s = s.claimDraft(cmid, conv)
+            s.withMessages(conv, onlyLoaded = true) { list ->
+                val at = list.indexOfFirst { (cmid != null && it.clientMsgId == cmid) || (it.role == Role.USER && it.turnId == turn) }
+                if (at >= 0) {
+                    list.mapIndexed { i, m -> if (i == at && m.state != MessageState.DONE) m.copy(state = MessageState.QUEUED, turnId = turn) else m }
+                } else {
+                    list + ChatMessage("user:$turn", Role.USER, userText, nowMs(), MessageState.QUEUED, turnId = turn,
+                        clientMsgId = cmid, attachments = attachments)
+                }
+            }
+        }
+    }
+
+    private fun onAside(p: JsonObject) {
+        val conv = p.str("conversation_id") ?: return
+        val id = p.str("aside_id") ?: return
+        val answer = p.str("text").orEmpty()
+        val error = p.str("error").takeIf { p.str("status") != "completed" }
+        _state.update { s ->
+            val list = s.asides[conv].orEmpty()
+            val done = Aside(id, p.str("question").orEmpty(), answer, error)
+            val updated = if (list.any { it.id == id }) list.map { if (it.id == id) done.copy(question = it.question) else it } else list + done
+            s.copy(asides = s.asides + (conv to updated.takeLast(MAX_ASIDES)))
         }
     }
 
@@ -499,6 +701,19 @@ class ChatRepository(
             else -> MessageState.FAILED
         }
         changed(conv)
+        val waiting = _state.value.threads[conv]?.messages.orEmpty()
+            .any { it.turnId == turn && it.state == MessageState.QUEUED }
+        if (waiting || _state.value.conversations.any { it.id == conv && turn in it.queuedTurnIds }) {
+            // a queued message removed before it started: no reply to show
+            _state.update { s ->
+                s.copy(conversations = s.conversations.map { if (it.id == conv) it.copy(queuedTurnIds = it.queuedTurnIds - turn) else it })
+                    .withMessages(conv, onlyLoaded = true) { list ->
+                        list.map { if (it.turnId == turn && it.role == Role.USER) it.copy(state = MessageState.CANCELLED) else it }
+                    }
+            }
+            mine.remove(turn)
+            return
+        }
         _state.update { s0 ->
             var s = s0.copy(conversations = s0.conversations.map {
                 if (it.id != conv) it
@@ -525,6 +740,7 @@ class ChatRepository(
         val turn = t.str("turn_id") ?: return
         val status = t.str("status") ?: return
         val seq = t.long("seq")?.toInt() ?: 0
+        if (status == "queued") return // nothing to show until it starts
         val following = turn in lastSeq || _state.value.threads[conv]?.messages?.any { it.turnId == turn && it.state == MessageState.STREAMING } == true
         if (status == "running") {
             lastSeq[turn] = maxOf(seq, lastSeq[turn] ?: 0)
@@ -574,7 +790,14 @@ class ChatRepository(
             createdAt = c.long("created_at") ?: 0, updatedAt = c.long("updated_at") ?: 0,
             lastRole = when (last?.str("role")) { "user" -> Role.USER; "assistant" -> Role.ASSISTANT; else -> null },
             lastText = last?.str("text"), activeTurnId = c.str("active_turn_id"),
+            model = parseModel(c.obj("model")),
+            queuedTurnIds = (c["queued_turn_ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
         )
+    }
+
+    private fun parseModel(o: JsonObject?): ModelChoice? {
+        val provider = o?.str("provider") ?: return null
+        return ModelChoice(provider, o.str("model") ?: return null)
     }
 
     private fun parseHistory(m: JsonObject): ChatMessage? {
@@ -600,7 +823,8 @@ class ChatRepository(
         const val HISTORY_TIMEOUT_MS = 30_000L
         const val CHUNK_BYTES = 512 * 1024
         private const val STALE_RETRIES = 3
-        private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.STREAMING)
+        private const val MAX_ASIDES = 5
+        private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.QUEUED, MessageState.STREAMING)
     }
 }
 
@@ -626,3 +850,8 @@ private fun ChatState.claimDraft(cmid: String, conv: String): ChatState {
 
 private fun ChatState.upsert(c: ConversationSummary): ChatState =
     copy(conversations = (conversations.filter { it.id != c.id } + c).sortedByDescending { it.updatedAt })
+
+private fun ModelChoice.json() = buildJsonObject {
+    put("provider", provider)
+    put("model", model)
+}

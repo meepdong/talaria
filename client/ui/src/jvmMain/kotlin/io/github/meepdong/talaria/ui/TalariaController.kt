@@ -271,8 +271,68 @@ class TalariaController(
 
     override fun sendMessage(text: String) {
         val c = chat ?: return
-        c.send(text, pending.value)
-        pending.value = emptyList()
+        val command = Command.parse(text)
+        if (command == null) {
+            c.send(text, pending.value)
+            pending.value = emptyList()
+            return
+        }
+        when (command) {
+            is Command.Model -> pickModelByName(c, command.query)
+            Command.Retry -> c.retryLast()
+            is Command.Queue -> if (command.text.isBlank() && pending.value.isEmpty()) {
+                c.notice("Type the message after /queue")
+            } else {
+                c.send(command.text, pending.value)
+                pending.value = emptyList()
+            }
+            is Command.Steer -> if (command.text.isBlank()) c.notice("Type the note after /steer") else c.steer(command.text)
+            is Command.Aside -> if (command.text.isBlank()) c.notice("Type the question after /btw") else c.aside(command.text)
+            Command.Status -> c.loadStatus()
+            Command.Stop -> c.state.value.let { s ->
+                (s.openSummary?.activeTurnId ?: s.openMessages.lastOrNull { it.state == MessageState.STREAMING }?.turnId)
+                    ?.let(c::stop) ?: c.notice("Nothing is running")
+            }
+            Command.New -> newConversation()
+            is Command.Unknown -> c.notice("Talaria doesn't know /${command.name}. Type / to see the commands it has.")
+        }
+    }
+
+    /** /model name: pick it when the name matches one model, otherwise say what matched. */
+    private fun pickModelByName(c: ChatRepository, query: String) {
+        val options = c.state.value.models
+        if (options == null) {
+            c.loadModels()
+            c.notice("The model list isn't loaded yet; try again in a moment")
+            return
+        }
+        if (query.isBlank()) {
+            c.notice("Pick a model from the chip at the top of the chat, or type /model and part of its name")
+            return
+        }
+        val all = options.providers.flatMap { p -> p.models.map { p.id to it } }
+        val q = query.trim().lowercase()
+        val exact = all.filter { (_, m) -> m.lowercase() == q || m.substringAfterLast('/').lowercase() == q }
+        val matches = exact.ifEmpty { all.filter { (_, m) -> q in m.lowercase() } }
+        when {
+            matches.size == 1 -> pickModel(matches[0].first, matches[0].second)
+            matches.isEmpty() -> c.notice("No model matches \"$query\"")
+            else -> c.notice("\"$query\" matches ${matches.size} models: " +
+                matches.take(5).joinToString { it.second.substringAfterLast('/') } + if (matches.size > 5) "…" else "")
+        }
+    }
+
+    override fun pickModel(provider: String, model: String) {
+        chat?.pickModel(io.github.meepdong.talaria.chat.ModelChoice(provider, model))
+    }
+
+    override fun dismissAside(id: String) {
+        val c = chat ?: return
+        c.state.value.openId?.let { c.dismissAside(it, id) }
+    }
+
+    override fun closeStatus() {
+        chat?.closeStatus()
     }
 
     override fun attachFiles(photos: Boolean) {
@@ -412,6 +472,7 @@ class TalariaController(
     }
 
     override fun showStatus() {
+        chat?.loadBalance()
         page.value = page.value.copy(status = true)
     }
 
@@ -479,11 +540,11 @@ class TalariaController(
             val state = l.state ?: ConnectionState()
             val status = statusView(state, m.bridge, x.net, keyStore.protection, x.entries, x.test, now)
             if (x.page.status) {
-                Screen.Status(status.copy(canGoBack = true))
+                Screen.Status(status.copy(canGoBack = true, balances = balanceItems(l.chat?.balances.orEmpty())))
             } else {
                 Screen.Chat(chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images)
-                    .copy(voice = x.voice), status)
+                    .copy(voice = x.voice), status.copy(balances = balanceItems(l.chat?.balances.orEmpty())))
             }
         }
     }

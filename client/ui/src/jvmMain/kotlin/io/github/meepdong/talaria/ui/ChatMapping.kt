@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import io.github.meepdong.talaria.chat.Attachment
 import io.github.meepdong.talaria.chat.ChatMessage
 import io.github.meepdong.talaria.chat.ChatState
+import io.github.meepdong.talaria.chat.ConversationStatus
+import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
@@ -30,6 +32,7 @@ fun shortTime(atMs: Long?, nowMs: Long): String? {
 private fun MessageState.item(): ItemState = when (this) {
     MessageState.SENDING -> ItemState.SENDING
     MessageState.NOT_SENT -> ItemState.NOT_SENT
+    MessageState.QUEUED -> ItemState.QUEUED
     MessageState.STREAMING -> ItemState.STREAMING
     MessageState.DONE -> ItemState.DONE
     MessageState.FAILED -> ItemState.FAILED
@@ -108,14 +111,47 @@ fun chatView(
         loading = thread?.loading == true,
         historyError = thread?.error,
         runningTurnId = running,
-        canSend = connected && state.unavailable == null && running == null,
+        // while a reply runs, a new message waits for it on the bridge (§11)
+        canSend = connected && state.unavailable == null,
         composerHint = hint,
         notice = state.notice,
         connection = status.overall,
         connectionSummary = status.summary,
         pending = pending.map { it.toAttachment().chip(images) },
         canAttach = canAttach,
+        model = state.effectiveModel?.shortName,
+        modelGroups = state.models?.providers.orEmpty().map { p ->
+            ModelGroup(p.id, p.name, p.models.map { m ->
+                ModelItem(p.id, m, m.substringAfterLast('/'), state.effectiveModel == ModelChoice(p.id, m))
+            })
+        },
+        asides = state.openId?.let { state.asides[it] }.orEmpty().map { AsideItem(it.id, it.question, it.answer, it.error) },
+        status = state.status?.takeIf { it.conversationId == state.openId }?.let { statusLines(it, state.openSummary?.title) },
     )
+}
+
+/** The model the open conversation uses: its own, the one picked for a new chat, or the agent's default. */
+private val ChatState.effectiveModel: ModelChoice?
+    get() = openSummary?.model ?: (if (openId == null) draftModel else null) ?: models?.current
+
+private fun statusLines(s: ConversationStatus, title: String?): ConversationStatusView {
+    val lines = buildList {
+        s.model?.let { add("Model" to "${it.shortName} (${it.provider})") }
+        s.messages?.let { add("Messages" to "$it") }
+        s.toolCalls?.let { add("Tool calls" to "$it") }
+        if (s.inputTokens != null || s.outputTokens != null) {
+            add("Tokens" to "${s.inputTokens ?: 0} in · ${s.outputTokens ?: 0} out")
+        }
+        s.costUsd?.let { add("Cost" to "$" + "%.4f".format(it)) }
+        add("Reply running" to if (s.running) "Yes" else "No")
+        if (s.queued > 0) add("Waiting" to "${s.queued} queued")
+    }
+    return ConversationStatusView(title ?: "This chat", lines)
+}
+
+fun balanceItems(list: List<io.github.meepdong.talaria.chat.AccountBalance>): List<BalanceItem> = list.map { b ->
+    val amount = b.remaining?.let { (if (b.currency == "USD" || b.currency == null) "$" else "${b.currency} ") + "%.2f".format(it) }
+    BalanceItem(b.name, amount, b.error, b.topUpUrl)
 }
 
 private val NO_IMAGES = ImageCache { null }
