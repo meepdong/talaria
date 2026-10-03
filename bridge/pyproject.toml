@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "talaria-bridge"
+version = "0.0.1"
+description = "Talaria bridge: device pairing and the TNP WebSocket server"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=43",
+    "websockets>=14",
+    "qrcode>=7.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4.22"]
+
+[project.scripts]
+talaria = "talaria_bridge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/talaria_bridge"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
