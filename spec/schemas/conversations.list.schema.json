@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/conversations.list.schema.json",
+  "title": "conversations.list",
+  "description": "Device to bridge (request): Talaria conversations, most recently active first.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "conversations.list"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id"
+  ]
+}

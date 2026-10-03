@@ -321,14 +321,17 @@ Clients warn before sending a modality the target agent does not accept.
 
 | Method | Direction | Purpose |
 |---|---|---|
-| `chat.send` | device → bridge (request) | `{agent_id \| group_id, conversation_id?, text, attachments?, reply_to?}` |
-| `chat.delta` | bridge → device (notification) | Streaming output tagged with `kind`: `text`, `tool_progress`, `commentary`, `worker` (see §10.5) |
-| `chat.done` | bridge → device (notification) | Final message, `usage` (tokens, cost), `runtime` (model actually used) |
+| `chat.send` | device → bridge (request) | `{agent_id? \| group_id, conversation_id?, text, attachments?, reply_to?}` |
+| `chat.started` | bridge → device (notification) | A turn started, on this device or another |
+| `chat.delta` | bridge → device (notification) | Streaming output tagged with `kind`: `text`, `tool_progress`, `commentary`, `approval`, `worker` (see §10.5) |
+| `chat.done` | bridge → device (notification) | Final message, `usage` (tokens), `runtime` (model actually used) |
 | `chat.cancel` | device → bridge (request) | Stop an in-flight reply |
+| `chat.turn.get` | device → bridge (request) | Snapshot of a recent turn, to catch up after a reconnect |
 | `chat.history` | device → bridge (request) | Page through a conversation |
-| `conversations.list` | device → bridge (request) | Conversations and groups, with last message and unread count |
+| `conversations.list` / `.rename` / `.delete` | device → bridge (request) | Conversations, with last message and any running turn |
 
-- A Talaria conversation maps to a Hermes **named conversation** on the Responses API, so history lives on the server and survives app reinstalls.
+- A Talaria conversation maps to a Hermes **session** on the API server's Sessions API (`/api/sessions/{id}/chat/stream`), so history lives on the server and survives app reinstalls. The Responses API's named conversations were the first plan, but Hermes keeps only the last 100 stored responses there.
+- **The bridge holds the stream to the agent.** Hermes stops a run when its stream client disconnects, so the device never holds it: a reply finishes even when the phone drops off, and every connected device receives it. Byte-level details and schemas: spec/README.md §9.
 - **Attachments** reference blobs (§9): `{"blob_id": "b-12", "mime": "image/jpeg", "name": "receipt.jpg"}`. Clients SHOULD downscale images (long edge ≤ 1568 px) and MUST strip location metadata (EXIF GPS) before upload unless the user opts out for that message.
 - **Voice** is converted to text **on the device** before sending. Audio is only uploaded if the user explicitly attaches an audio file.
 - **Assistant invocations** set `"origin": "assistant"` and MAY include `"context": {"screen_text": "…", "screenshot_blob": "b-31", "foreground_app": "com.example"}`. Context is included **only after the user confirms it for that request**. The bridge passes it to the agent marked as untrusted content.
@@ -429,7 +432,8 @@ When the bridge queues a TTL command for an offline device, it sends a push with
 | -32010 | `AGENT_UNAVAILABLE` | The target agent is offline or failing |
 | -32011 | `BUDGET_EXCEEDED` | A group, conversation or workflow budget was reached |
 | -32012 | `MODALITY_UNSUPPORTED` | The agent does not accept this attachment type |
-| -32013 | `CONFLICT` | Stale revision (e.g. `soul_rev` does not match) |
+| -32013 | `CONFLICT` | Stale revision (e.g. `soul_rev` does not match), or a reply is still running in that conversation |
+| -32014 | `NOT_FOUND` | Unknown conversation, turn or other object |
 
 ## 14. Versioning and extensions
 
