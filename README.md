@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-brass.svg">
+    <img src="docs/brand/mark-ink.svg" alt="Talaria heel-wing logo" width="96">
+  </picture>
+</p>
+
 # Talaria
 
 > **Give your AI agent hands and senses on every device you own.**
