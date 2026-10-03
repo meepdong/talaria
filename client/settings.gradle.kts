@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 
 include(":core:protocol")
+include(":core:security")
+include(":core:security-desktop")
