@@ -47,6 +47,26 @@ data class HomeView(
     val date: String = "",
     /** The latest chats, newest first. */
     val recent: List<ConversationItem> = emptyList(),
+    /** Open to-dos, then the ones done today. */
+    val todos: List<TodoItem> = emptyList(),
+    /** False when the bridge keeps no to-dos, which hides the card. */
+    val todosAvailable: Boolean = true,
+    /** Ticked off earlier and not shown. */
+    val doneEarlier: Int = 0,
+)
+
+/** A to-do on Home (spec/README.md §13). */
+data class TodoItem(
+    val id: String,
+    val text: String,
+    val done: Boolean,
+    /** "Today", "Tomorrow", "Overdue · 2 Oct", "Fri 9 Oct", or null. */
+    val due: String? = null,
+    val overdue: Boolean = false,
+    /** The conversation it was handed to Hermes in. */
+    val conversationId: String? = null,
+    /** That conversation's reply is running. */
+    val withAgent: Boolean = false,
 )
 
 /** The ☰ panel. */
@@ -161,6 +181,14 @@ interface TalariaActions {
     fun searchFiles(query: String) {}
     /** A new chat with this server file attached, ready for a question. */
     fun askAboutFile(path: String) {}
+
+    // To-dos (§13)
+
+    fun addTodo(text: String) {}
+    fun setTodoDone(id: String, done: Boolean) {}
+    fun deleteTodo(id: String) {}
+    /** A new chat asking Hermes to do it; the to-do remembers the chat. */
+    fun handTodoToAgent(id: String) {}
 }
 
 /** The tray icon's colour. */

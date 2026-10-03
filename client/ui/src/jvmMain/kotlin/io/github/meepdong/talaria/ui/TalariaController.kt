@@ -10,6 +10,8 @@ import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
+import io.github.meepdong.talaria.todos.TodosRepository
+import io.github.meepdong.talaria.todos.TodosState
 import io.github.meepdong.talaria.chat.asChatApi
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.protocol.Sas
@@ -90,6 +92,7 @@ class TalariaController(
         data class Confirm(val sas: Sas, val deadlineMs: Long) : Mode
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
+            val todos: TodosRepository,
         ) : Mode
     }
 
@@ -142,12 +145,15 @@ class TalariaController(
     private var pairJob: Job? = null
     private var started = false
 
-    private data class Live(val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null)
+    private data class Live(
+        val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
+        val todos: TodosState? = null,
+    )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val live = mode.flatMapLatest { m ->
         if (m is Mode.Connected) {
-            combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Live(m, st, c, f) }
+            combine(m.client.state, m.chat.state, m.files.state, m.todos.state) { st, c, f, t -> Live(m, st, c, f, t) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -179,6 +185,7 @@ class TalariaController(
 
     private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
     private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
+    private val todos: TodosRepository? get() = (mode.value as? Mode.Connected)?.todos
 
     /** Load the saved pairing and connect, and start the clock and the network check. */
     fun start() {
@@ -227,6 +234,7 @@ class TalariaController(
         speechOutput?.stop()
         (mode.value as? Mode.Connected)?.let {
             it.chat.stop()
+            it.todos.stop()
             it.client.stop()
         }
     }
@@ -278,6 +286,7 @@ class TalariaController(
     override fun forgetServer() {
         val current = mode.value as? Mode.Connected ?: return
         current.chat.stop()
+        current.todos.stop()
         current.client.stop()
         page.value = Page()
         test.value = null
@@ -478,6 +487,27 @@ class TalariaController(
         pendingServer.value = listOf(file)
     }
 
+    // To-dos (§13)
+
+    override fun addTodo(text: String) {
+        todos?.add(text)
+    }
+
+    override fun setTodoDone(id: String, done: Boolean) {
+        todos?.setDone(id, done)
+    }
+
+    override fun deleteTodo(id: String) {
+        todos?.delete(id)
+    }
+
+    override fun handTodoToAgent(id: String) {
+        val c = chat ?: return
+        val todo = todos?.state?.value?.todos?.firstOrNull { it.id == id } ?: return
+        newConversation()
+        c.send(handOver(todo.text), conversationId = null, todoId = todo.id)
+    }
+
     /** The platform's file picker: set while the app can show it, null otherwise. */
     fun setFilePicker(pick: ((photos: Boolean) -> Unit)?) {
         picker.value = pick
@@ -664,7 +694,8 @@ class TalariaController(
         test.value = null
         page.value = Page()
         chat.start()
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()))
+        val todos = TodosRepository(scope, client.asChatApi()).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos)
         client.start()
     }
 
@@ -690,7 +721,7 @@ class TalariaController(
                     view, withBalance,
                     tab = x.page.tab,
                     tabs = TABS,
-                    home = homeView(view, now),
+                    home = homeView(view, now, l.todos),
                     menu = menuView(view, withBalance),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
@@ -711,6 +742,9 @@ class TalariaController(
 
         /** [VoiceView.speakingKey] while a reply is read aloud on its own. */
         const val READ_ALOUD_KEY = "read-aloud"
+
+        /** What a to-do handed to the agent says. */
+        fun handOver(todo: String) = "From my to-do list: $todo\n\nPlease take care of this, or tell me what you need from me."
 
         /** The pages in the menu bar. */
         val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.FILES)

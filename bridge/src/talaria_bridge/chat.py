@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .accounts import OpenRouterAccount
 from .files import FILES_METHODS, FilesError, FilesService, Found
+from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
@@ -299,8 +300,9 @@ class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
                  inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None,
-                 files: FilesService | None = None):
+                 files: FilesService | None = None, todos: TodoStore | None = None):
         self.store = store
+        self.todos = todos  # the shared to-do list (§13)
         self.files = files  # browsing the agent's folders (§12)
         self.agents = agents
         self.blobs = blobs
@@ -353,14 +355,29 @@ class ChatService:
                     del self._client_msgs[k]
             if client_msg_id in self._client_msgs:
                 return dict(self._client_msgs[client_msg_id][1]), None
+        todo_id = p.get("todo_id")
+        if todo_id is not None:
+            if self.todos is None:
+                raise RpcError(m.NOT_FOUND, "Unknown to-do")
+            try:
+                self.todos.get(todo_id)
+            except TodoError as exc:
+                raise RpcError(exc.code, exc.message) from None
         found = await asyncio.to_thread(self._server_files, p, file_refs or [])
         blobs = self._blobs(refs or [])
         try:
-            return await self._send(p, text, blobs, client_msg_id, found)
+            result, turn = await self._send(p, text, blobs, client_msg_id, found)
         except BaseException:
             for blob in blobs:
                 self.blobs.release(blob)  # not sent: the device may retry with the same blobs
             raise
+        if todo_id is not None:
+            self.todos.link(todo_id, result["conversation_id"])
+            await self._todos_changed()
+        return result, turn
+
+    async def _todos_changed(self) -> None:
+        await self.broadcast(m.notification("todos.changed", {"todos": self.todos.list()}))
 
     def _server_files(self, p: dict, refs: list[dict]) -> list[Found]:
         """chat.send's `files` (§12): files already on the server, named to the agent where they are."""
@@ -916,6 +933,16 @@ class ChatService:
                 return await asyncio.to_thread(self.files.handle, method, p), None
             except FilesError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method in TODO_METHODS:
+            if self.todos is None:
+                raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            try:
+                result, changed = self.todos.handle(method, p)
+            except TodoError as exc:
+                raise RpcError(exc.code, exc.message) from None
+            if changed:
+                await self._todos_changed()
+            return result, None
         if method == "chat.send":
             return await self.send(p)
         if method == "chat.cancel":
@@ -948,7 +975,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "chat.steer", "chat.aside", "chat.status",
-                          "account.balance"}) | BLOB_METHODS | FILES_METHODS
+                          "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

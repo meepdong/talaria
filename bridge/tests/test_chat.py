@@ -21,6 +21,7 @@ from talaria_bridge.protocol import keys
 from talaria_bridge.protocol import messages as m
 from talaria_bridge.registry import Registry
 from talaria_bridge.server import BridgeServer, ServerSettings
+from talaria_bridge.todos import TodoStore
 
 KEY = "test-key"
 
@@ -143,7 +144,8 @@ async def chat_bridge(tmp_path: Path, settings: ServerSettings):
         pass
 
     chat = ChatService(ChatStore(tmp_path / "chat.db"), {"hermes": client}, unused,
-                       blobs=BlobStore(tmp_path / "blobs"), inboxes={"hermes": tmp_path / "inbox"})
+                       blobs=BlobStore(tmp_path / "blobs"), inboxes={"hermes": tmp_path / "inbox"},
+                       todos=TodoStore(tmp_path / "chat.db"))
     registry = Registry(tmp_path / "bridge.db")
     server = BridgeServer(registry, keys.generate_key(), settings, chat=chat)
     async with server.serve() as ws_server:

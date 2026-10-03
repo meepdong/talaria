@@ -19,6 +19,7 @@ from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
 from .chat import ChatService, ChatStore
+from .todos import TodoStore
 from .files import INBOX, FileRoot, FilesService
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -99,7 +100,7 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
 
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
-                       files=FilesService(roots))
+                       files=FilesService(roots), todos=TodoStore(home / "chat.db"))
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:

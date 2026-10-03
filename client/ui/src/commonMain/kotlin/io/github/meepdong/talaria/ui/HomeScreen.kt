@@ -10,16 +10,28 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -33,6 +45,7 @@ fun HomeScreen(screen: Screen.Chat, actions: TalariaActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Today", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        if (home.todosAvailable) TodoCard(home, actions, Modifier.fillMaxWidth().widthIn(max = 1120.dp))
         SectionCard(
             "Recent chats",
             modifier = Modifier.fillMaxWidth().widthIn(max = 1120.dp),
@@ -60,6 +73,78 @@ fun HomeScreen(screen: Screen.Chat, actions: TalariaActions) {
                         modifier = Modifier.padding(start = 12.dp))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TodoCard(home: HomeView, actions: TalariaActions, modifier: Modifier) {
+    var draft by remember { mutableStateOf("") }
+    val add = {
+        if (draft.isNotBlank()) actions.addTodo(draft)
+        draft = ""
+    }
+    SectionCard("To do", modifier = modifier.testTag("todos")) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it.take(500) },
+                placeholder = { Text("Add a to-do") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { add() }),
+                modifier = Modifier.weight(1f).testTag("todo-input"),
+            )
+            TextButton(onClick = add, enabled = draft.isNotBlank(), modifier = Modifier.testTag("todo-add")) { Text("Add") }
+        }
+        if (home.todos.isEmpty()) {
+            Text("Nothing to do. Add something above, or hand it to Hermes once it's here.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+        }
+        home.todos.forEach { t ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(top = 4.dp))
+            TodoRow(t, actions)
+        }
+        if (home.doneEarlier > 0) {
+            Text("${home.doneEarlier} done earlier", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun TodoRow(t: TodoItem, actions: TalariaActions) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("todo-${t.id}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = t.done,
+            onCheckedChange = { actions.setTodoDone(t.id, it) },
+            modifier = Modifier.testTag("todo-done-${t.id}"),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                t.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                textDecoration = if (t.done) TextDecoration.LineThrough else null,
+                color = if (t.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            )
+            t.due?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                    color = if (t.overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        when {
+            t.done -> {}
+            t.withAgent -> TextButton(onClick = { t.conversationId?.let(actions::openConversation) },
+                modifier = Modifier.testTag("todo-open-${t.id}")) { Text("With Hermes…", color = Brand.Busy) }
+            t.conversationId != null -> TextButton(onClick = { actions.openConversation(t.conversationId) },
+                modifier = Modifier.testTag("todo-open-${t.id}")) { Text("Open chat") }
+            else -> TextButton(onClick = { actions.handTodoToAgent(t.id) },
+                modifier = Modifier.testTag("todo-hand-${t.id}")) { Text("Ask Hermes") }
+        }
+        IconButton(onClick = { actions.deleteTodo(t.id) }, modifier = Modifier.testTag("todo-delete-${t.id}")) {
+            Icon(TalariaIcons.Close, contentDescription = "Delete to-do", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
