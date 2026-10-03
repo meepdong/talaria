@@ -5,7 +5,6 @@ import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.Role
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -17,7 +16,7 @@ fun shortTime(atMs: Long?, nowMs: Long): String? {
     if (atMs == null || atMs <= 0) return null
     val zone = ZoneId.systemDefault()
     val at = Instant.ofEpochMilli(atMs)
-    return if (LocalDate.ofInstant(at, zone) == LocalDate.ofInstant(Instant.ofEpochMilli(nowMs), zone)) {
+    return if (at.atZone(zone).toLocalDate() == Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()) {
         CLOCK.format(at)
     } else {
         DAY.format(at)
