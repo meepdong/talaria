@@ -299,7 +299,7 @@ All chat goes **through the bridge**. Devices never hold agent API keys.
  "device": {"session_id": "s-77", "last_acked_seq": 118}}
 ```
 
-Agent `state` is one of `ready`, `degraded` (reachable but failing requests), `offline` or `unknown`. The client maps network failure, bridge failure and agent failure to distinct, actionable messages.
+Agent `state` is one of `ready`, `degraded` (reachable but failing requests), `offline` or `unknown`. The client maps network failure, bridge failure and agent failure to distinct, actionable messages. `agents` is an empty list when the bridge has no agents configured. `latency_ms` is the round trip of the bridge's last heartbeat ping on this session, or `null` before one was answered. Byte-level details and schemas: spec/README.md §8.
 
 ### 10.2 Agents
 

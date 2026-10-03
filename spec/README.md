@@ -6,7 +6,7 @@ Working agreement (ROADMAP): every protocol change updates `spec/` first, with s
 
 | Path | Contents |
 |---|---|
-| `schemas/` | JSON Schema (2020-12) for each M0 message |
+| `schemas/` | JSON Schema (2020-12) for each message so far (M0 handshake, M1 status) |
 | `vectors/` | Test vectors. `generate.py` rebuilds them. |
 | `sas-emoji.json` | The 64-emoji SAS table |
 
@@ -78,3 +78,21 @@ A WebSocket upgrade without the `tnp.v0` subprotocol is refused with HTTP 400. A
 ## 7. Transport security in development
 
 `talaria serve --dev` serves plain `ws://` and refuses to bind anything but a loopback address. Clients MUST refuse `ws://` to any host that is not loopback. Real deployments use `wss://`: either a publicly trusted certificate (for example from `tailscale serve`), or a self-signed one whose key hash is pinned through `tls_spki_sha256` = base64url(SHA-256(certificate SPKI DER)).
+
+`talaria serve --behind-proxy --url wss://host/tnp` is the setup for a TLS proxy on the same machine, such as `tailscale serve`. The bridge serves plain `ws://` on a loopback address only, and puts the `wss://` address in pairing links. It takes no certificate, so pairing links carry no `tls_spki_sha256`.
+
+## 8. Status (M1)
+
+After `ready`, a device may send `status.get` (request). The result is the layered report from PROTOCOL §10.1:
+
+| Field | Meaning |
+|---|---|
+| `bridge.version` | Bridge version string |
+| `bridge.uptime_s` | Seconds since the bridge started serving |
+| `bridge.latency_ms` | Round trip of the bridge's last answered heartbeat `ping` on this session, or `null` until one was answered. Clients measure their own round trip with `ping` for display. |
+| `agents[]` | `{id, name?, state, model?, detail?}`, `state` one of `ready`, `degraded`, `offline`, `unknown`. **Empty when no agents are configured.** |
+| `device.session_id`, `device.last_acked_seq` | This session. `last_acked_seq` stays 0 until events arrive in M3. |
+
+The bridge pushes the same report as a `status` notification to every session past `ready` whenever an agent's state changes. In M1 an agent's state comes from an HTTP health check (`agents.json` in the bridge home, checked every 30 s with a 5 s timeout): a 2xx answer is `ready`, unless its JSON body has a `status` other than ok/healthy/ready/up/pass, which is `degraded`. Any other HTTP status is `degraded`, and no answer is `offline`. Agents start as `unknown` until the first check completes.
+
+Schemas: `status.get`, `status.result`, `status`.

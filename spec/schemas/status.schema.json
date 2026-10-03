@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/status.schema.json",
+  "title": "status",
+  "description": "Bridge to device (notification) when an agent's state changes. Same report as status.get.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "status"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "bridge": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "uptime_s": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "latency_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Round trip of the bridge's last heartbeat ping on this session; null until one was answered."
+            }
+          },
+          "required": [
+            "version",
+            "uptime_s",
+            "latency_ms"
+          ]
+        },
+        "agents": {
+          "type": "array",
+          "description": "Empty when no agents are configured.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "ready",
+                  "degraded",
+                  "offline",
+                  "unknown"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "state"
+            ]
+          }
+        },
+        "device": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "last_acked_seq": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "session_id",
+            "last_acked_seq"
+          ]
+        }
+      },
+      "required": [
+        "bridge",
+        "agents",
+        "device"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-brass.svg">
+    <img src="docs/brand/mark-ink.svg" alt="Talaria heel-wing logo" width="96">
+  </picture>
+</p>
+
 # Talaria
 
 > **Give your AI agent hands and senses on every device you own.**
@@ -6,7 +13,7 @@
 
 [![tests](https://github.com/meepdong/talaria/actions/workflows/tests.yml/badge.svg)](https://github.com/meepdong/talaria/actions/workflows/tests.yml)
 
-**Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android client starts at M1. Feedback welcome.
+**Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android and desktop clients start together at M1. Feedback welcome.
 **Not affiliated with Nous Research.** Talaria is an independent community project that works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and, by design, with any agent that speaks [MCP](https://modelcontextprotocol.io).
 
 ---
@@ -19,7 +26,7 @@ Talaria turns your phone, laptop, and (later) watch or smart glasses into **devi
 |---|---|
 | **Talaria Bridge** | A small service that runs next to your agent (e.g. on your VPS). Devices connect to it; the agent talks to it through MCP tools. |
 | **Talaria Node Protocol (TNP)** | An open, versioned protocol: devices announce their capabilities, receive commands, stream events, and request approvals. |
-| **Talaria clients** | Cross-platform apps (Android first, then Windows/Linux, then iOS) that implement the protocol, plus chat, notifications, and an on-device automation engine. |
+| **Talaria clients** | Cross-platform apps (Android and Windows/Linux together, iOS after v1) that implement the protocol, plus chat, notifications, and an on-device automation engine. |
 
 ```
  Phone ─┐                                   ┌─ MCP tools ──▶ Hermes Agent (or any MCP agent)
@@ -29,7 +36,7 @@ Talaria turns your phone, laptop, and (later) watch or smart glasses into **devi
 
 ## v1: what you get first
 
-v1 is deliberately small: **"your own Gemini, built on your own agent."** It's an Android app that replaces Telegram as the way you talk to your Hermes agent, and makes that agent your phone's assistant.
+v1 is deliberately small: **"your own Gemini, built on your own agent."** It's an Android and Windows/Linux app that replaces Telegram as the way you talk to your Hermes agent, and makes that agent your phone's assistant.
 
 - **Pair securely** by scanning a QR code in your terminal, or by pasting a link on devices without cameras, then confirming a matching code.
 - **See connection health at a glance**: network, bridge and agent, with clear fixes when something breaks.

@@ -1,6 +1,6 @@
-# Talaria bridge (M0)
+# Talaria bridge
 
-The bridge runs next to your agent. M0 covers the device registry, secure pairing and the signed TNP handshake with heartbeats. The MCP tools, events and chat come in later milestones.
+The bridge runs next to your agent. M0 covers the device registry, secure pairing and the signed TNP handshake with heartbeats. M1 adds the connection status report (`status.get`), agent health checks and `--behind-proxy`. The MCP tools, events and chat come in later milestones.
 
 Byte formats and test vectors live in [`../spec/`](../spec/README.md). The protocol itself is in [`../docs/PROTOCOL.md`](../docs/PROTOCOL.md).
 
@@ -52,12 +52,18 @@ Everything is stored in `~/.talaria` (`%USERPROFILE%\.talaria` on Windows), or `
 
 - `bridge_key.pem`: the bridge identity key. Keep it private. If you lose it, every device has to pair again.
 - `bridge.db`: devices, pairing tokens and pending requests (SQLite).
+- `agents.json` (optional): agents whose health the status report shows. The bridge reads it at start, so restart after editing it:
+  ```json
+  {"agents": [{"id": "hermes", "name": "Hermes", "health_url": "http://127.0.0.1:8642/health"}]}
+  ```
+  Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON `status` says otherwise), any other HTTP status is `degraded`, and no answer is `offline`.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `talaria serve --dev` | Local testing: `ws://127.0.0.1:8765/tnp` |
+| `talaria serve --behind-proxy --url wss://host:8443/tnp` | Behind a TLS proxy on the same machine, such as `tailscale serve --https=8443 http://127.0.0.1:8765`. Plain `ws://` on loopback only; devices are given the `wss://` address. |
 | `talaria serve --url wss://host/tnp --tls-cert C --tls-key K [--pin-cert]` | Real use. `--pin-cert` is for self-signed certificates: devices then pin the certificate key from the pairing link. |
 | `talaria pair [--name N] [--ttl 300]` | Shows a QR code, a link and a short code, then asks you to confirm the SAS |
 | `talaria devices list` | Paired devices, last seen time and status |
