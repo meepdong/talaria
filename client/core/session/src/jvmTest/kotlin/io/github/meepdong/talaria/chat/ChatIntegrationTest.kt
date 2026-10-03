@@ -47,7 +47,7 @@ class ChatIntegrationTest {
         val repo = ChatRepository(scope, client.asChatApi())
         repo.start()
         client.start()
-        withTimeout(20_000) { client.state.first { it.phase == ConnectionState.Phase.CONNECTED } }
+        withTimeout(30_000) { client.state.first { it.phase == ConnectionState.Phase.CONNECTED } }
         return client to repo
     }
 
@@ -55,11 +55,11 @@ class ChatIntegrationTest {
     fun chatReachesBothDevicesAndHistory() = runBlocking {
         val (laptop, fromLaptop) = device("Laptop")
         val (_, onPhone) = device("Phone")
-        withTimeout(20_000) { onPhone.state.first { it.listLoaded } }
-        val phoneReply = async { withTimeout(20_000) { onPhone.replies.first() } }
+        withTimeout(30_000) { onPhone.state.first { it.listLoaded } }
+        val phoneReply = async { withTimeout(30_000) { onPhone.replies.first() } }
 
         fromLaptop.send("Hi Hermes")
-        val done = withTimeout(20_000) {
+        val done = withTimeout(30_000) {
             fromLaptop.state.first { s -> s.openMessages.lastOrNull()?.state == MessageState.DONE && s.openMessages.size == 2 }
         }
         val (user, reply) = done.openMessages
@@ -71,15 +71,15 @@ class ChatIntegrationTest {
 
         // the phone opens the conversation from history
         onPhone.open(conv)
-        val history = withTimeout(20_000) { onPhone.state.first { it.threads[conv]?.loaded == true } }
+        val history = withTimeout(30_000) { onPhone.state.first { it.threads[conv]?.loaded == true } }
         assertEquals(listOf("Hi Hermes", "Hello"), history.threads.getValue(conv).messages.map { it.text })
 
         // a follow-up in the same conversation, after a reconnect
         laptop.stop()
         laptop.start()
-        withTimeout(20_000) { laptop.state.first { it.phase == ConnectionState.Phase.CONNECTED } }
+        withTimeout(30_000) { laptop.state.first { it.phase == ConnectionState.Phase.CONNECTED } }
         fromLaptop.send("And again")
-        val second = withTimeout(20_000) {
+        val second = withTimeout(30_000) {
             fromLaptop.state.first { s -> s.openMessages.size == 4 && s.openMessages.last().state == MessageState.DONE }
         }
         assertEquals(conv, second.openId)

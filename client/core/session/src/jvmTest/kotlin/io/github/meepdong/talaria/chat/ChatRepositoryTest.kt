@@ -208,4 +208,29 @@ class ChatRepositoryTest {
         assertEquals("denied", failed.error)
         assertEquals(false, failed.waitingForApproval)
     }
+
+    @Test
+    fun aTurnDuringAHistoryReloadIsNotLost() = chatTest { scope ->
+        val api = FakeApi()
+        val before = """{"id":"1","role":"user","text":"Hi","ts":1},{"id":"2","role":"assistant","text":"Hello","ts":2}"""
+        val after = """$before,{"id":"3","role":"user","text":"Hi","ts":3},{"id":"4","role":"assistant","text":"Hello!","ts":4}"""
+        var historyCalls = 0
+        api.answers["chat.history"] = { json("""{"messages":[${if (++historyCalls <= 2) before else after}],"next_before":null}""") }
+        api.answers["conversations.list"] = { json("""{"conversations":[]}""") }
+        val repo = repo(scope, api)
+        repo.open("c-1")
+        advanceUntilIdle()
+
+        // a reconnect reloads the thread, and a turn starts and ends while that page is on its way
+        api.gates["chat.history"] = CompletableDeferred()
+        api.sessions.emit("s-2")
+        advanceUntilIdle()
+        api.push("chat.started", started)
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-1","seq":1,"status":"completed","text":"Hello!"}""")
+        advanceUntilIdle()
+        api.gates.getValue("chat.history").complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("Hi", "Hello", "Hi", "Hello!"), repo.state.value.openMessages.map { it.text })
+        assertEquals(3, historyCalls)
+    }
 }

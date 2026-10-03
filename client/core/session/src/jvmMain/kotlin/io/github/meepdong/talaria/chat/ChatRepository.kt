@@ -77,6 +77,9 @@ class ChatRepository(
     /** Last applied `seq` of each turn we follow. Guarded by [lock]. */
     private val lastSeq = HashMap<String, Int>()
     private val syncing = HashSet<String>()
+
+    /** Bumped whenever a turn starts or ends in a conversation, so a history page fetched meanwhile is known to be stale. Guarded by [lock]. */
+    private val changes = HashMap<String, Int>()
     private val lock = Mutex()
     private var job: Job? = null
 
@@ -230,30 +233,45 @@ class ChatRepository(
     private suspend fun loadPage(conv: String, before: String?) {
         _state.update { s -> s.copy(threads = s.threads + (conv to (s.threads[conv] ?: ConversationThread()).copy(loading = true, error = null))) }
         try {
-            val r = api.request("chat.history", buildJsonObject {
-                put("conversation_id", conv)
-                put("limit", PAGE)
-                before?.let { put("before", it) }
-            }, HISTORY_TIMEOUT_MS)
-            val page = (r["messages"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::parseHistory) }
-            val next = r.str("next_before")
-            lock.withLock {
-                _state.update { s ->
-                    val old = s.threads[conv] ?: ConversationThread()
-                    val messages = if (before == null) {
-                        // newest page: keep what is live or unsent, which history doesn't have yet
-                        page + old.messages.filter { it.state in LOCAL_STATES }
-                    } else {
-                        page + old.messages
+            var attempt = 0
+            while (true) {
+                val version = lock.withLock { changes[conv] }
+                val r = api.request("chat.history", buildJsonObject {
+                    put("conversation_id", conv)
+                    put("limit", PAGE)
+                    before?.let { put("before", it) }
+                }, HISTORY_TIMEOUT_MS)
+                val page = (r["messages"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::parseHistory) }
+                val next = r.str("next_before")
+                val applied = lock.withLock {
+                    // a turn started or ended while the newest page was on its way: it may be missing, so ask again
+                    if (before == null && changes[conv] != version && ++attempt < STALE_RETRIES) return@withLock false
+                    _state.update { s ->
+                        val old = s.threads[conv] ?: ConversationThread()
+                        val messages = if (before == null) page + liveTail(old.messages, page) else page + old.messages
+                        s.copy(threads = s.threads + (conv to old.copy(messages = messages, nextBefore = next, loaded = true, loading = false)))
                     }
-                    s.copy(threads = s.threads + (conv to old.copy(messages = messages, nextBefore = next, loaded = true, loading = false)))
+                    true
                 }
+                if (applied) break
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val why = if (e is TnpException) "Not connected to the bridge" else e.message ?: "Couldn't load messages"
             _state.update { s -> s.copy(threads = s.threads + (conv to (s.threads[conv] ?: ConversationThread()).copy(loading = false, error = why))) }
+        }
+    }
+
+    /**
+     * What the newest history page doesn't have yet: unsent and streaming messages, and the
+     * question of a reply still streaming unless history already ends with it.
+     */
+    private fun liveTail(old: List<ChatMessage>, page: List<ChatMessage>): List<ChatMessage> {
+        val streaming = old.filter { it.state == MessageState.STREAMING }.mapNotNull { it.turnId }.toSet()
+        val lastAsked = page.lastOrNull { it.role == Role.USER }?.text
+        return old.filter {
+            it.state in LOCAL_STATES || (it.role == Role.USER && it.turnId in streaming && it.text != lastAsked)
         }
     }
 
@@ -307,11 +325,16 @@ class ChatRepository(
         }
     }
 
+    private fun changed(conv: String) {
+        changes[conv] = (changes[conv] ?: 0) + 1
+    }
+
     private fun onSent(r: JsonObject, cmid: String) {
         val conv = r.str("conversation_id") ?: return
         val turn = r.str("turn_id") ?: return
         val title = r.str("title") ?: "Conversation"
         lastSeq.putIfAbsent(turn, 0)
+        changed(conv)
         _state.update { s0 ->
             var s = s0.claimDraft(cmid, conv)
             s = s.withMessages(conv) { list ->
@@ -332,6 +355,7 @@ class ChatRepository(
         val at = (p.long("started_at") ?: (nowMs() / 1000)) * 1000
         val cmid = p.str("client_msg_id")
         lastSeq.putIfAbsent(turn, 0)
+        changed(conv)
         _state.update { s0 ->
             val existing = s0.conversations.firstOrNull { it.id == conv }
             var s = s0.upsert(
@@ -408,6 +432,7 @@ class ChatRepository(
             "cancelled" -> MessageState.CANCELLED
             else -> MessageState.FAILED
         }
+        changed(conv)
         _state.update { s0 ->
             var s = s0.copy(conversations = s0.conversations.map {
                 if (it.id != conv) it
@@ -500,6 +525,7 @@ class ChatRepository(
         const val PAGE = 50
         const val SEND_TIMEOUT_MS = 30_000L
         const val HISTORY_TIMEOUT_MS = 30_000L
+        private const val STALE_RETRIES = 3
         private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.STREAMING)
     }
 }
