@@ -72,6 +72,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # core/session's integration tests run the Kotlin client against the real
+      # Python bridge; TALARIA_PYTHON makes them fail instead of skip if it's missing.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the bridge for the integration tests
+        working-directory: .
+        run: |
+          python -m pip install -e bridge
+          echo "TALARIA_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+
       # core/protocol runs every file in spec/vectors, so the Kotlin client and the
       # Python bridge are checked against the same bytes.
       - name: Test
