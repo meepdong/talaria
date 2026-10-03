@@ -1,5 +1,7 @@
 package io.github.meepdong.talaria.android
 
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.asImageBitmap
 import android.app.Application
 import android.os.Build
 import android.provider.Settings
@@ -30,6 +32,7 @@ class TalariaApplication : Application() {
             platform = "android",
             defaultDeviceName = deviceName(),
             log = ConnectionLog(ConnectionLog.fileSink(logFile)),
+            imageDecoder = { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() },
         )
         controller.start()
     }

@@ -191,7 +191,7 @@ class ChatRepository(
 
     fun dismissNotice() = _state.update { it.copy(notice = null) }
 
-    private fun notice(text: String) = _state.update { it.copy(notice = text) }
+    fun notice(text: String) = _state.update { it.copy(notice = text) }
 
     // requests
 

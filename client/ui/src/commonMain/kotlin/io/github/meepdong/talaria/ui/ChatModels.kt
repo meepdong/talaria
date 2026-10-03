@@ -14,6 +14,14 @@ enum class ItemState { SENDING, NOT_SENT, STREAMING, DONE, FAILED, CANCELLED }
 /** A tool call in a reply: "🔧 web_search…", then ✓ or ✗. */
 data class ToolChip(val name: String, val state: String, val preview: String? = null)
 
+/** A photo or file on a message or waiting in the composer. [image] is set where the photo's bytes are known. */
+data class AttachmentChip(
+    val name: String,
+    val isImage: Boolean,
+    val detail: String?,
+    val image: androidx.compose.ui.graphics.ImageBitmap? = null,
+)
+
 data class MessageItem(
     val key: String,
     val fromUser: Boolean,
@@ -25,6 +33,7 @@ data class MessageItem(
     val commentary: String? = null,
     val waitingForApproval: Boolean = false,
     val error: String? = null,
+    val attachments: List<AttachmentChip> = emptyList(),
 )
 
 data class ChatView(
@@ -48,4 +57,8 @@ data class ChatView(
     val notice: String?,
     val connection: Health,
     val connectionSummary: String,
+    /** Photos and files picked for the next message. */
+    val pending: List<AttachmentChip> = emptyList(),
+    /** Whether this app can pick files (the 📎 button). */
+    val canAttach: Boolean = false,
 )

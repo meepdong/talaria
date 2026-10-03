@@ -74,6 +74,9 @@ interface TalariaActions {
     /** Back from a conversation to the list, on a phone. */
     fun closeConversation() {}
     fun sendMessage(text: String) {}
+    /** Pick photos ([photos] true) or any files to send with the next message. */
+    fun attachFiles(photos: Boolean) {}
+    fun removeAttachment(index: Int) {}
     fun retryMessage(key: String) {}
     fun stopReply(turnId: String) {}
     fun loadOlder() {}
