@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.ui.Screen
+import io.github.meepdong.talaria.ui.Tab
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.paired
 import kotlinx.coroutines.Dispatchers
@@ -102,10 +103,15 @@ class MainActivity : ComponentActivity() {
                 onDispose { controller.setSpeechInput(null) }
             }
 
-            // Back: from a conversation to the list, and from Connection to the chats.
+            // Back: closes the menu, then a conversation, then Connection, then any page to Home.
+            // The last BackHandler declared wins.
             val current = screen
-            BackHandler(enabled = current is Screen.Chat && current.view.conversationOpen) { controller.closeConversation() }
+            BackHandler(enabled = current is Screen.Chat && current.tab != Tab.HOME) { controller.selectTab(Tab.HOME) }
+            BackHandler(enabled = current is Screen.Chat && current.tab == Tab.CHATS && current.view.conversationOpen) {
+                controller.closeConversation()
+            }
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
+            BackHandler(enabled = current is Screen.Chat && current.menuOpen) { controller.setMenuOpen(false) }
 
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                 if (scanning && screen is Screen.Connect) {

@@ -191,6 +191,42 @@ class ControllerTest {
     }
 
     @Test
+    fun tabsMenuAndTalk() = runBlocking {
+        val key = keys.create()
+        store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
+        val output = FakeOutput()
+        val c = TalariaController(scope, keys, store, "linux", "Laptop", transport = unreachable, pairer = pairer,
+            networkCheck = { NetworkStatus(NetworkStatus.Kind.NONE, "off") }, speechOutput = output)
+        c.start()
+        assertEquals(Tab.HOME, c.await<Screen.Chat>().tab, "paired apps open on Home")
+        c.setMenuOpen(true)
+        c.await<Screen.Chat> { it.menuOpen }
+        c.selectTab(Tab.CHATS)
+        val chats = c.await<Screen.Chat> { it.tab == Tab.CHATS }
+        assertEquals(false, chats.menuOpen, "picking a page closes the menu")
+        c.selectTab(Tab.HOME)
+        c.await<Screen.Chat> { it.tab == Tab.HOME }
+
+        // without a microphone, Talk opens a chat to type in
+        c.talk()
+        c.await<Screen.Chat> { it.tab == Tab.CHATS && it.view.conversationOpen && it.view.notice != null }
+        c.selectTab(Tab.HOME)
+
+        val input = FakeInput()
+        c.setSpeechInput(input)
+        c.await<Screen.Chat> { it.tab == Tab.HOME && it.view.voice.canDictate }
+        c.talk()
+        // page and voice are separate flows, so wait for both rather than the first frame that listens
+        val talking = c.await<Screen.Chat> { it.view.voice.listening && it.tab == Tab.CHATS }
+        assertNull(talking.view.openId, "talking starts a new chat")
+        input.listener!!.done("what's on today")
+        val heard = c.await<Screen.Chat> { it.view.voice.dictation != null }.view.voice.dictation!!
+        assertEquals("what's on today", heard.text)
+        assertTrue(heard.send, "what's said to Talk is sent straight away")
+        c.close()
+    }
+
+    @Test
     fun sharedFilesOpenANewChatReadyToSend() = runBlocking {
         val key = keys.create()
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")

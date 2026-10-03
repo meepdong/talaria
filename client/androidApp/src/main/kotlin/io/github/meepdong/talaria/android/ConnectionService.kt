@@ -19,6 +19,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.github.meepdong.talaria.ui.Health
 import io.github.meepdong.talaria.ui.Screen
+import io.github.meepdong.talaria.ui.Tab
 import io.github.meepdong.talaria.ui.color
 import io.github.meepdong.talaria.ui.overall
 import io.github.meepdong.talaria.ui.summary
@@ -74,7 +75,7 @@ class ConnectionService : Service() {
         // Replies that finish while their conversation isn't on screen.
         scope.launch {
             controller.replies.collect { reply ->
-                val view = (controller.screen.value as? Screen.Chat)?.view
+                val view = (controller.screen.value as? Screen.Chat)?.takeIf { it.tab == Tab.CHATS }?.view
                 val showing = app.visible && view != null && view.conversationOpen && view.openId == reply.conversationId
                 if (!showing) ReplyNotifier.show(this@ConnectionService, reply)
             }
