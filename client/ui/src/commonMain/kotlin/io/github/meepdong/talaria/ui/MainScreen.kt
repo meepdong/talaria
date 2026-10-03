@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -221,7 +222,7 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
         // the backdrop closes the menu; beside the panel, not around it, so the panel's rows keep their own semantics
         Box(
             Modifier.matchParentSize().background(Color(0x47_1B2229))
-                .clickable(interactionSource = MutableInteractionSource(), indication = null) { actions.setMenuOpen(false) },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { actions.setMenuOpen(false) },
         )
         Column(
             Modifier.fillMaxHeight().width(if (wide) 360.dp else 310.dp).background(MaterialTheme.colorScheme.surface)
