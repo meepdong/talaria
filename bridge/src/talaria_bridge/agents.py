@@ -1,0 +1,107 @@
+"""Agent health for the status report (PROTOCOL §10.1).
+
+Agents are listed in `agents.json` in the bridge home. In M1 the bridge only checks that
+each agent's health URL answers; chat and the full agent registry come in M2.
+
+    {"agents": [{"id": "hermes", "name": "Hermes",
+                 "health_url": "http://127.0.0.1:8642/health"}]}
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import urllib.error
+import urllib.request
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+log = logging.getLogger("talaria.agents")
+
+AGENT_STATES = ("ready", "degraded", "offline", "unknown")
+HEALTHY_WORDS = ("ok", "healthy", "ready", "up", "pass")
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    id: str
+    name: str
+    health_url: str
+
+
+def load_agents(path: Path) -> list[AgentConfig]:
+    """Read agents.json. A missing file means no agents are configured."""
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    agents = []
+    for entry in data.get("agents", []):
+        agent_id, url = entry.get("id"), entry.get("health_url")
+        if not (isinstance(agent_id, str) and agent_id and isinstance(url, str)
+                and url.startswith(("http://", "https://"))):
+            raise ValueError(f"{path}: each agent needs an id and an http(s) health_url")
+        agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url))
+    return agents
+
+
+def http_probe(url: str, timeout_s: float) -> dict:
+    """One health check. Returns {"state", "detail"?, "model"?}. Blocking: run it in a thread."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            body = resp.read(64 * 1024)
+    except urllib.error.HTTPError as exc:
+        return {"state": "degraded", "detail": f"health check returned HTTP {exc.code}"}
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        return {"state": "offline", "detail": f"not reachable: {reason}"}
+    result: dict = {"state": "ready"}
+    try:
+        info = json.loads(body)
+    except ValueError:
+        return result  # any 2xx without JSON counts as up
+    if isinstance(info, dict):
+        status = info.get("status")
+        if isinstance(status, str) and status.lower() not in HEALTHY_WORDS:
+            result = {"state": "degraded", "detail": f"reports status {status!r}"}
+        model = info.get("model")
+        if isinstance(model, str):
+            result["model"] = model
+    return result
+
+
+Probe = Callable[[str, float], dict]
+
+
+class AgentMonitor:
+    """Checks every agent on an interval and remembers the latest result."""
+
+    def __init__(self, agents: list[AgentConfig], *, interval_s: float = 30, timeout_s: float = 5,
+                 probe: Probe = http_probe):
+        self.agents = agents
+        self.interval_s = interval_s
+        self.timeout_s = timeout_s
+        self.probe = probe
+        self._states: dict[str, dict] = {a.id: {"state": "unknown"} for a in agents}
+
+    def report(self) -> list[dict]:
+        return [{"id": a.id, "name": a.name, **self._states[a.id]} for a in self.agents]
+
+    async def check_all(self) -> bool:
+        """Probe every agent once. Returns True if any agent's report changed."""
+        results = await asyncio.gather(*(
+            asyncio.to_thread(self.probe, a.health_url, self.timeout_s) for a in self.agents))
+        changed = False
+        for agent, result in zip(self.agents, results):
+            if result != self._states[agent.id]:
+                log.info("agent %s is now %s", agent.id, result.get("state"))
+                self._states[agent.id] = result
+                changed = True
+        return changed
+
+    async def run(self, on_change: Callable[[], Awaitable[None]]) -> None:
+        while True:
+            if await self.check_all():
+                await on_change()
+            await asyncio.sleep(self.interval_s)

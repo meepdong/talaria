@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
+from .agents import AgentMonitor, load_agents
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
 from .protocol.encoding import b64u_encode, now
@@ -68,12 +69,29 @@ def cert_spki_sha256(cert_path: Path) -> str:
 def cmd_serve(args: argparse.Namespace) -> int:
     registry, key = open_home(args.home)
     settings = ServerSettings(host=args.host, port=args.port)
+    if args.dev and args.behind_proxy:
+        print("Use either --dev or --behind-proxy, not both.", file=sys.stderr)
+        return 2
     if args.dev:
         if not is_loopback(args.host):
             print("--dev serves plain ws:// and only on a loopback address such as 127.0.0.1.",
                   file=sys.stderr)
             return 2
         url = args.url or f"ws://{args.host}:{args.port}/tnp"
+        pin = None
+    elif args.behind_proxy:
+        if not is_loopback(args.host):
+            print("--behind-proxy serves plain ws:// and only on a loopback address such as "
+                  "127.0.0.1. The proxy (for example tailscale serve) provides TLS.", file=sys.stderr)
+            return 2
+        if args.tls_cert or args.tls_key or args.pin_cert:
+            print("--behind-proxy takes no certificate: the proxy terminates TLS.", file=sys.stderr)
+            return 2
+        if not (args.url and args.url.startswith("wss://")):
+            print("--behind-proxy needs --url wss://…/tnp, the address the proxy serves.",
+                  file=sys.stderr)
+            return 2
+        url = args.url
         pin = None
     else:
         if not (args.tls_cert and args.tls_key and args.url):
@@ -99,10 +117,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
     else:
         registry.db.execute("DELETE FROM meta WHERE key = 'tls_spki_sha256'")
 
-    bridge = BridgeServer(registry, key, settings)
+    agents = load_agents(args.home / "agents.json")
+    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents))
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
-    print(f"  listening: {url}  (data in {args.home})")
+    if args.behind_proxy:
+        print(f"  listening: ws://{args.host}:{args.port}/tnp, devices use {url}  (data in {args.home})")
+    else:
+        print(f"  listening: {url}  (data in {args.home})")
+    print(f"  agents:    {', '.join(a.id for a in agents) or 'none configured (agents.json)'}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
 
     async def run() -> None:
@@ -204,6 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--url", help="address devices use, e.g. wss://meep-vps.tailnet.ts.net/tnp")
     serve.add_argument("--dev", action="store_true", help="plain ws:// on loopback, for local testing")
+    serve.add_argument("--behind-proxy", action="store_true",
+                       help="plain ws:// on loopback behind a TLS proxy such as tailscale serve; "
+                            "devices use the wss:// --url")
     serve.add_argument("--tls-cert")
     serve.add_argument("--tls-key")
     serve.add_argument("--pin-cert", action="store_true",

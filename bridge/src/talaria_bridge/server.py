@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import secrets
 import ssl
 import time
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request
 
+from . import __version__
+from .agents import AgentMonitor
 from .protocol import keys
 from .protocol import messages as m
 from .protocol.encoding import EncodingError, b64u_encode, now
@@ -40,23 +44,38 @@ class ServerSettings:
     decision_poll_s: float = 0.25
 
 
+@dataclass
+class _Session:
+    session_id: str
+    device_id: str
+    ready: bool = False
+    latency_ms: int | None = None  # from the bridge's own heartbeat pings
+    pings: dict[str, float] = field(default_factory=dict)
+
+
 class _Reject(Exception):
     def __init__(self, reason: str):
         self.reason = reason
 
 
 class BridgeServer:
-    def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None):
+    def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None,
+                 agents: AgentMonitor | None = None):
         self.registry = registry
         self.key = key
         self.settings = settings or ServerSettings()
+        self.agents = agents or AgentMonitor([])
         self.bridge_pk = keys.public_key_b64u(key)
         self.bridge_id = keys.key_id(key)
         self._seen_nonces: dict[str, float] = {}
+        self._sessions: dict[ServerConnection, _Session] = {}
+        self._started = time.monotonic()
 
-    def serve(self) -> Server:
-        """`async with bridge.serve():` runs the endpoint at ws(s)://host:port/tnp."""
-        return serve(
+    @contextlib.asynccontextmanager
+    async def serve(self) -> AsyncIterator[Server]:
+        """`async with bridge.serve():` runs the endpoint at ws(s)://host:port/tnp, plus the
+        agent health checks."""
+        async with serve(
             self.handler,
             self.settings.host,
             self.settings.port,
@@ -65,7 +84,33 @@ class BridgeServer:
             max_size=m.MAX_FRAME,
             ping_interval=None,  # TNP has its own heartbeat (§3.4)
             process_request=self._check_path,
-        )
+        ) as server:
+            self._started = time.monotonic()
+            monitor = asyncio.ensure_future(self.agents.run(self.push_status)) if self.agents.agents else None
+            try:
+                yield server
+            finally:
+                if monitor is not None:
+                    monitor.cancel()
+                    await asyncio.gather(monitor, return_exceptions=True)
+
+    # status (§10.1)
+
+    def status_report(self, session: _Session) -> dict:
+        return {
+            "bridge": {"version": __version__,
+                       "uptime_s": int(time.monotonic() - self._started),
+                       "latency_ms": session.latency_ms},
+            "agents": self.agents.report(),
+            "device": {"session_id": session.session_id, "last_acked_seq": 0},
+        }
+
+    async def push_status(self) -> None:
+        """Send a `status` notification to every session that is past `ready`."""
+        for ws, session in list(self._sessions.items()):
+            if session.ready:
+                with contextlib.suppress(ConnectionClosed):
+                    await self._send(ws, m.notification("status", self.status_report(session)))
 
     @staticmethod
     def _check_path(connection: ServerConnection, request: Request):
@@ -229,7 +274,11 @@ class BridgeServer:
         await self._send(ws, m.result(msg["id"], {
             "session_id": session_id, "last_acked_seq": 0, "server_time": now()}))
         log.info("session %s opened for %s (%s)", session_id, device.name, device_id)
-        await self._session(ws, device_id)
+        self._sessions[ws] = _Session(session_id, device_id)
+        try:
+            await self._session(ws, device_id)
+        finally:
+            del self._sessions[ws]
         log.info("session %s closed (%s)", session_id, ws.close_code)
 
     async def _session(self, ws: ServerConnection, device_id: str) -> None:
@@ -262,6 +311,7 @@ class BridgeServer:
                         and t - last_ping >= self.settings.ping_interval_s):
                     sent += 1
                     last_ping = t
+                    self._sessions[ws].pings[f"p-{sent}"] = t
                     await self._send(ws, m.request(f"p-{sent}", "ping"))
 
         tasks = [asyncio.ensure_future(reader()), asyncio.ensure_future(heartbeat())]
@@ -275,13 +325,22 @@ class BridgeServer:
 
     async def _dispatch(self, ws: ServerConnection, device_id: str, msg: dict) -> None:
         method, msg_id = msg.get("method"), msg.get("id")
+        session = self._sessions[ws]
         if method is None:
-            return  # a result or error for one of our pings
+            # a result or error for one of our pings
+            sent_at = session.pings.pop(msg_id, None) if isinstance(msg_id, str) else None
+            if sent_at is not None and "result" in msg:
+                session.latency_ms = round((time.monotonic() - sent_at) * 1000)
+            return
         if method == "ping":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, {"ts": now()}))
         elif method == "capabilities.announce":
             self.registry.set_capabilities(device_id, json.dumps(msg.get("params") or {}))
             await self._send(ws, m.notification("ready"))
+            session.ready = True
+        elif method == "status.get":
+            if msg_id is not None:
+                await self._send(ws, m.result(msg_id, self.status_report(session)))
         elif msg_id is not None:
             await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND, f"Method not found: {method}"))
