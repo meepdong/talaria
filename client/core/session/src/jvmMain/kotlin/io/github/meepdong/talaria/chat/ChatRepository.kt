@@ -92,6 +92,8 @@ class ChatRepository(
 
     /** Server files (§12) named by messages not yet taken by the bridge, by client_msg_id. */
     private val outgoingServer = java.util.concurrent.ConcurrentHashMap<String, List<ServerFile>>()
+    /** The to-do each message hands to the agent (§13), by client_msg_id. */
+    private val outgoingTodo = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var job: Job? = null
 
     fun start() {
@@ -127,7 +129,7 @@ class ChatRepository(
      */
     fun send(
         text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId,
-        serverFiles: List<ServerFile> = emptyList(),
+        serverFiles: List<ServerFile> = emptyList(), todoId: String? = null,
     ) {
         val body = text.trim()
         if (body.isEmpty() && files.isEmpty() && serverFiles.isEmpty()) return
@@ -137,6 +139,7 @@ class ChatRepository(
             attachments = files.map { it.toAttachment() } + serverFiles.map { it.toAttachment() })
         if (files.isNotEmpty()) outgoing[cmid] = files
         if (serverFiles.isNotEmpty()) outgoingServer[cmid] = serverFiles
+        todoId?.let { outgoingTodo[cmid] = it }
         _state.update { s -> s.withMessages(conv) { it + msg } }
         scope.launch { deliver(conv, body, cmid) }
     }
@@ -368,9 +371,11 @@ class ChatRepository(
                 outgoingServer[cmid]?.let { found ->
                     put("files", JsonArray(found.map { f -> buildJsonObject { put("root", f.root); put("path", f.path) } }))
                 }
+                outgoingTodo[cmid]?.let { put("todo_id", it) }
             }, SEND_TIMEOUT_MS)
             outgoing.remove(cmid)
             outgoingServer.remove(cmid)
+            outgoingTodo.remove(cmid)
             lock.withLock { onSent(r, cmid) }
         } catch (e: CancellationException) {
             throw e
