@@ -48,6 +48,38 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "image",
+                        "file"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 255
+                    },
+                    "mime": {
+                      "type": "string",
+                      "maxLength": 255
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "mime"
+                  ]
+                },
+                "maxItems": 10
               }
             },
             "required": [

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/blob.begin.schema.json",
+  "title": "blob.begin",
+  "description": "Device to bridge (request): start uploading a photo or file (spec/README.md §10).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "blob.begin"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "mime": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20971520
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "name",
+        "mime",
+        "size",
+        "sha256"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ]
+}

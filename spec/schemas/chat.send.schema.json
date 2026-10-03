@@ -35,8 +35,8 @@
         },
         "text": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 32000
+          "maxLength": 32000,
+          "description": "May be empty when attachments are sent."
         },
         "client_msg_id": {
           "type": "string",
@@ -46,8 +46,22 @@
         },
         "attachments": {
           "type": "array",
-          "maxItems": 0,
-          "description": "Reserved; rejected until attachments land."
+          "minItems": 1,
+          "maxItems": 10,
+          "description": "Committed blobs (§10). Each blob can be sent once.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "blob_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "blob_id"
+            ]
+          }
         }
       },
       "required": [
