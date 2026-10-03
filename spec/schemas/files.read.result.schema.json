@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/files.read.result.schema.json",
+  "title": "files.read.result",
+  "description": "Result of files.read: at most 512 KiB, base64.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mime": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data": {
+          "type": "string"
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "size",
+        "mime",
+        "offset",
+        "data",
+        "eof"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}

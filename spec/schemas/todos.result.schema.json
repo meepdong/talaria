@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/todos.result.schema.json",
+  "title": "todos.result",
+  "description": "Result of todos.add and todos.update.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "todo": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "done": {
+              "type": "boolean"
+            },
+            "created_at": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "done_at": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "due": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            },
+            "conversation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "done",
+            "created_at"
+          ]
+        }
+      },
+      "required": [
+        "todo"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}

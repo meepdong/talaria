@@ -6,7 +6,7 @@ Working agreement (ROADMAP): every protocol change updates `spec/` first, with s
 
 | Path | Contents |
 |---|---|
-| `schemas/` | JSON Schema (2020-12) for each message so far (M0 handshake, M1 status) |
+| `schemas/` | JSON Schema (2020-12) for each message so far (M0 handshake, M1 status, M2 chat, files, to-dos and automations) |
 | `vectors/` | Test vectors. `generate.py` rebuilds them. |
 | `sas-emoji.json` | The 64-emoji SAS table |
 
@@ -186,3 +186,85 @@ What Hermes offers as slash commands in its own chat apps (`/model`, `/queue`, `
 **Balance.** `account.balance` lists the provider accounts the bridge can check, each `{provider, name, remaining, currency, top_up_url}`: today only OpenRouter, when the operator has given the bridge an OpenRouter management key. That key never leaves the bridge. `remaining` is the credit left (purchased minus used) as a number in `currency` (`USD`), and `top_up_url` is the provider's page for adding credit. The list is empty when nothing is configured; a provider that can't be reached is listed with `error` instead of `remaining`.
 
 Schemas: `agent.models`, `agent.models.result`, `conversations.set_model`, `conversations.set_model.result`, `chat.queued`, `chat.steer`, `chat.steer.result`, `chat.aside`, `chat.aside.result`, `chat.aside.done`, `chat.status`, `chat.status.result`, `account.balance`, `account.balance.result`; `chat.send`, `chat.send.result` and `conversations.list.result` gain `model`, `queued` and `queued_turn_ids`.
+
+## 12. Files on the server (M2)
+
+Devices can browse, open and reuse the files that live next to the agent: the inbox where the bridge saves files sent from Talaria (§10), and any folder the operator shares, such as the agent's workspace. Everything is read-only; the bridge never writes, renames or deletes through these methods.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `files.roots` | request | `{agent_id?}` → `{agent_id, roots}` |
+| `files.list` | request | `{root, path?, query?, agent_id?}` → `{root, path, entries, truncated}` |
+| `files.read` | request | `{root, path, offset?, agent_id?}` → `{size, mime, offset, data, eof}` |
+
+**Roots.** A root is `{id, name}`, a folder the operator listed for the agent (`files` in `agents.json`), plus the inbox as `{id: "inbox", name: "Sent from Talaria"}` when the agent has one. A root the bridge can't read is listed with `error`.
+
+**Listing.** `path` is a folder inside the root, written with `/` and relative to it; it defaults to the root itself. Without `query`, `entries` lists that folder; with `query`, it lists files anywhere under `path` whose name contains `query`, ignoring case. Each entry is `{name, path, kind, size?, mime?, modified}`: `kind` is `file` or `folder`, `path` is relative to the root, `modified` is Unix seconds, and folders have no `size` or `mime`. Folders come first, then newest first. At most 500 entries come back; `truncated` says whether more were left out. Names starting with `.` are never listed, and neither is anything that leads outside the root (a `..` segment, a symbolic link pointing out).
+
+**Reading.** `files.read` returns a file in chunks: `data` is base64 (standard alphabet, with padding) of at most 512 KiB starting at `offset` (default 0), `size` is the whole file's size and `eof` says whether this chunk ends it. A device reads the next chunk from `offset + decoded length`. Files over 20 MiB fail with `INVALID_PARAMS`.
+
+**Asking about a file.** `chat.send` takes `files: [{root, path}]` (together with `attachments`, at most 10 per message). The bridge adds an `Attached file:` line for each, with the path where the agent sees it, as for a file sent from the device (§10), and `chat.started`, snapshots and history list it in `attachments` with `kind: file`. The file stays where it is.
+
+**Errors.** `NOT_FOUND` for an unknown root or a missing path; `INVALID_PARAMS` for a path outside the root, a folder passed to `files.read`, or a file that is too large.
+
+Schemas: `files.roots`, `files.roots.result`, `files.list`, `files.list.result`, `files.read`, `files.read.result`; `chat.send` gains `files`.
+
+## 13. To-dos (M2)
+
+A short to-do list kept on the bridge, so every device shows the same one. It is Talaria's own: the agent doesn't see it unless a to-do is handed to it.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `todos.list` | request | `{}` → `{todos}` |
+| `todos.add` | request | `{text, due?}` → `{todo}` |
+| `todos.update` | request | `{id, text?, done?, due?}` → `{todo}` |
+| `todos.delete` | request | `{id}` → `{id, deleted}` |
+| `todos.changed` | notification | `{todos}` |
+
+A to-do is `{id, text, done, created_at, done_at?, due?, conversation_id?}`. `text` is 1 to 500 characters; `due` is a date, `YYYY-MM-DD`, or `null` to clear it; times are Unix seconds. `todos.list` returns open to-dos first, oldest first, then the 50 most recently done. After any change every device gets `todos.changed` with the whole list. At most 500 open to-dos; one more fails with `CONFLICT`.
+
+**Handing a to-do to the agent** is an ordinary `chat.send` with `todo_id`: the bridge records the new turn's conversation in the to-do's `conversation_id`, so devices can show "With Hermes" while that conversation's turn runs and open it from the to-do.
+
+Schemas: `todos.list`, `todos.list.result`, `todos.add`, `todos.update`, `todos.result`, `todos.delete`, `todos.delete.result`, `todos.changed`; `chat.send` gains `todo_id`.
+
+## 14. Automations, calendar and Home (M2)
+
+An automation is work the agent does on its own: **when**, **what to do** and **where the result goes**. For Hermes, every automation is one of its scheduled (cron) jobs, so automations keep running when no device is connected, and jobs made anywhere else (in a Hermes chat, from Telegram, by asking in Talaria) are listed too.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `automations.list` | request | `{agent_id?}` → `{automations}` |
+| `automations.add` | request | `{name, when, task, result_to?, agent_id?}` → `{automation}` |
+| `automations.describe` | request | `{text, agent_id?}` → `{reply, automations}` |
+| `automations.update` | request | `{id, name?, when?, task?, result_to?, paused?}` → `{automation}` |
+| `automations.run` | request | `{id}` → `{automation}` |
+| `automations.delete` | request | `{id}` → `{id, deleted}` |
+| `automations.runs` | request | `{id, limit?}` → `{runs}` |
+| `automations.ran` | notification | `{id, name, run}` |
+| `automations.changed` | notification | `{automations}` |
+| `calendar.day` | request | `{date?}` → `{date, events}` or `{date, events: [], error}` |
+| `home.get` | request | `{}` → `{date, results}` |
+
+**An automation** is `{id, name, when, task, result_to, made_in, state, next_run_at?, last_run_at?, last_status?, last_error?, schedule_text}`:
+- `when` is one of
+  - `{kind: "time", schedule}`: `schedule` is a 5-field cron expression (`30 7 * * 1-5`), an interval (`every 2h`) or an ISO 8601 time for a single run.
+  - `{kind: "arrives", watch, from, until, days, fallback?}`: when something matching `watch` arrives (an email or file, described in words, such as `an email from gemini-notes@google.com with "Transcript" in the subject`), checked every 10 minutes between `from` and `until` (`HH:MM`, the agent's time zone) on `days` (`mon`…`sun`), and run once per day at most. `fallback`, if set, is what to do instead at `until` when nothing arrived that day.
+  - `{kind: "after_event", event, delay_minutes, days}`: `delay_minutes` (0 to 240) after a calendar event whose title contains `event` ends.
+  - `{kind: "other"}`: a job the agent made some other way, described by `schedule_text`; it can be run, paused and deleted, but `when` can't be changed from Talaria.
+- `task` is what the agent should do, in words, up to 4000 characters.
+- `result_to` is `home` (Home and a notification on every device), `chat` (a new conversation per run) or `log` (only `automations.runs`). Jobs made outside Talaria count as `log` unless changed.
+- `made_in` is `talaria` or `agent`; `state` is `scheduled`, `paused`, `running`, `completed` (a single run that has happened) or `error`; times are Unix seconds; `last_status` is `ok`, `error` or `nothing` (an `arrives` or `after_event` check that found nothing to do).
+
+**How the bridge does it for Hermes.** `time` is a Hermes job with that schedule. `arrives` and `after_event` are a Hermes job every 10 minutes in the window whose prompt tells the agent to check first and to answer `[SILENT]` when there is nothing to do yet or it already ran that day; the bridge keeps the structured `when` alongside the job id. All jobs Talaria makes deliver locally; the bridge reads each run's result and passes it on.
+
+**Asking in words.** `automations.describe` sends `text` (such as "every weekday at 8, summarise my unread email") to the agent, which creates the job with its own scheduling tool and answers in `reply` (what it set up, or a question). `automations` is the list afterwards. Jobs the agent makes this way, or in any chat, show up with `made_in: agent` and `when.kind: other`.
+
+**Runs.** A run is `{at, status, text?, error?, conversation_id?}`. When a run of a job finishes with something to say, every device gets `automations.ran`; a device shows a notification when `result_to` is `home`. `automations.runs` returns the newest first, at most `limit` (default 10, at most 50). `automations.changed` goes to every device when the list changes (added, edited, paused, run, deleted, or a change the bridge noticed in the agent's jobs).
+
+**Calendar.** `calendar.day` lists the events of `date` (`YYYY-MM-DD`, default today in the bridge's time zone), each `{title, start, end, all_day, location?}`, with `start` and `end` as ISO 8601 times (dates for all-day events), sorted by start. The bridge reads the calendar the agent can read, so devices never hold calendar credentials. Without a calendar set up, `events` is empty and `error` says why.
+
+**Home.** `home.get` returns today's `results`: the latest run today of each automation with `result_to: home`, each `{id, name, run}`, newest first, so a device that was off sees the morning summary when it opens.
+
+**Errors.** `AGENT_UNAVAILABLE` when the agent's jobs can't be reached; `NOT_FOUND` for an unknown automation; `INVALID_PARAMS` for a bad schedule, window or day; `CONFLICT` when changing the `when` of a `kind: other` job.
+
+Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`.

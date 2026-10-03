@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/automations.runs.result.schema.json",
+  "title": "automations.runs.result",
+  "description": "Result of automations.runs, newest first.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "error",
+                  "nothing"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "conversation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "at",
+              "status"
+            ]
+          }
+        }
+      },
+      "required": [
+        "runs"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}
