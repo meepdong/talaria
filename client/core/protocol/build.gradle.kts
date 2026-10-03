@@ -29,7 +29,7 @@ kotlin {
 
 // The shared test vectors live in ../spec at the repository root. Copy them into the
 // test resources so every implementation is checked against the same files.
-val copySpec by tasks.registering(Sync::class) {
+val copySpec = tasks.register<Sync>("copySpec") {
     from(rootDir.resolve("../spec")) {
         include("vectors/*.json", "sas-emoji.json")
     }
