@@ -88,3 +88,14 @@ jobs:
       # Python bridge are checked against the same bytes.
       - name: Test
         run: ./gradlew check --console=plain
+
+      # The desktop app as a folder with its own Java runtime (createDistributable).
+      # Download it from the run's artifacts and start bin/Talaria or Talaria.exe.
+      - name: Build the desktop app
+        run: ./gradlew :desktopApp:createDistributable --console=plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talaria-desktop-${{ runner.os }}
+          path: client/desktopApp/build/compose/binaries/main/app/
+          if-no-files-found: error
