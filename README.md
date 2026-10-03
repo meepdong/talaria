@@ -4,7 +4,7 @@
 >
 > *Working name. In myth, the talaria are Hermes' winged sandals: they carry the messenger anywhere.*
 
-**Status:** design draft (v0.1). No code yet. Feedback welcome.
+**Status:** design draft. No code yet. **v1 scope defined** (see below). Feedback welcome.
 **Not affiliated with Nous Research.** Talaria is an independent community project that works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and, by design, with any agent that speaks [MCP](https://modelcontextprotocol.io).
 
 ---
@@ -25,21 +25,31 @@ Talaria turns your phone, laptop, and (later) watch or smart glasses into **devi
  Watch* ─┘   (*relayed through the phone)    └─ webhooks ──▶ agent runs triggered by device events
 ```
 
-## What you can do with it
+## v1: what you get first
+
+v1 is deliberately small: **"your own Gemini, built on your own agent."** It's an Android app that replaces Telegram as the way you talk to your Hermes agent, and makes that agent your phone's assistant.
 
 - **Pair securely** by scanning a QR code in your terminal, or by pasting a link on devices without cameras, then confirming a matching code.
-- **See connection health at a glance**: network, bridge, and each agent, with clear fixes when something breaks.
-- **Chat** with your agent from a native app (replaces Telegram-as-UI), by text or **voice** (speech-to-text runs on the phone for free), with **photos, PDFs and files** attached.
-- **Several agents, each with its own soul**: a personal assistant, a coder, a cheap researcher. Open any agent's profile to read its SOUL.md, model, tools and spend.
-- **Group chats with your agents, WhatsApp-style**: a conductor agent hands tasks to others, with reply caps and daily budgets so it never runs away.
-- **Watch multi-agent workflows live**: a strong conductor delegates to cheap worker models, and you see every worker's task, model, status and cost.
+- **See connection health at a glance**: network, bridge and agent, with clear fixes when something breaks.
+- **Chat** with your agent by text or **voice** (speech-to-text runs on the phone for free), with **photos, PDFs and files** attached and spoken replies.
 - **Make it your phone's default assistant**: long-press the power button and talk. Phone commands (timers, calls, apps) run instantly on the device and work offline; everything else goes to your agent.
-- **Reply to anyone by voice**: "Reply to Asha on WhatsApp: I'll be ten minutes late." Talaria confirms (on screen and out loud) and delivers through the messaging app itself. Hands-free when possible, one tap otherwise.
+- **Reply to anyone by voice**: "Reply to Asha on WhatsApp: I'll be ten minutes late." Talaria confirms (on screen and out loud) and delivers through the messaging app itself.
 - **Notifications on your terms**: the agent pushes alerts into your own channels, priorities and sounds, with reply buttons.
-- **Device-aware automation**: "when a bank SMS says *debited*, log the expense and tell me if I've spent over ₹2,000 today." Rules run on the device; the agent can *propose* rules in plain language, and you approve them.
-- **Phone as a sensor**: location triggers, filtered notification forwarding, battery and connectivity state.
+
+See [ROADMAP.md](docs/ROADMAP.md#v1-scope-your-own-gemini-built-on-your-own-agent) for the v1 milestones and when v1 counts as done.
+
+## Later: designed, not committed
+
+These are designed so v1 doesn't paint us into a corner. They get built only after v1 is in real use, in the order users ask for them.
+
+- **Several agents, each with its own soul**: open any agent's profile to read its SOUL.md, model, tools and spend.
+- **Group chats with your agents, WhatsApp-style**: a conductor agent hands tasks to others, with reply caps and daily budgets.
+- **Multi-agent workflows**: a strong conductor delegates to cheap worker models, with every worker's task, status and cost visible.
+- **Schedules**: one list for phone-side schedules (alarms, DND) and server-side ones (briefings, summaries) that run even when your phone is off.
+- **Device-aware automation and phone data**: rules on the device, filtered notification and SMS forwarding (e.g. automatic UPI expense logging), hands-free voice replies.
 - **Desktop as an actuator**: run *pre-registered* scripts, watch folders, press a global hotkey to talk to the agent.
-- **One bridge for future devices**: watches and smart glasses connect through the phone as relayed nodes.
+- **Wearables, car and iOS**: watch, Android Auto, and an iPhone client.
+- **Hardware side quests**: a no-mic [smart ring](docs/hardware/RING.md) and a gesture [wristband](docs/hardware/BAND.md) as triggers and haptic displays.
 
 ## Why
 
@@ -80,7 +90,7 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 | [docs/hardware/RING.md](docs/hardware/RING.md) | Hardware track: a no-mic smart ring (based on Open Ring) as Talaria's trigger and haptic display; multi-device use |
 | [docs/hardware/BAND.md](docs/hardware/BAND.md) | Hardware track: a gesture wristband (IMU first, optional sEMG) for push-to-talk, navigation and glasses control |
 | [docs/UI.md](docs/UI.md) | Screen sketches: pairing, status, chats, group info, agent profiles, workflow view |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones with exit criteria (pairing → status → chat → multi-agent → groups → workflows → device features) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | v1 scope and milestones with exit criteria, plus everything planned for later |
 
 ## License
 
