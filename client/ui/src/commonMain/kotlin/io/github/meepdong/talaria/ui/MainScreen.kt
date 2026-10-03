@@ -216,15 +216,15 @@ fun SectionCard(
 @Composable
 private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolean) {
     val menu = screen.menu
-    Box(
-        Modifier.fillMaxSize().background(Color(0x47_1B2229))
-            .clickable(interactionSource = MutableInteractionSource(), indication = null) { actions.setMenuOpen(false) },
-        contentAlignment = Alignment.TopEnd,
-    ) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+        // the backdrop closes the menu; beside the panel, not around it, so the panel's rows keep their own semantics
+        Box(
+            Modifier.matchParentSize().background(Color(0x47_1B2229))
+                .clickable(interactionSource = MutableInteractionSource(), indication = null) { actions.setMenuOpen(false) },
+        )
         Column(
             Modifier.fillMaxHeight().width(if (wide) 360.dp else 310.dp).background(MaterialTheme.colorScheme.surface)
-                // taps inside the panel don't close it; no semantics, so its rows stay separate
-                .pointerInput(Unit) { detectTapGestures {} }
+                .pointerInput(Unit) { detectTapGestures {} }  // taps on the panel's empty space stay on it
                 .verticalScroll(rememberScrollState()).padding(20.dp).testTag("menu-panel"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
