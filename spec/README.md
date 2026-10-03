@@ -96,3 +96,42 @@ After `ready`, a device may send `status.get` (request). The result is the layer
 The bridge pushes the same report as a `status` notification to every session past `ready` whenever an agent's state changes. In M1 an agent's state comes from an HTTP health check (`agents.json` in the bridge home, checked every 30 s with a 5 s timeout): a 2xx answer is `ready`, unless its JSON body has a `status` other than ok/healthy/ready/up/pass, which is `degraded`. Any other HTTP status is `degraded`, and no answer is `offline`. Agents start as `unknown` until the first check completes.
 
 Schemas: `status.get`, `status.result`, `status`.
+
+## 9. Chat (M2)
+
+After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10.3). Devices never see agent credentials. In M2 the bridge talks to Hermes through its API server's Sessions API: one Talaria conversation is one Hermes session, so history lives in Hermes and survives app reinstalls. The bridge, not the device, holds the stream to Hermes, so a reply keeps going when the device drops off and the device catches up when it reconnects.
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `chat.send` | request | `{text, conversation_id?, agent_id?, client_msg_id?}` → `{conversation_id, turn_id, title}` |
+| `chat.started` | notification | `{conversation_id, turn_id, agent_id, title, user_text, started_at, client_msg_id?}` |
+| `chat.delta` | notification | `{conversation_id, turn_id, seq, kind, text?, tool?}` |
+| `chat.done` | notification | `{conversation_id, turn_id, seq, status, text, error?, usage?, runtime?}` |
+| `chat.cancel` | request | `{turn_id}` → `{turn_id, status}` |
+| `chat.turn.get` | request | `{turn_id}` → `{turn: snapshot}` |
+| `chat.history` | request | `{conversation_id, before?, limit?}` → `{messages, next_before}` |
+| `conversations.list` | request | `{}` → `{conversations}` |
+| `conversations.rename` | request | `{conversation_id, title}` → `{conversation_id, title}` |
+| `conversations.delete` | request | `{conversation_id}` → `{conversation_id, deleted}` |
+
+**Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` is reserved and rejected with `MODALITY_UNSUPPORTED` until attachments land.
+
+**Every device sees every turn.** `chat.started`, `chat.delta` and `chat.done` go to every session past `ready`, including turns sent from another device, so the phone and the laptop show the same conversation live. `chat.started` repeats the sender's `client_msg_id`, so the sending device can match it to the message it already shows, even before the `chat.send` result is handled.
+
+**Deltas.** `seq` starts at 1 and grows by one per notification of a turn, `chat.done` included. `kind` is one of:
+- `text`: `text` is the next piece of the answer.
+- `tool_progress`: `tool` is `{name, state, preview?}`, with `state` one of `started`, `completed`, `failed`. `preview` is at most 500 characters.
+- `commentary`: `text` is a progress note the agent wrote between tool calls. It is not part of the answer.
+- `approval`: the agent is waiting for an approval; `text` describes it. Approving from the app comes later, so clients show "Waiting for approval in Hermes".
+
+**Done.** `status` is `completed`, `failed` (with `error`) or `cancelled`. `text` is the whole answer, which may differ from the joined `text` deltas, and clients replace the streamed text with it. `usage` holds `input_tokens`, `output_tokens`, `total_tokens`; `runtime` holds the `provider` and `model` that actually answered.
+
+**Catching up.** A device that reconnects while it was showing a running turn calls `chat.turn.get`. The snapshot has the turn's `status`, `user_text`, `text` so far, `tools`, `commentary`, `waiting_for_approval`, and `seq`, the last `seq` it covers. The device replaces what it showed with the snapshot and ignores any delta with `seq` at or below it. The bridge keeps the last 50 turns; an older `turn_id` gets `NOT_FOUND`, and the device reloads `chat.history` instead. `conversations.list` names a conversation's running turn as `active_turn_id`.
+
+**One turn at a time.** `chat.send` to a conversation whose turn is still running fails with `CONFLICT`. `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
+
+**History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
+
+**Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) as above; `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
+
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.

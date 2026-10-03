@@ -34,6 +34,9 @@ enum class Failure(val layer: Layer, val terminal: Boolean, val message: String)
 class TnpException(val failure: Failure, detail: String? = null) :
     Exception(if (detail == null) failure.message else "${failure.message}: $detail")
 
+/** An error reply from the bridge, with its JSON-RPC code (PROTOCOL §13). */
+class RpcException(val code: Int, message: String) : Exception(message)
+
 /** One agent's health from the bridge's status report (PROTOCOL §10.1). */
 data class AgentStatus(val id: String, val name: String, val state: String, val model: String?, val detail: String?)
 

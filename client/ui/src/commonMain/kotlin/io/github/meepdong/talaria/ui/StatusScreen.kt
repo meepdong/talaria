@@ -49,6 +49,9 @@ fun StatusScreen(view: StatusView, actions: TalariaActions, extras: @Composable 
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (view.canGoBack) {
+            TextButton(onClick = actions::showChats, modifier = Modifier.testTag("chats")) { Text("← Chats") }
+        }
         Text("Connection", style = MaterialTheme.typography.headlineSmall)
 
         Card(Modifier.fillMaxWidth()) {

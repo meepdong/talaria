@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/chat.done.schema.json",
+  "title": "chat.done",
+  "description": "Bridge to every device (notification): a turn ended.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "chat.done"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "seq",
+        "status",
+        "text"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

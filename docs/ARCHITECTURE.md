@@ -40,7 +40,7 @@ A standalone service that runs on the same host as the agent and listens only on
 | TNP endpoint | WebSocket server for devices; mutual challenge-response auth (see PROTOCOL §3) |
 | MCP server | Exposes a **fixed** set of tools to the agent (see §4) |
 | Event pipeline | Receives device events, stores them, forwards selected ones to Hermes via a webhook route |
-| Chat proxy | Forwards chat from devices to the right agent's API (Hermes Responses API with named conversations), so **devices never hold agent API keys** |
+| Chat proxy | Forwards chat from devices to the right agent's API (Hermes API server, one Hermes session per conversation), so **devices never hold agent API keys** |
 | Agent registry | Several agents: Hermes profiles (each with its own SOUL.md, memory, model, skills) or other OpenAI-compatible endpoints. Holds endpoints and keys; exposes names, roles, models, modalities, souls. |
 | Group router | Agent group chats: routing mode (conductor / @mention / round-robin), speaker-labelled shared context, reply caps, daily budgets |
 | Workflow relay | Subscribes to Hermes run events and relays sub-agent (worker) progress and cost to devices |
@@ -61,7 +61,7 @@ A standalone service that runs on the same host as the agent and listens only on
 |---|---|---|
 | Agent → device | Hermes `mcp_servers` entry pointing at the bridge | Tools such as `device_notify` and `device_location` |
 | Device → agent (events) | Hermes **webhook adapter** route (`platforms.webhook`) | HMAC-signed. Hermes route `filters`, `coalesce`, `deliver` and `skills` apply. Payload is treated as untrusted. |
-| Device → agent (chat) | Hermes **API server** (`127.0.0.1:8642`), Responses API with a named `conversation` per Talaria conversation, via the bridge | The API key stays on the server. Each additional agent (profile) has its own API port and key. |
+| Device → agent (chat) | Hermes **API server** (`127.0.0.1:8642`), Sessions API with one Hermes session per Talaria conversation, via the bridge | The API key stays on the server. Each additional agent (profile) has its own API port and key. |
 | Agent souls and info | Bridge reads each profile's `SOUL.md`; model, skills and health via the API server (`/v1/capabilities`, `/v1/skills`, `/health/detailed`) | Writing SOUL.md is opt-in (`allow_soul_edit`) and versioned |
 | Sub-agents (workflows) | Hermes `delegate_task` (parallel workers) and Kanban (multi-profile pipelines); progress from the run event stream | Talaria **observes and steers**; it does not orchestrate |
 

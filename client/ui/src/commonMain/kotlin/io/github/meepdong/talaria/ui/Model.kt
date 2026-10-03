@@ -21,6 +21,9 @@ sealed interface Screen {
     ) : Screen
 
     data class Status(val view: StatusView) : Screen
+
+    /** Paired: the chat list and the open conversation, with the connection state at hand. */
+    data class Chat(val view: ChatView, val status: StatusView) : Screen
 }
 
 /** One line of the status card: Network, Bridge, or an agent. */
@@ -48,6 +51,8 @@ data class StatusView(
     /** Overall state, for the tray icon and its tooltip. */
     val overall: Health,
     val summary: String,
+    /** Shows "← Chats" when the status page was opened from the chat. */
+    val canGoBack: Boolean = false,
 )
 
 /** What the screens can ask for. */
@@ -60,12 +65,30 @@ interface TalariaActions {
 
     /** Forget the paired server and go back to Connect. */
     fun forgetServer()
+
+    // chat (M2); defaults, so screens that don't chat needn't care
+
+    fun openConversation(id: String) {}
+    fun newConversation() {}
+
+    /** Back from a conversation to the list, on a phone. */
+    fun closeConversation() {}
+    fun sendMessage(text: String) {}
+    fun retryMessage(key: String) {}
+    fun stopReply(turnId: String) {}
+    fun loadOlder() {}
+    fun renameConversation(id: String, title: String) {}
+    fun deleteConversation(id: String) {}
+    fun dismissNotice() {}
+    fun showStatus() {}
+    fun showChats() {}
 }
 
 /** The tray icon's colour. */
 val Screen.overall: Health
     get() = when (this) {
         is Screen.Status -> view.overall
+        is Screen.Chat -> status.overall
         else -> Health.UNKNOWN
     }
 
@@ -75,4 +98,9 @@ val Screen.summary: String
         is Screen.Connect -> "Not paired"
         is Screen.Confirm -> "Pairing"
         is Screen.Status -> view.summary
+        is Screen.Chat -> status.summary
     }
+
+/** Paired with a server, whichever page is showing. */
+val Screen.paired: Boolean
+    get() = this is Screen.Status || this is Screen.Chat

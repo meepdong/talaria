@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.github.meepdong.talaria.ui.Health
@@ -39,13 +40,15 @@ import kotlinx.coroutines.launch
 class ConnectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private val controller get() = (application as TalariaApplication).controller
+    private val app get() = application as TalariaApplication
+    private val controller get() = app.controller
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        ReplyNotifier.createChannel(this)
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(Health.UNKNOWN, "Starting"), type)
 
@@ -68,6 +71,15 @@ class ConnectionService : Service() {
                 }
         }
 
+        // Replies that finish while their conversation isn't on screen.
+        scope.launch {
+            controller.replies.collect { reply ->
+                val view = (controller.screen.value as? Screen.Chat)?.view
+                val showing = app.visible && view != null && view.conversationOpen && view.openId == reply.conversationId
+                if (!showing) ReplyNotifier.show(this@ConnectionService, reply)
+            }
+        }
+
         // A network coming back (Wi-Fi, mobile data, Tailscale) is worth a retry now
         // rather than at the end of the backoff.
         val cm = getSystemService(ConnectivityManager::class.java)
@@ -78,6 +90,14 @@ class ConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_RECONNECT) controller.reconnectNow()
+        if (intent?.action == ReplyNotifier.ACTION_REPLY) {
+            val conv = intent.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)
+            val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(ReplyNotifier.KEY_TEXT)?.toString()
+            if (conv != null && !text.isNullOrBlank()) {
+                controller.replyFromNotification(conv, text)
+                ReplyNotifier.clear(this, conv)
+            }
+        }
         return START_STICKY
     }
 

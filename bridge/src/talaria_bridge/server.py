@@ -18,6 +18,7 @@ from websockets.http11 import Request
 
 from . import __version__
 from .agents import AgentMonitor
+from .chat import CHAT_METHODS, ChatService, RpcError
 from .protocol import keys
 from .protocol import messages as m
 from .protocol.encoding import EncodingError, b64u_encode, now
@@ -60,11 +61,15 @@ class _Reject(Exception):
 
 class BridgeServer:
     def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None,
-                 agents: AgentMonitor | None = None):
+                 agents: AgentMonitor | None = None, chat: ChatService | None = None):
         self.registry = registry
         self.key = key
         self.settings = settings or ServerSettings()
         self.agents = agents or AgentMonitor([])
+        self.chat = chat
+        if chat is not None:
+            chat.broadcast = self.broadcast
+        self._tasks: set[asyncio.Task] = set()
         self.bridge_pk = keys.public_key_b64u(key)
         self.bridge_id = keys.key_id(key)
         self._seen_nonces: dict[str, float] = {}
@@ -93,6 +98,8 @@ class BridgeServer:
                 if monitor is not None:
                     monitor.cancel()
                     await asyncio.gather(monitor, return_exceptions=True)
+                if self.chat is not None:
+                    await self.chat.close()
 
     # status (§10.1)
 
@@ -111,6 +118,33 @@ class BridgeServer:
             if session.ready:
                 with contextlib.suppress(ConnectionClosed):
                     await self._send(ws, m.notification("status", self.status_report(session)))
+
+    async def broadcast(self, msg: dict) -> None:
+        """Send one notification to every session that is past `ready` (chat, §9)."""
+        for ws, session in list(self._sessions.items()):
+            if session.ready:
+                with contextlib.suppress(ConnectionClosed):
+                    await self._send(ws, msg)
+
+    async def _chat_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
+        try:
+            result, turn = await self.chat.handle(method, params)
+        except RpcError as exc:
+            if msg_id is not None:
+                with contextlib.suppress(ConnectionClosed):
+                    await self._send(ws, m.error(msg_id, exc.code, exc.message))
+            return
+        except Exception:
+            log.exception("%s failed", method)
+            if msg_id is not None:
+                with contextlib.suppress(ConnectionClosed):
+                    await self._send(ws, m.error(msg_id, -32603, "Internal error"))
+            return
+        if msg_id is not None:
+            with contextlib.suppress(ConnectionClosed):
+                await self._send(ws, m.result(msg_id, result))
+        if turn is not None:
+            self.chat.start(turn)  # after the result, so it arrives before the turn's first delta
 
     @staticmethod
     def _check_path(connection: ServerConnection, request: Request):
@@ -342,5 +376,16 @@ class BridgeServer:
         elif method == "status.get":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, self.status_report(session)))
+        elif method in CHAT_METHODS and not session.ready:
+            if msg_id is not None:
+                await self._send(ws, m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first"))
+        elif method in CHAT_METHODS and self.chat is not None:
+            # Chat calls may wait on the agent, so they run beside the reader, not in it.
+            params = msg.get("params")
+            task = asyncio.ensure_future(self._chat_request(ws, method, msg_id, params if isinstance(params, dict) else {}))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        elif method in CHAT_METHODS and msg_id is not None:
+            await self._send(ws, m.error(msg_id, m.AGENT_UNAVAILABLE, "No chat agent is configured on the bridge"))
         elif msg_id is not None:
             await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND, f"Method not found: {method}"))

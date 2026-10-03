@@ -58,6 +58,17 @@ Everything is stored in `~/.talaria` (`%USERPROFILE%\.talaria` on Windows), or `
   ```
   Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON `status` says otherwise), any other HTTP status is `degraded`, and no answer is `offline`.
 
+## Chat
+
+Chat (M2) goes through the bridge to the Hermes API server, so devices never hold its key. Turn on the API server in Hermes (`API_SERVER_ENABLED=true` and an `API_SERVER_KEY` in `~/.hermes/.env`), put the key in a file only the bridge can read, and add `api_url` and `api_key_file` to the agent in `agents.json`:
+
+```json
+{"agents": [{"id": "hermes", "name": "Hermes", "health_url": "http://127.0.0.1:9119/api/status",
+             "api_url": "http://127.0.0.1:8642", "api_key_file": "/etc/talaria/hermes-api.key"}]}
+```
+
+Each Talaria conversation is a Hermes session, so it also shows up in Hermes's own session list. The bridge keeps which session belongs to which conversation in `chat.db`. Protocol details: `spec/README.md` §9.
+
 ## Commands
 
 | Command | What it does |

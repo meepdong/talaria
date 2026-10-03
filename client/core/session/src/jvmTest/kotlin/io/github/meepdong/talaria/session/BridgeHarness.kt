@@ -59,7 +59,7 @@ class BridgeHarness private constructor(private val process: Process) : AutoClos
         }
 
         private fun works(python: String): Boolean = runCatching {
-            val pb = ProcessBuilder(python, "-c", "import talaria_bridge, websockets, cryptography")
+            val pb = ProcessBuilder(python, "-c", "import talaria_bridge, websockets, cryptography, httpx")
             System.getenv("TALARIA_BRIDGE_SRC")?.let { pb.environment()["PYTHONPATH"] = it }
             val p = pb.redirectErrorStream(true).start()
             p.inputStream.readAllBytes()

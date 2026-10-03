@@ -47,7 +47,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - **Exit:** a week of stable connection to the VPS bridge on a OnePlus 10 Pro and on a Windows laptop; every failure shows the right layer and fix.
 
 ### M2 — Chat
-- One agent via the bridge chat proxy (Hermes Responses API, named conversations).
+- One agent via the bridge chat proxy (Hermes API server Sessions API, one session per conversation).
 - Streaming replies, tool-progress indicators, cancel, history.
 - **Voice:** on-device speech-to-text (Android `SpeechRecognizer`; on desktop, a local engine such as Vosk or whisper.cpp), edit before send, optional auto-send; spoken replies via TTS.
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.

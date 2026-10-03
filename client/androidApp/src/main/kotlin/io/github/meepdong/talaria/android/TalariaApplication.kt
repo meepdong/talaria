@@ -18,6 +18,9 @@ class TalariaApplication : Application() {
 
     val logFile: File get() = File(filesDir, "connection.log")
 
+    /** True while MainActivity is started, so replies on screen don't also notify. */
+    @Volatile var visible = false
+
     override fun onCreate() {
         super.onCreate()
         controller = TalariaController(
