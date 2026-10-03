@@ -143,10 +143,14 @@ def test_http_probe_states(health_server):
     responses["/plain"] = (200, b"fine")
     responses["/sick"] = (200, b'{"status": "provider error"}')
     responses["/500"] = (500, b"")
+    responses["/hermes-up"] = (200, b'{"gateway_running": true, "gateway_state": "running"}')
+    responses["/hermes-down"] = (200, b'{"gateway_running": false, "gateway_state": "stopped"}')
     assert http_probe(base + "/ok", 2) == {"state": "ready", "model": "m1"}
     assert http_probe(base + "/plain", 2) == {"state": "ready"}
     assert http_probe(base + "/sick", 2)["state"] == "degraded"
     assert http_probe(base + "/500", 2) == {"state": "degraded", "detail": "health check returned HTTP 500"}
+    assert http_probe(base + "/hermes-up", 2) == {"state": "ready"}
+    assert http_probe(base + "/hermes-down", 2) == {"state": "degraded", "detail": "gateway is stopped"}
 
 
 def test_http_probe_offline():
