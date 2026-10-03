@@ -1,4 +1,4 @@
-"""Chat proxy (PROTOCOL §10.3, spec/README.md §9).
+"""Chat proxy (PROTOCOL §10.3, spec/README.md §9 and §11).
 
 One Talaria conversation is one Hermes session. The bridge holds the Hermes stream for each
 turn, keeps a snapshot of it, and sends chat.started / chat.delta / chat.done to every device,
@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .accounts import OpenRouterAccount
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
@@ -36,11 +37,24 @@ KEPT_TURNS = 50
 CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
 MAX_ATTACHMENTS = 10
+MAX_QUEUED = 5
+MAX_NOTE = 4000
+ASIDE_TRANSCRIPT_CHARS = 20000
 MAX_INLINE_IMAGES = 7 * 1024 * 1024  # Hermes refuses requests over 10 MB, and base64 adds a third
 # the line the bridge adds to a message for each file it saved to the agent's inbox (§10)
 FILE_LINE = re.compile(r"^Attached file: (?P<path>.+) \((?P<mime>[^,()]+), (?P<size>\d+) bytes\)$")
 
 Broadcast = Callable[[dict], Awaitable[None]]
+Job = Callable[[], Awaitable[None]]
+
+ASIDE_PROMPT = """A quick side question about the conversation below. Answer it briefly from the \
+conversation; don't take any actions or change anything.
+
+<conversation>
+{transcript}
+</conversation>
+
+Side question: {question}"""
 
 
 class RpcError(Exception):
@@ -54,6 +68,19 @@ def _id(value, name: str) -> str:
     if not (isinstance(value, str) and 0 < len(value) <= 64):
         raise RpcError(m.INVALID_PARAMS, f"{name} must be a string of 1 to 64 characters")
     return value
+
+
+def _model(value) -> tuple[str, str]:
+    if not (isinstance(value, dict) and all(isinstance(value.get(k), str) and 0 < len(value[k]) <= 200
+                                            for k in ("provider", "model"))):
+        raise RpcError(m.INVALID_PARAMS, "model must be {provider, model}")
+    return value["provider"], value["model"]
+
+
+def _note(value, name: str) -> str:
+    if not (isinstance(value, str) and value.strip() and len(value) <= MAX_NOTE):
+        raise RpcError(m.INVALID_PARAMS, f"{name} must be 1 to {MAX_NOTE} characters")
+    return value.strip()
 
 
 def _title_from(text: str) -> str:
@@ -72,9 +99,13 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     last_role TEXT,
-    last_text TEXT
+    last_text TEXT,
+    model_provider TEXT,
+    model_name TEXT
 );
 """
+COLUMNS = ("id", "agent_id", "hermes_session_id", "title", "created_at", "updated_at", "last_role", "last_text",
+           "model_provider", "model_name")
 
 
 @dataclass
@@ -87,6 +118,14 @@ class Conversation:
     updated_at: int
     last_role: str | None = None
     last_text: str | None = None
+    model_provider: str | None = None  # the model the conversation is pinned to (§11)
+    model_name: str | None = None
+
+    @property
+    def model(self) -> dict | None:
+        if self.model_provider and self.model_name:
+            return {"provider": self.model_provider, "model": self.model_name}
+        return None
 
 
 class ChatStore:
@@ -94,15 +133,18 @@ class ChatStore:
         self.db = sqlite3.connect(str(path), isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        have = {row["name"] for row in self.db.execute("PRAGMA table_info(conversations)")}
+        for column in ("model_provider", "model_name"):  # added in M2 §11
+            if column not in have:
+                self.db.execute(f"ALTER TABLE conversations ADD COLUMN {column} TEXT")
 
     def close(self) -> None:
         self.db.close()
 
     def add(self, c: Conversation) -> None:
         self.db.execute(
-            "INSERT INTO conversations VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (c.id, c.agent_id, c.hermes_session_id, c.title, c.created_at, c.updated_at,
-             c.last_role, c.last_text))
+            f"INSERT INTO conversations ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
+            tuple(getattr(c, k) for k in COLUMNS))
 
     def get(self, conversation_id: str) -> Conversation | None:
         row = self.db.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
@@ -116,6 +158,10 @@ class ChatStore:
         self.db.execute(
             "UPDATE conversations SET updated_at = ?, last_role = ?, last_text = ? WHERE id = ?",
             (at, role, text[:LAST_MESSAGE_LEN], conversation_id))
+
+    def set_model(self, conversation_id: str, provider: str, model: str) -> None:
+        self.db.execute("UPDATE conversations SET model_provider = ?, model_name = ? WHERE id = ?",
+                        (provider, model, conversation_id))
 
     def rename(self, conversation_id: str, title: str) -> None:
         self.db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
@@ -135,7 +181,7 @@ class Turn:
     user_text: str
     started_at: int
     seq: int = 0
-    status: str = "running"
+    status: str = "running"  # or "queued" until the turn before it ends (§11)
     text: str = ""
     tools: list[dict] = field(default_factory=list)
     commentary: list[str] = field(default_factory=list)
@@ -251,7 +297,7 @@ def history_messages(rows: list[dict]) -> list[dict]:
 class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
-                 inboxes: dict[str, Path] | None = None):
+                 inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None):
         self.store = store
         self.agents = agents
         self.blobs = blobs
@@ -260,15 +306,20 @@ class ChatService:
         self.default_agent = default_agent or next(iter(agents), None)
         self._turns: OrderedDict[str, Turn] = OrderedDict()
         self._active: dict[str, str] = {}  # conversation_id -> running turn_id
+        self._queues: dict[str, list[Turn]] = {}  # conversation_id -> turns waiting, in order (§11)
+        self.accounts = accounts or []
+        self._jobs: set[asyncio.Task] = set()
         self._client_msgs: dict[str, tuple[float, dict]] = {}
 
     async def close(self) -> None:
-        tasks = [t.task for t in self._turns.values() if t.task and not t.task.done()]
+        tasks = [t.task for t in self._turns.values() if t.task and not t.task.done()] + list(self._jobs)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for client in self.agents.values():
             await client.close()
+        for account in self.accounts:
+            await account.close()
 
     # chat.send
 
@@ -302,14 +353,14 @@ class ChatService:
             raise
 
     async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None) -> tuple[dict, Turn]:
+        model = _model(p["model"]) if p.get("model") is not None else None
         conv_id = p.get("conversation_id")
         if conv_id is not None:
             conv = self.store.get(_id(conv_id, "conversation_id"))
             if conv is None:
                 raise RpcError(m.NOT_FOUND, "Unknown conversation")
             client = self._client(conv.agent_id)
-            if conv_id in self._active:
-                raise RpcError(m.CONFLICT, "A reply is still running in this conversation")
+            self._check_queue(conv_id)
             self._check_files(conv.agent_id, blobs)
         else:
             agent_id = p.get("agent_id", self.default_agent)
@@ -320,21 +371,46 @@ class ChatService:
             conv = await self._new_conversation(agent_id, client, text.strip() or blobs[0].name)
             conv_id = conv.id
 
-        if conv_id in self._active:  # another send won the race while the session was created
-            raise RpcError(m.CONFLICT, "A reply is still running in this conversation")
+        if model is not None and conv.model != {"provider": model[0], "model": model[1]}:
+            await self._pin(conv, client, *model)
+        self._check_queue(conv_id)  # again: other sends may have come in while this one waited
         content = await asyncio.to_thread(self._content, conv, text, blobs) if blobs else None
+        self._check_queue(conv_id)
+        queued = conv_id in self._active
         now_s = int(time.time())
         turn = Turn(conversation_id=conv_id, turn_id="t-" + secrets.token_hex(8), agent_id=conv.agent_id,
                     title=conv.title, user_text=text, started_at=now_s, client_msg_id=client_msg_id,
-                    attachments=[b.meta() for b in blobs], content=content)
-        self._active[conv_id] = turn.turn_id
+                    attachments=[b.meta() for b in blobs], content=content,
+                    status="queued" if queued else "running")
+        if queued:
+            self._queues.setdefault(conv_id, []).append(turn)
+        else:
+            self._active[conv_id] = turn.turn_id
         self._turns[turn.turn_id] = turn
         self._evict()
         self.store.touch(conv_id, "user", text.strip() or _attachments_preview(turn.attachments), now_s)
         result = {"conversation_id": conv_id, "turn_id": turn.turn_id, "title": conv.title}
+        if queued:
+            result["queued"] = True
         if client_msg_id is not None:
             self._client_msgs[client_msg_id] = (time.monotonic(), result)
         return result, turn
+
+    def _check_queue(self, conv_id: str) -> None:
+        if conv_id in self._active and len(self._queues.get(conv_id, [])) >= MAX_QUEUED:
+            raise RpcError(m.CONFLICT, f"{MAX_QUEUED} messages are already waiting in this conversation")
+
+    async def _pin(self, conv: Conversation, client: HermesClient, provider: str, model: str) -> None:
+        try:
+            await client.set_session_model(conv.hermes_session_id, provider, model)
+        except HermesError as exc:
+            if exc.status < 500:
+                raise RpcError(m.INVALID_PARAMS, f"Can't use that model: {exc.message}") from None
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
+        except HermesUnavailable as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        self.store.set_model(conv.id, provider, model)
+        conv.model_provider, conv.model_name = provider, model
 
     def _blobs(self, refs: list[dict]) -> list[Blob]:
         if not refs:
@@ -410,13 +486,39 @@ class ChatService:
 
     def _evict(self) -> None:
         while len(self._turns) > KEPT_TURNS:
-            oldest = next((tid for tid, t in self._turns.items() if t.status != "running"), None)
+            oldest = next((tid for tid, t in self._turns.items() if t.status not in ("running", "queued")), None)
             if oldest is None:
                 return
             del self._turns[oldest]
 
-    def start(self, turn: Turn) -> None:
-        turn.task = asyncio.ensure_future(self._run(turn))
+    def start(self, job: Turn | Job) -> None:
+        """Start what a request left to do once its result is sent: a turn, or a job like an aside."""
+        if not isinstance(job, Turn):
+            task = asyncio.ensure_future(job())
+            self._jobs.add(task)
+            task.add_done_callback(self._jobs.discard)
+        elif job.status == "queued":
+            self._spawn(self._announce_queued(job))
+        else:
+            job.task = asyncio.ensure_future(self._run(job))
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.ensure_future(coro)
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
+
+    async def _announce_queued(self, turn: Turn) -> None:
+        queue = self._queues.get(turn.conversation_id, [])
+        if turn not in queue:
+            return  # already started or cancelled
+        params = {"conversation_id": turn.conversation_id, "turn_id": turn.turn_id, "user_text": turn.user_text,
+                  "position": queue.index(turn) + 1}
+        if turn.client_msg_id is not None:
+            params["client_msg_id"] = turn.client_msg_id
+        if turn.attachments:
+            params["attachments"] = [dict(a) for a in turn.attachments]
+        with contextlib.suppress(Exception):
+            await self.broadcast(m.notification("chat.queued", params))
 
     # the Hermes stream
 
@@ -504,7 +606,16 @@ class ChatService:
             turn.status = status or "failed"
             if final_text is not None:
                 turn.text = final_text
-            self._active.pop(turn.conversation_id, None)
+            # hand the conversation straight to the next queued turn, so no new send jumps the queue
+            queue = self._queues.get(turn.conversation_id) or []
+            following = queue.pop(0) if queue else None
+            if not queue:
+                self._queues.pop(turn.conversation_id, None)
+            if following is not None and self.store.get(turn.conversation_id) is not None:
+                self._active[turn.conversation_id] = following.turn_id
+            else:
+                following = None
+                self._active.pop(turn.conversation_id, None)
             if turn.text and self.store.get(turn.conversation_id) is not None:
                 self.store.touch(turn.conversation_id, "assistant", turn.text, int(time.time()))
             done = {"status": turn.status, "text": turn.text}
@@ -514,6 +625,9 @@ class ChatService:
             with contextlib.suppress(Exception):
                 await asyncio.shield(self._emit(turn, "chat.done", done))
             log.info("turn %s in %s: %s", turn.turn_id, turn.conversation_id, turn.status)
+            if following is not None:
+                following.status, following.started_at = "running", int(time.time())
+                self.start(following)
 
     # chat.cancel, chat.turn.get
 
@@ -525,6 +639,13 @@ class ChatService:
 
     async def cancel(self, p: dict) -> dict:
         turn = self._turn(p)
+        queue = self._queues.get(turn.conversation_id, [])
+        if turn.status == "queued" and turn in queue:
+            queue.remove(turn)
+            turn.status = "cancelled"
+            with contextlib.suppress(Exception):
+                await self._emit(turn, "chat.done", {"status": "cancelled", "text": ""})
+            return {"turn_id": turn.turn_id, "status": "cancelled"}
         if turn.status != "running":
             return {"turn_id": turn.turn_id, "status": turn.status}
         stopped = False
@@ -582,6 +703,10 @@ class ChatService:
                 item["last_message"] = {"role": c.last_role, "text": c.last_text[:LAST_MESSAGE_LEN]}
             if c.id in self._active:
                 item["active_turn_id"] = self._active[c.id]
+            if self._queues.get(c.id):
+                item["queued_turn_ids"] = [t.turn_id for t in self._queues[c.id]]
+            if c.model is not None:
+                item["model"] = c.model
             out.append(item)
         return {"conversations": out}
 
@@ -616,7 +741,134 @@ class ChatService:
         self.store.delete(conv.id)
         return {"conversation_id": conv.id, "deleted": True}
 
-    async def handle(self, method: str, p: dict) -> tuple[dict, Turn | None]:
+    # §11: models, steer, aside, status, balance
+
+    async def models(self, p: dict) -> dict:
+        agent_id = p.get("agent_id", self.default_agent)
+        if agent_id is not None:
+            _id(agent_id, "agent_id")
+        client = self._client(agent_id)
+        try:
+            data = await client.model_options()
+        except HermesError as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
+        except HermesUnavailable as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        providers = []
+        for row in data.get("providers") or []:
+            if not isinstance(row, dict) or row.get("authenticated") is False:
+                continue  # Hermes lists providers it has no key for, to set up in `hermes model`
+            slug = row.get("slug")
+            models = [x for x in row.get("models") or [] if isinstance(x, str) and 0 < len(x) <= 200]
+            if isinstance(slug, str) and 0 < len(slug) <= 200 and models:
+                providers.append({"id": slug, "name": str(row.get("name") or slug), "models": models})
+        result = {"agent_id": agent_id, "providers": providers}
+        provider, model = data.get("provider"), data.get("model")
+        if all(isinstance(x, str) and 0 < len(x) <= 200 for x in (provider, model)):
+            result["current"] = {"provider": provider, "model": model}
+        return result
+
+    async def set_model(self, p: dict) -> dict:
+        conv = self._conversation(p)
+        provider, model = _model(p.get("model"))
+        await self._pin(conv, self._client(conv.agent_id), provider, model)
+        return {"conversation_id": conv.id, "model": {"provider": provider, "model": model}}
+
+    async def steer(self, p: dict) -> dict:
+        turn = self._turn(p)
+        text = _note(p.get("text"), "text")
+        if turn.status != "running" or turn.run_id is None:
+            raise RpcError(m.CONFLICT, "That reply isn't running")
+        try:
+            accepted = await self._client(turn.agent_id).steer_run(turn.run_id, text)
+        except HermesError as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
+        except HermesUnavailable as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        return {"turn_id": turn.turn_id, "accepted": accepted}
+
+    def aside(self, p: dict) -> tuple[dict, Job]:
+        conv = self._conversation(p)
+        question = _note(p.get("text"), "text")
+        client = self._client(conv.agent_id)
+        aside_id = "a-" + secrets.token_hex(8)
+        return {"aside_id": aside_id}, lambda: self._aside(conv, client, aside_id, question)
+
+    async def _aside(self, conv: Conversation, client: HermesClient, aside_id: str, question: str) -> None:
+        """Ask in a throwaway Hermes session that carries the conversation's recent messages, so
+        the conversation itself gains nothing and its running turn isn't disturbed."""
+        session_id = f"talaria_aside_{secrets.token_hex(8)}"
+        created, status, text, error = False, "failed", "", None
+        try:
+            rows = await client.messages(conv.hermes_session_id, limit=40, offset=0)
+            transcript = "\n\n".join(
+                f"{'User' if x['role'] == 'user' else 'Assistant'}: {x['text']}" for x in history_messages(rows))
+            await client.create_session(session_id, None)
+            created = True
+            if conv.model is not None:
+                with contextlib.suppress(HermesError):
+                    await client.set_session_model(session_id, conv.model_provider, conv.model_name)
+            prompt = ASIDE_PROMPT.format(transcript=transcript[-ASIDE_TRANSCRIPT_CHARS:], question=question)
+            async for name, payload in client.chat_stream(session_id, prompt):
+                if name == "assistant.delta" and isinstance(payload.get("delta"), str):
+                    text += payload["delta"]
+                elif name == "assistant.completed" and isinstance(payload.get("content"), str):
+                    text = payload["content"]
+                elif name in ("run.completed", "run.failed", "run.cancelled"):
+                    status = "completed" if name == "run.completed" else "failed"
+                    if status == "failed":
+                        error = str(payload.get("error") or "The agent couldn't answer")
+                elif name == "done":
+                    break
+            if status != "completed":
+                error = error or "The agent couldn't answer"
+        except HermesError as exc:
+            error = f"Agent error: {exc.message}"
+        except HermesUnavailable as exc:
+            error = f"Agent unavailable: {exc}"
+        except Exception as exc:
+            log.exception("aside %s failed", aside_id)
+            error = f"Bridge error: {type(exc).__name__}"
+        finally:
+            if created:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(client.delete_session(session_id))
+        done = {"conversation_id": conv.id, "aside_id": aside_id, "question": question,
+                "status": "completed" if error is None else "failed", "text": text}
+        if error is not None:
+            done["error"] = error
+        with contextlib.suppress(Exception):
+            await self.broadcast(m.notification("chat.aside.done", done))
+
+    async def status(self, p: dict) -> dict:
+        conv = self._conversation(p)
+        try:
+            info = await self._client(conv.agent_id).session(conv.hermes_session_id)
+        except HermesError as exc:
+            if exc.status != 404:
+                raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
+            info = {}
+        except HermesUnavailable as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        result: dict = {"conversation_id": conv.id, "queued": len(self._queues.get(conv.id, []))}
+        if conv.model is not None:
+            result["model"] = conv.model
+        for ours, theirs in (("messages", "message_count"), ("tool_calls", "tool_call_count"),
+                             ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
+            value = info.get(theirs)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                result[ours] = value
+        cost = info.get("actual_cost_usd") or info.get("estimated_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            result["cost_usd"] = round(float(cost), 4)
+        if conv.id in self._active:
+            result["active_turn_id"] = self._active[conv.id]
+        return result
+
+    async def balance(self) -> dict:
+        return {"accounts": list(await asyncio.gather(*(a.balance() for a in self.accounts)))}
+
+    async def handle(self, method: str, p: dict) -> tuple[dict, Turn | Job | None]:
         """Dispatch one chat request. Returns (result, turn to start after the result is sent)."""
         if method in BLOB_METHODS:
             if self.blobs is None:
@@ -640,11 +892,25 @@ class ChatService:
             return await self.rename(p), None
         if method == "conversations.delete":
             return await self.delete(p), None
+        if method == "conversations.set_model":
+            return await self.set_model(p), None
+        if method == "agent.models":
+            return await self.models(p), None
+        if method == "chat.steer":
+            return await self.steer(p), None
+        if method == "chat.aside":
+            return self.aside(p)
+        if method == "chat.status":
+            return await self.status(p), None
+        if method == "account.balance":
+            return await self.balance(), None
         raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
-                          "conversations.list", "conversations.rename", "conversations.delete"}) | BLOB_METHODS
+                          "conversations.list", "conversations.rename", "conversations.delete",
+                          "conversations.set_model", "agent.models", "chat.steer", "chat.aside", "chat.status",
+                          "account.balance"}) | BLOB_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

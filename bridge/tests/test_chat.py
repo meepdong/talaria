@@ -48,6 +48,9 @@ class FakeHermes:
         self.runs = 0
         self.down = False
         self.messages: list = []  # every message a turn was sent with
+        self.steered: list[tuple[str, str]] = []
+        self.locks: dict[str, dict] = {}
+        self.deleted: list[str] = []
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -62,6 +65,13 @@ class FakeHermes:
             body = json.loads(req.content)
             self.sessions[body["id"]] = {"title": body.get("title"), "messages": []}
             return httpx.Response(201, json={"object": "hermes.session", "session": {"id": body["id"]}})
+        if path.startswith("/v1/runs/") and path.endswith("/steer"):
+            self.steered.append((path.split("/")[3], json.loads(req.content)["input"]))
+            return httpx.Response(200, json={"object": "hermes.run.steer", "accepted": True})
+        if path == "/api/model/options":
+            return httpx.Response(200, json={"provider": "openrouter", "model": "m-1", "providers": [
+                {"slug": "openrouter", "name": "OpenRouter", "authenticated": True, "models": ["m-1", "m-2"]},
+                {"slug": "anthropic", "name": "Anthropic", "authenticated": False, "models": []}]})
         if path.startswith("/v1/runs/") and path.endswith("/stop"):
             self.stopped.append(path.split("/")[3])
             self.release.set()
@@ -74,8 +84,19 @@ class FakeHermes:
             session["title"] = json.loads(req.content)["title"]
             return httpx.Response(200, json={"session": {"id": parts[3]}})
         if method == "DELETE":
+            self.deleted.append(parts[3])
             del self.sessions[parts[3]]
             return httpx.Response(200, json={"deleted": True})
+        if path.endswith("/model"):
+            body = json.loads(req.content)
+            if body["model"] == "nope":
+                return httpx.Response(400, json={"error": {"message": "unknown model", "code": "model_lock_unroutable"}})
+            self.locks[parts[3]] = body
+            return httpx.Response(200, json={"object": "hermes.session.model_lock"})
+        if method == "GET" and len(parts) == 4:
+            return httpx.Response(200, json={"session": {"id": parts[3], "message_count": len(session["messages"]),
+                                                         "tool_call_count": 1, "input_tokens": 50, "output_tokens": 9,
+                                                         "estimated_cost_usd": 0.0123}})
         if path.endswith("/messages"):
             assert req.url.params["order"] == "latest"
             limit, offset = int(req.url.params["limit"]), int(req.url.params["offset"])
@@ -225,10 +246,15 @@ async def test_busy_cancel_and_catch_up(chat_bridge):
         if msg.get("method") == "chat.delta":
             break
 
-    busy = await call(ws, "c2", "chat.send", {"text": "Again", "conversation_id": res["conversation_id"]})
-    assert busy["error"]["code"] == m.CONFLICT
+    waiting = check("chat.send.result", await call(
+        ws, "c2", "chat.send", {"text": "Again", "conversation_id": res["conversation_id"]}))["result"]
+    assert waiting["queued"] is True
     listed = (await call(ws, "l1", "conversations.list"))["result"]["conversations"]
     assert listed[0]["active_turn_id"] == res["turn_id"]
+    assert listed[0]["queued_turn_ids"] == [waiting["turn_id"]]
+    # a queued turn that is cancelled ends without starting
+    dropped = await call(ws, "x0", "chat.cancel", {"turn_id": waiting["turn_id"]})
+    assert dropped["result"] == {"turn_id": waiting["turn_id"], "status": "cancelled"}
 
     # a second device catches up from the snapshot
     other = await connected(bridge)
@@ -498,3 +524,133 @@ def test_blob_store_expires_and_clears_leftovers(tmp_path: Path):
     with pytest.raises(Exception, match="Unknown"):
         store.take(begin["blob_id"])
     assert list((tmp_path / "blobs").iterdir()) == []
+
+
+async def test_queued_turns_run_in_order(chat_bridge):
+    bridge, hermes = chat_bridge
+    hermes.hold = True
+    ws = await connected(bridge)
+    first = (await call(ws, "c1", "chat.send", {"text": "First"}))["result"]
+    conv = first["conversation_id"]
+    queued = []
+    for i in range(5):
+        r = (await call(ws, f"q{i}", "chat.send", {"text": f"Next {i}", "conversation_id": conv, "client_msg_id": f"m-{i}"}))
+        queued.append(r["result"]["turn_id"])
+    full = await call(ws, "q9", "chat.send", {"text": "Too many", "conversation_id": conv})
+    assert full["error"]["code"] == m.CONFLICT
+    snap = (await call(ws, "g1", "chat.turn.get", {"turn_id": queued[0]}))["result"]["turn"]
+    assert snap["status"] == "queued"
+
+    hermes.hold = False
+    hermes.release.set()
+    order, seen = [], set()
+    while len(seen) < 6:
+        msg = await recv(ws)
+        method = msg.get("method")
+        if method == "chat.queued":
+            check(method, msg)
+            assert msg["params"]["client_msg_id"] == f"m-{msg['params']['position'] - 1}"
+        if method in ("chat.started", "chat.done"):
+            order.append((method, msg["params"]["turn_id"]))
+            if method == "chat.done":
+                seen.add(msg["params"]["turn_id"])
+    starts = [t for kind, t in order if kind == "chat.started"]
+    assert starts == queued  # the first had started before the loop
+    assert [m_ for m_ in hermes.messages] == ["First"] + [f"Next {i}" for i in range(5)]
+    await ws.close()
+
+
+async def test_models_steer_status_and_aside(chat_bridge):
+    bridge, hermes = chat_bridge
+    ws = await connected(bridge)
+    models = check("agent.models.result", await call(ws, "m1", "agent.models"))["result"]
+    assert models == {"agent_id": "hermes", "current": {"provider": "openrouter", "model": "m-1"},
+                      "providers": [{"id": "openrouter", "name": "OpenRouter", "models": ["m-1", "m-2"]}]}
+
+    # a new conversation starts on the chosen model
+    pick = {"provider": "openrouter", "model": "m-2"}
+    res = (await call(ws, "c1", "chat.send", {"text": "Hi", "model": pick}))["result"]
+    await until_done(ws, res["turn_id"])
+    session_id = "talaria_" + res["conversation_id"][2:]
+    assert hermes.locks[session_id] == pick
+    listed = check("conversations.list.result", await call(ws, "l1", "conversations.list"))["result"]
+    assert listed["conversations"][0]["model"] == pick
+    bad = await call(ws, "s0", "conversations.set_model", {"conversation_id": res["conversation_id"],
+                                                          "model": {"provider": "openrouter", "model": "nope"}})
+    assert bad["error"]["code"] == m.INVALID_PARAMS
+    moved = check("conversations.set_model.result", await call(ws, "s1", "conversations.set_model", {
+        "conversation_id": res["conversation_id"], "model": {"provider": "openrouter", "model": "m-1"}}))
+    assert moved["result"]["model"]["model"] == "m-1"
+
+    status = check("chat.status.result", await call(ws, "st", "chat.status", {"conversation_id": res["conversation_id"]}))
+    assert status["result"] == {"conversation_id": res["conversation_id"], "queued": 0,
+                                "model": {"provider": "openrouter", "model": "m-1"}, "messages": 2,
+                                "tool_calls": 1, "input_tokens": 50, "output_tokens": 9, "cost_usd": 0.0123}
+
+    # steer needs a running turn
+    hermes.hold = True
+    run = (await call(ws, "c2", "chat.send", {"text": "Long", "conversation_id": res["conversation_id"]}))["result"]
+    while (await recv(ws)).get("method") != "chat.delta":
+        pass
+    steer = check("chat.steer.result", await call(ws, "t1", "chat.steer", {"turn_id": run["turn_id"], "text": "focus on X"}))
+    assert steer["result"] == {"turn_id": run["turn_id"], "accepted": True}
+    assert hermes.steered == [("run_2", "focus on X")]
+
+    # an aside answers in a throwaway session while the turn keeps running
+    hermes.final = "Side answer"
+    aside = check("chat.aside.result", await call(ws, "a1", "chat.aside", {
+        "conversation_id": res["conversation_id"], "text": "what did I ask first?"}))["result"]
+    hermes.release.set()
+    while True:
+        msg = await recv(ws)
+        if msg.get("method") == "chat.aside.done":
+            check("chat.aside.done", msg)
+            break
+    assert msg["params"] == {"conversation_id": res["conversation_id"], "aside_id": aside["aside_id"],
+                             "question": "what did I ask first?", "status": "completed", "text": "Side answer"}
+    assert "Side question: what did I ask first?" in hermes.messages[-1] and "User: Hi" in hermes.messages[-1]
+    assert hermes.deleted and hermes.deleted[-1].startswith("talaria_aside_")
+    late = await call(ws, "t2", "chat.steer", {"turn_id": "t-missing", "text": "x"})
+    assert late["error"]["code"] == m.NOT_FOUND
+    await ws.close()
+
+
+async def test_openrouter_balance(tmp_path: Path):
+    from talaria_bridge.accounts import OpenRouterAccount
+
+    async def answer(req: httpx.Request) -> httpx.Response:
+        if req.headers["authorization"] == "Bearer good":
+            return httpx.Response(200, json={"data": {"total_credits": 100.5, "total_usage": 25.754}})
+        return httpx.Response(403, json={"error": {"message": "Only management keys"}})
+
+    good = OpenRouterAccount("good", transport=httpx.MockTransport(answer))
+    bad = OpenRouterAccount("plain", transport=httpx.MockTransport(answer))
+
+    async def unused(msg: dict) -> None:
+        pass
+
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), {}, unused, accounts=[good, bad])
+    result = await chat.balance()
+    check("account.balance.result", {"jsonrpc": "2.0", "tnp": 0, "id": "1", "result": result})
+    url = "https://openrouter.ai/settings/credits"
+    assert result["accounts"] == [
+        {"provider": "openrouter", "name": "OpenRouter", "top_up_url": url, "remaining": 74.75, "currency": "USD"},
+        {"provider": "openrouter", "name": "OpenRouter", "top_up_url": url,
+         "error": "OpenRouter refused the key; it must be a management key"}]
+    await chat.close()
+    chat.store.close()
+
+
+def test_store_adds_model_columns_to_an_old_database(tmp_path: Path):
+    import sqlite3
+    db = sqlite3.connect(tmp_path / "chat.db")
+    db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, hermes_session_id TEXT NOT NULL,"
+               " title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_role TEXT, last_text TEXT)")
+    db.execute("INSERT INTO conversations VALUES ('c-1', 'hermes', 's', 'Old', 1, 2, NULL, NULL)")
+    db.commit()
+    db.close()
+    store = ChatStore(tmp_path / "chat.db")
+    assert store.get("c-1").model is None
+    store.set_model("c-1", "openrouter", "m-1")
+    assert store.get("c-1").model == {"provider": "openrouter", "model": "m-1"}
+    store.close()

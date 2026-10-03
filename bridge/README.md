@@ -71,6 +71,10 @@ Each Talaria conversation is a Hermes session, so it also shows up in Hermes's o
 
 Photos go to Hermes inline with the message. Other files (PDFs, documents) need a folder Hermes can read: add `"inbox_dir": "/var/lib/talaria/inbox"` to the agent, owned by the bridge's user with Hermes's user in its group, and setgid so new folders keep that group (`chown talaria:hermes`, `chmod 2750`). Without `inbox_dir` the agent takes photos only. Uploads in progress wait in `blobs/` under the bridge's data folder. Protocol details: `spec/README.md` §10.
 
+The apps can pick a chat's model, queue messages while a reply runs, steer a running reply, ask side questions and show a chat's status (`spec/README.md` §11). Nothing to configure: the bridge uses Hermes's own model list and session API.
+
+To show your OpenRouter balance in the apps, create a **management key** in OpenRouter (Settings → Management keys), save it in a file only the bridge can read (`install -m 600 -o talaria /dev/null /etc/talaria/openrouter.key`, then paste the key into it), and add `"openrouter_key_file": "/etc/talaria/openrouter.key"` to the agent. A management key can also create and delete API keys, so it never leaves the bridge: the apps only get the number.
+
 ## Commands
 
 | Command | What it does |

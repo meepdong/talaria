@@ -3,6 +3,10 @@
     POST   /api/sessions                      create a session (one per Talaria conversation)
     POST   /api/sessions/{id}/chat/stream     one turn, streamed back as server-sent events
     POST   /v1/runs/{run_id}/stop             stop a running turn
+    POST   /v1/runs/{run_id}/steer            a note for a running turn (§11)
+    GET    /api/model/options                 the models the agent can use (§11)
+    POST   /api/sessions/{id}/model           pin a session to a model (§11)
+    GET    /api/sessions/{id}                 session info, for chat.status (§11)
     GET    /api/sessions/{id}/messages        history
     PATCH  /api/sessions/{id}                 rename
     DELETE /api/sessions/{id}                 delete
@@ -104,6 +108,27 @@ class HermesClient:
 
     async def stop_run(self, run_id: str) -> None:
         await self._call("POST", f"/v1/runs/{run_id}/stop", json={})
+
+    async def steer_run(self, run_id: str, text: str) -> bool:
+        """False when the run no longer takes notes (it was finishing)."""
+        try:
+            await self._call("POST", f"/v1/runs/{run_id}/steer", json={"input": text})
+        except HermesError as exc:
+            if exc.status == 409:
+                return False
+            raise
+        return True
+
+    async def model_options(self) -> dict:
+        return await self._call("GET", "/api/model/options")
+
+    async def set_session_model(self, session_id: str, provider: str, model: str) -> None:
+        await self._call("POST", f"/api/sessions/{session_id}/model", json={"provider": provider, "model": model})
+
+    async def session(self, session_id: str) -> dict:
+        data = await self._call("GET", f"/api/sessions/{session_id}")
+        info = data.get("session", data)
+        return info if isinstance(info, dict) else {}
 
     async def chat_stream(self, session_id: str, text: str | list) -> AsyncIterator[tuple[str, dict]]:
         """Run one turn and yield its events as (name, payload) until the stream ends.

@@ -17,6 +17,7 @@ from pathlib import Path
 from . import __version__
 from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
+from .accounts import OpenRouterAccount
 from .chat import ChatService, ChatStore
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -71,7 +72,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
 
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
-    clients, inboxes = {}, {}
+    clients, inboxes, accounts = {}, {}, []
     for agent in agents:
         if agent.api_url is None:
             continue
@@ -83,6 +84,11 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
         clients[agent.id] = HermesClient(agent.api_url, api_key)
         if agent.inbox_dir is not None:
             inboxes[agent.id] = Path(agent.inbox_dir)
+        if agent.openrouter_key_file is not None:
+            try:
+                accounts.append(OpenRouterAccount(read_api_key(Path(agent.openrouter_key_file))))
+            except (OSError, ValueError) as exc:
+                print(f"WARNING: no OpenRouter balance: cannot read {agent.openrouter_key_file} ({exc})", file=sys.stderr)
     if not clients:
         return None
 
@@ -90,7 +96,7 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
         pass
 
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
-                       blobs=BlobStore(home / "blobs"), inboxes=inboxes)
+                       blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:

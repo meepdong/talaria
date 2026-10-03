@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/conversations.set_model.schema.json",
+  "title": "conversations.set_model",
+  "description": "Device to bridge (request): pin a conversation to a model (\u00a711).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "conversations.set_model"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ]
+        }
+      },
+      "required": [
+        "conversation_id",
+        "model"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ]
+}
