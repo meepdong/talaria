@@ -116,6 +116,7 @@ client/
 │   ├── capabilities/  # Capability interface + registry                      (common)
 │   ├── voice/         # SpeechToText + TextToSpeech interfaces               (common + expect/actual)
 │   ├── replies/       # voice replies: intent parsing, local contact match, delivery routes (common + actual)
+│   ├── assistant/     # default-assistant entry (ACTION_ASSIST, VoiceInteractionService) + on-device command router
 │   └── media/         # image downscale, EXIF/GPS strip, PDF page picking    (common + expect/actual)
 ├── capability-impl/
 │   ├── android/       # notifications listener, SMS, geofence, camera, TTS, foreground service
@@ -256,6 +257,41 @@ sequenceDiagram
 | Telegram Business bot | Telegram, within 24 h of the contact's last message | ✅ | Official "reply as you" route |
 | Accessibility auto-tap | Opt-in only | ✅ | Fragile; off by default and not recommended |
 | Talaria agents / groups | Target is an agent or group | ✅ | Native `chat.send` |
+
+### 3.7 Talaria as the default assistant
+
+Android lets a third-party app hold the **default digital assistant** role. It qualifies through either an activity handling `ACTION_ASSIST` (simple, opens a screen) or a `VoiceInteractionService` with a `VoiceInteractionSessionService` (overlay UI, lock-screen support, optional screen context). Once selected, Android launches Talaria from long-press power (an OxygenOS setting), the corner swipe, long-press home, headset buttons (`ACTION_VOICE_COMMAND`), a Quick Settings tile or a widget.
+
+**Hybrid command router.** Every utterance goes through an on-device router first, so simple commands are instant, free and work offline:
+
+| Class | Examples | Handled by | Latency / cost |
+|---|---|---|---|
+| Phone commands | Timers, alarms, call, open app, navigate, play/pause, flashlight, "reply to Asha…" | **On device**: rules-based parser (later a small local model) → standard Android intents | Instant, free, offline |
+| Quick answers | Unit conversion, arithmetic, "what's the date" | On device, or the cheap agent | Fast, near zero |
+| Everything else | "Plan my weekend", anything needing memory, tools or the web | The **default assistant agent** (configurable, e.g. Meep or a cheap Scout) via the bridge | 2–5 s to first token; API cost |
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant A as Talaria assistant (overlay)
+    participant R as On-device router
+    participant B as Bridge / agent
+    U->>A: Long-press power → speak
+    A->>R: transcript (on-device STT)
+    alt Phone command
+        R->>R: Intent → Android API (e.g. AlarmClock.ACTION_SET_TIMER)
+        R-->>A: ✅ "Timer set · 10:00" (spoken)
+    else Needs the agent
+        R->>B: chat.send(agent=default, origin=assistant, context?)
+        B-->>A: streamed reply → TTS starts at the first sentence
+    end
+```
+
+Rules:
+- **Locked device:** only safe actions (timers, alarms, questions without personal data). Anything that reads personal data or sends messages asks for an unlock first.
+- **Screen context** ("what's on my screen?") uses the Assist API's screen text or screenshot. It is **off by default**, needs Android's assist settings enabled, and is confirmed per use before anything is sent.
+- **Wake word** ("Hey Meep"): low-power hotword hardware is reserved for preinstalled system assistants. A third-party wake word needs a foreground service with the microphone open and an on-device engine (e.g. openWakeWord). It costs battery and shows a permanent microphone indicator, so it is **experimental and opt-in** (e.g. only while charging or driving).
+- "Hey Google" and the Android Auto assistant stay with Google. Talaria coexists with them.
 
 ## 4. The agent-facing MCP surface (fixed)
 

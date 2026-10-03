@@ -326,6 +326,7 @@ Clients warn before sending a modality the target agent does not accept.
 - A Talaria conversation maps to a Hermes **named conversation** on the Responses API, so history lives on the server and survives app reinstalls.
 - **Attachments** reference blobs (§9): `{"blob_id": "b-12", "mime": "image/jpeg", "name": "receipt.jpg"}`. Clients SHOULD downscale images (long edge ≤ 1568 px) and MUST strip location metadata (EXIF GPS) before upload unless the user opts out for that message.
 - **Voice** is converted to text **on the device** before sending. Audio is only uploaded if the user explicitly attaches an audio file.
+- **Assistant invocations** set `"origin": "assistant"` and MAY include `"context": {"screen_text": "…", "screenshot_blob": "b-31", "foreground_app": "com.example"}`. Context is included **only after the user confirms it for that request**. The bridge passes it to the agent marked as untrusted content.
 
 ### 10.4 Groups (agents only, one owner)
 

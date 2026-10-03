@@ -35,6 +35,13 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 - Entry points: in-app mic, Quick Settings tile, Talaria as default assistant.
 - **Exit:** a week of replying to friends by voice with zero wrong-recipient sends.
 
+## M2c — Default assistant (basic)
+- Qualify for Android's **default digital assistant** role via `ACTION_ASSIST`; onboarding that walks through choosing Talaria, setting OxygenOS "press and hold power button" to the assistant, and setting Tailscale as **always-on VPN**.
+- Assistant overlay: listen → transcript → answer, with spoken replies starting at the first sentence.
+- **On-device command router:** timers, alarms, calls, open app, navigate, media play/pause, voice replies (M2b). Everything else goes to the configurable **default assistant agent**.
+- Locked-device rules (safe actions only).
+- **Exit:** a week of using the power button instead of Gemini; phone commands under 1 s and working offline.
+
 ## M3 — Multiple agents
 - Bridge agent registry (`agents.yaml`): Hermes profiles and OpenAI-compatible endpoints, with roles, modalities and cost tiers.
 - Chat list with agent picker; one conversation per agent.
@@ -58,6 +65,7 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 
 ## M6 — Notifications and background
 - `notify.show` with user channels and reply actions; MCP `device_notify`; wake push (ntfy / UnifiedPush).
+- Full **`VoiceInteractionService`** assistant: true overlay session, lock-screen session, opt-in screen context with per-use confirmation and an app deny-list.
 - **Exit:** agent alerts arrive reliably for a week, including after the phone has been idle overnight.
 
 ## M7 — Events and rules v1
@@ -69,6 +77,9 @@ The rule: **architecture for every platform, ship one platform at a time.** Each
 - Notification and SMS forwarding with allow-lists, OTP redaction, `redact_source`; UPI expense template; "what left this device" log.
 - Tier 2 approval engine and approval cards.
 - **Exit:** a week of automatic UPI expense logging with zero raw SMS stored off-device.
+
+- Assistant power actions: `media.control` (media sessions), `dnd.set`, optional Shizuku for system toggles.
+- **Experimental:** opt-in custom wake word (foreground service + on-device engine), with schedule limits.
 
 ## M8b — Voice replies (hands-free)
 - Deliver through the target chat's **notification Reply action** when one exists, which is fully hands-free.

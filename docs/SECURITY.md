@@ -28,6 +28,9 @@ Talaria gives an AI agent access to personal devices. That is only acceptable if
 | T14 | **Voice reply goes wrong** | Misheard message, or sent to the wrong "Asha" | **Confirm before sending** by default (on screen and read aloud); ambiguous contacts always ask; groups only when named explicitly; local log of everything sent; per-contact "send immediately" is opt-in |
 | T15 | **Contact data leakage** | Contact lists sent to the agent or model provider | Contacts are matched on the device; Polish mode sends only the dictated text and optionally a first name |
 | T16 | **Third-party app terms** | A messaging app objects to its reply action being used by another app | Every message is dictated and confirmed by the user (never bulk, never automatic by default); click-to-chat pre-fill as the fully official fallback; the WhatsApp notification route is optional and clearly labelled in public builds |
+| T17 | **Assistant on a locked phone** | Someone picks up your locked phone and asks it to read your messages | Locked mode allows only safe actions (timers, alarms, general questions). Personal data, messages and device actions require unlocking. |
+| T18 | **Screen context leakage** | "What's on my screen?" sends a banking app screen to the model provider | Off by default; confirmed per use with a preview of what will be sent; never automatic; apps on a deny-list (banking, password managers) are never captured |
+| T19 | **Always-on microphone** | A wake-word service listens all the time | Experimental and opt-in; wake word detected **on device** with no audio streamed before it triggers; Android's mic indicator stays visible; schedule limits (e.g. only while charging) |
 
 ## 3. Safe defaults
 

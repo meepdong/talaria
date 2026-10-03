@@ -27,6 +27,12 @@ Tier meanings are defined in [PROTOCOL.md §5.2](PROTOCOL.md#52-permission-tiers
 | `app.open` | 2 | Launch an app | `package` / `bundle_id` / `path` |
 | `script.run` | 2 | Run a **pre-registered** script by name | `name`, `args` (typed per script manifest) |
 | `rules.propose` | 2 | Propose a new or changed rule | `rule` |
+| `timer.set` / `alarm.set` | 2 | Set a timer or alarm (agent-initiated) | `seconds` / `time`, `label` |
+| `call.start` | 2 | Start a phone call | `contact` or `number` |
+| `media.control` | 2 | Play, pause, skip in the active media session | `action` |
+| `dnd.set` | 2 | Turn Do Not Disturb on or off | `mode`, `until?` |
+
+Commands **you speak** to the on-device assistant router (e.g. "set a timer for 10 minutes") run locally without approval, because you initiated them. The tier 2 entries above apply when **the agent** asks for these actions remotely.
 | `files.read` | 2 | Read a file from a **user-shared folder** | `path` |
 | `files.write` | 2 | Write into a **user-shared folder** | `path`, `content` |
 | `security.*`, `keys.*`, `filters.*`, `permissions.*` | 3 | Never remote | — |
@@ -97,7 +103,14 @@ These are app features rather than capabilities the agent can call.
 | Voice replies: hands-free via notification Reply action | ✅ (notification access) | ❌ | ❌ | ❌ |
 | Voice replies: SMS | ✅ (sideloaded build) | ❌ | ❌ | ⚠️ Compose sheet only |
 | Incoming messages read aloud | ✅ (notification access) | ⚠️ | ⚠️ | ❌ |
-| Default-assistant entry (long-press power/home) | ✅ `VoiceInteractionService` | ❌ | ❌ | ❌ (Action Button / Shortcut) |
+| Default digital assistant role | ✅ `ACTION_ASSIST`, then `VoiceInteractionService` | ⚠️ Global hotkey instead | ⚠️ Global hotkey instead | ❌ (Action Button / Shortcut) |
+| Launch from power button / corner swipe / headset | ✅ | — | — | ⚠️ Action Button |
+| Assistant overlay on top of other apps | ✅ `VoiceInteractionSession` | ✅ Floating window | ✅ Floating window | ❌ |
+| Assistant on lock screen (safe actions only) | ✅ | — | — | ❌ |
+| Screen context ("what's on my screen?") | ✅ Assist API, opt-in per use | ⚠️ Screenshot with consent | ⚠️ Portal screenshot | ❌ |
+| On-device command router (timers, alarms, calls, apps, media) | ✅ Standard intents | ⚠️ Subset | ⚠️ Subset | ⚠️ Via Shortcuts |
+| Custom wake word | ⚠️ Foreground service + on-device engine; battery and mic indicator | ✅ | ✅ | ❌ |
+| Replace "Hey Google" / Android Auto assistant | ❌ | — | — | ❌ |
 | Talaria agent chats in Android Auto | 🔜 Messaging notifications (MessagingStyle + reply/mark-read) | — | — | 🔜 CarPlay |
 
 ## 4. Platform notes

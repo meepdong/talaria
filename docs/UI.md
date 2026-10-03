@@ -191,7 +191,24 @@ Entry points: in-app mic, Quick Settings tile, "🎤 Reply by voice" on Talaria'
 
 Incoming read aloud (opt-in, per app): *"Asha on WhatsApp: 'Dinner tonight?' Reply?"* → speak the answer → the same confirmation card.
 
-## 10. Design notes
+## 10. Assistant overlay
+
+```
+[ long-press power ]
+┌──────────────────────────────┐
+│     (whatever app is open)   │
+│                              │
+├──────────────────────────────┤
+│ 🎩 Meep        ● listening…  │
+│ "set a timer for 10 minutes" │
+│ ✅ Timer set · 10:00   [Stop] │  ← handled on the phone, instantly
+├──────────────────────────────┤
+│ 🖼 Use screen?  ⌨ Type  ⤢ Open│  ← screen context only on tap, with preview
+└──────────────────────────────┘
+```
+Agent answers stream into the same sheet and are spoken as they arrive. "⤢ Open" continues the conversation in the full app. On the lock screen, the sheet shows a 🔒 badge, and personal requests ask for an unlock.
+
+## 11. Design notes
 - Every agent has a fixed colour and avatar across chats, groups and workflows.
 - A model badge on each agent message makes cost visible without being noisy.
 - Spend is always one tap away: group info, agent profile, workflow header.
