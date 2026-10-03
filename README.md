@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/meepdong/talaria/actions/workflows/tests.yml/badge.svg)](https://github.com/meepdong/talaria/actions/workflows/tests.yml)
 
-**Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android and desktop clients start together at M1. Feedback welcome.
+**Status:** design draft, **v1 scope defined** (see below). The bridge and secure pairing (M0) are built and tested — see [docs/M0-plan.md](docs/M0-plan.md) and [bridge/README.md](bridge/README.md) to try them. The Android and desktop clients are being built together in M1, starting with the shared protocol code in [client/](client/README.md). Feedback welcome.
 **Not affiliated with Nous Research.** Talaria is an independent community project that works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and, by design, with any agent that speaks [MCP](https://modelcontextprotocol.io).
 
 ---
