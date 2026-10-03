@@ -50,6 +50,7 @@ class ConnectionService : Service() {
         super.onCreate()
         createChannel()
         ReplyNotifier.createChannel(this)
+        AutomationNotifier.createChannel(this)
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(Health.UNKNOWN, "Starting"), type)
 
@@ -78,6 +79,14 @@ class ConnectionService : Service() {
                 val view = (controller.screen.value as? Screen.Chat)?.takeIf { it.tab == Tab.CHATS }?.view
                 val showing = app.visible && view != null && view.conversationOpen && view.openId == reply.conversationId
                 if (!showing) ReplyNotifier.show(this@ConnectionService, reply)
+            }
+        }
+
+        // Automation results for Home, unless Home is on screen.
+        scope.launch {
+            controller.automationResults.collect { ran ->
+                val home = (controller.screen.value as? Screen.Chat)?.tab == Tab.HOME
+                if (!(app.visible && home)) AutomationNotifier.show(this@ConnectionService, ran)
             }
         }
 

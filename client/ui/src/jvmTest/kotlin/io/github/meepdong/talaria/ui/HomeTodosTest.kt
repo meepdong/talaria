@@ -7,6 +7,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
@@ -81,13 +82,13 @@ class HomeTodosTest {
         val actions = Recorder()
         val screen = Screen.Chat(chatView(ChatState(), false, true, status, now), status, home = home())
         setContent { TalariaTheme { Box(Modifier.size(900.dp, 1200.dp)) { HomeScreen(screen, actions) } } }
-        onNodeWithTag("todo-input").performTextInput("Renew passport")
-        onNodeWithTag("todo-add").performClick()
-        onNodeWithTag("todo-done-td-1").performClick()
-        onNodeWithTag("todo-hand-td-1").performClick()
-        onNodeWithTag("todo-open-td-2").performClick()
-        onNodeWithTag("todo-open-td-3").performClick()
-        onNodeWithTag("todo-delete-td-4").performClick()
+        onNodeWithTag("todo-input").performScrollTo().performTextInput("Renew passport")
+        onNodeWithTag("todo-add").performScrollTo().performClick()
+        onNodeWithTag("todo-done-td-1").performScrollTo().performClick()
+        onNodeWithTag("todo-hand-td-1").performScrollTo().performClick()
+        onNodeWithTag("todo-open-td-2").performScrollTo().performClick()
+        onNodeWithTag("todo-open-td-3").performScrollTo().performClick()
+        onNodeWithTag("todo-delete-td-4").performScrollTo().performClick()
         onNodeWithText("1 done earlier").assertExists()
         onNodeWithTag("todo-hand-td-4").assertDoesNotExist()
         assertEquals(

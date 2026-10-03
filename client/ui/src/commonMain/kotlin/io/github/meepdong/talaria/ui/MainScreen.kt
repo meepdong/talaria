@@ -137,7 +137,8 @@ private fun Page(screen: Screen.Chat, actions: TalariaActions, modifier: Modifie
                 when (screen.tab) {
                     Tab.HOME -> HomeScreen(screen, actions)
                     Tab.FILES -> FilesScreen(screen.files, actions)
-                    else -> Text("Coming soon", Modifier.padding(24.dp))
+                    Tab.SCHEDULE -> ScheduleScreen(screen.schedule, actions)
+                    Tab.CHATS -> {}  // shown above, with its own headers
                 }
             }
             ActionBar(screen.view.voice, actions)

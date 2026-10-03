@@ -1,0 +1,303 @@
+package io.github.meepdong.talaria.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+
+/** Schedule: today's calendar next to the agent's automations, and a way to add one. */
+@Composable
+fun ScheduleScreen(schedule: ScheduleView, actions: TalariaActions) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 900.dp
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp)
+                .testTag("schedule"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Schedule", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            if (!schedule.available) {
+                Text("This bridge doesn't run automations yet. Update it to the latest version.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("schedule-unavailable"))
+                return@Column
+            }
+            if (wide) {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.widthIn(max = 1120.dp)) {
+                    AgendaCard(schedule, Modifier.weight(1f))
+                    Column(Modifier.weight(1.4f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        AutomationsCard(schedule, actions, Modifier.fillMaxWidth())
+                        NewAutomationCard(schedule, actions, Modifier.fillMaxWidth())
+                    }
+                }
+            } else {
+                AgendaCard(schedule, Modifier.fillMaxWidth())
+                AutomationsCard(schedule, actions, Modifier.fillMaxWidth())
+                NewAutomationCard(schedule, actions, Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgendaCard(schedule: ScheduleView, modifier: Modifier) {
+    SectionCard("Today · ${schedule.date}", modifier = modifier.testTag("agenda")) {
+        schedule.calendarNote?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        schedule.agenda.forEachIndexed { i, e ->
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(e.time, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(64.dp),
+                    color = if (e.now) Brand.Busy else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f)) {
+                    Text(e.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = if (e.now) FontWeight.SemiBold else null,
+                        color = if (e.past) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    e.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+                if (e.now) Text("Now", style = MaterialTheme.typography.labelMedium, color = Brand.Busy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutomationsCard(schedule: ScheduleView, actions: TalariaActions, modifier: Modifier) {
+    SectionCard("Automations", modifier = modifier.testTag("automations")) {
+        schedule.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
+        if (schedule.automations.isEmpty()) {
+            Text(if (schedule.loaded) "None yet. Add one below, or ask Hermes in any chat." else "Loading…",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        schedule.automations.forEachIndexed { i, a ->
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            AutomationRow(a, actions)
+        }
+    }
+}
+
+@Composable
+private fun AutomationRow(a: AutomationItem, actions: TalariaActions) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("automation-${a.id}")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).background(if (a.paused) MaterialTheme.colorScheme.outlineVariant else if (a.failed)
+                MaterialTheme.colorScheme.error else Brand.Blue, CircleShape))
+            Text(a.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 10.dp).weight(1f))
+            Switch(checked = !a.paused, onCheckedChange = { actions.setAutomationPaused(a.id, !it) },
+                modifier = Modifier.testTag("automation-on-${a.id}"))
+        }
+        Text(a.schedule, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val facts = listOfNotNull(
+            a.next?.let { "Next: $it" }, a.last, "Result: ${a.resultTo}", if (a.byAgent) "Made by Hermes" else null,
+        )
+        Text(facts.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+            color = if (a.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        Row {
+            TextButton(onClick = { actions.runAutomation(a.id) }, modifier = Modifier.testTag("automation-run-${a.id}")) { Text("Run now") }
+            TextButton(onClick = { actions.deleteAutomation(a.id) }, modifier = Modifier.testTag("automation-delete-${a.id}")) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewAutomationCard(schedule: ScheduleView, actions: TalariaActions, modifier: Modifier) {
+    var words by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf(AutomationDraft()) }
+    SectionCard("New automation", modifier = modifier.testTag("new-automation")) {
+        Text("Describe it", style = MaterialTheme.typography.titleSmall)
+        OutlinedTextField(
+            value = words, onValueChange = { words = it.take(4000) },
+            placeholder = { Text("Every weekday at 8, summarise my unread email") },
+            minLines = 2, modifier = Modifier.fillMaxWidth().testTag("describe-input"),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+            Button(onClick = { actions.describeAutomation(words); words = "" }, enabled = words.isNotBlank() && !schedule.describing,
+                modifier = Modifier.testTag("describe")) { Text("Ask Hermes to set it up") }
+            if (schedule.describing) CircularProgressIndicator(Modifier.padding(start = 12.dp).size(20.dp), strokeWidth = 2.dp)
+        }
+        schedule.describeReply?.let { reply ->
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp).background(MaterialTheme.colorScheme.background, MaterialTheme.shapes.small)
+                .padding(12.dp), verticalAlignment = Alignment.Top) {
+                Text(reply, modifier = Modifier.weight(1f).testTag("describe-reply"))
+                TextButton(onClick = actions::clearDescribeReply) { Text("OK") }
+            }
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Or set it up yourself", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { draft = AutomationDraft.MORNING_SUMMARY }, modifier = Modifier.testTag("template-morning")) {
+                Text("Morning catch-up summary")
+            }
+        }
+        DraftForm(draft) { draft = it }
+        Button(
+            onClick = { actions.addAutomation(draft); draft = AutomationDraft() },
+            enabled = draft.ready,
+            modifier = Modifier.padding(top = 12.dp).testTag("add-automation"),
+        ) { Text("Add automation") }
+    }
+}
+
+@Composable
+private fun ColumnScope.DraftForm(draft: AutomationDraft, change: (AutomationDraft) -> Unit) {
+    Field("Name", draft.name, "draft-name") { change(draft.copy(name = it.take(200))) }
+    Text("When", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        WhenKind.entries.forEach { k ->
+            FilterChip(selected = draft.kind == k, onClick = { change(draft.copy(kind = k)) }, label = { Text(k.label) },
+                modifier = Modifier.testTag("kind-${k.name.lowercase()}"))
+        }
+    }
+    when (draft.kind) {
+        WhenKind.TIME -> Field("Schedule, such as \"weekdays at 9am\", \"every 2h\" or \"0 9 * * 1-5\"", draft.schedule,
+            "draft-schedule") { change(draft.copy(schedule = it.take(100))) }
+        WhenKind.ARRIVES -> {
+            Field("What to watch for", draft.watch, "draft-watch") { change(draft.copy(watch = it.take(500))) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) { Field("From (HH:MM)", draft.from, "draft-from") { change(draft.copy(from = it.take(5))) } }
+                Box(Modifier.weight(1f)) { Field("Until (HH:MM)", draft.until, "draft-until") { change(draft.copy(until = it.take(5))) } }
+            }
+            Days(draft, change)
+            Field("If nothing arrives by then (optional)", draft.fallback, "draft-fallback") { change(draft.copy(fallback = it.take(2000))) }
+        }
+        WhenKind.AFTER_EVENT -> {
+            Field("Event title contains", draft.event, "draft-event") { change(draft.copy(event = it.take(200))) }
+            Field("Minutes after it ends", draft.delayMinutes.toString(), "draft-delay") {
+                change(draft.copy(delayMinutes = it.filter(Char::isDigit).take(3).toIntOrNull() ?: 0))
+            }
+            Days(draft, change)
+        }
+    }
+    Field("What Hermes should do", draft.task, "draft-task", minLines = 3) { change(draft.copy(task = it.take(4000))) }
+    Text("Send the result to", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("home" to "Home", "chat" to "A new chat", "log" to "Log only").forEach { (key, label) ->
+            FilterChip(selected = draft.resultTo == key, onClick = { change(draft.copy(resultTo = key)) }, label = { Text(label) },
+                modifier = Modifier.testTag("result-$key"))
+        }
+    }
+}
+
+@Composable
+private fun Days(draft: AutomationDraft, change: (AutomationDraft) -> Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        AutomationDraft.DAYS.forEach { d ->
+            FilterChip(
+                selected = d in draft.days,
+                onClick = { change(draft.copy(days = if (d in draft.days) draft.days - d else draft.days + d)) },
+                label = { Text(d.replaceFirstChar { it.uppercase() }) },
+                modifier = Modifier.testTag("day-$d"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun Field(label: String, value: String, tag: String, minLines: Int = 1, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value, onValueChange = onChange, label = { Text(label) }, minLines = minLines, singleLine = minLines == 1,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag(tag),
+    )
+}
+
+/** Home's cards for the day: Your day, Next up and Automations on. */
+@Composable
+fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
+    if (!home.automationsAvailable) return
+    val your: @Composable (Modifier) -> Unit = { m ->
+        SectionCard("Your day", modifier = m.testTag("your-day")) {
+            if (home.day.isEmpty()) {
+                Text("Nothing yet today. Results from automations that report to Home show up here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            home.day.forEachIndexed { i, d ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp))
+                d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
+            }
+        }
+    }
+    val next: @Composable (Modifier) -> Unit = { m ->
+        SectionCard("Next up", modifier = m.testTag("next-up")) {
+            if (home.nextUp.isEmpty()) Text("Nothing coming up.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            home.nextUp.forEach { n ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(n.time, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(56.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text((if (n.automation) "⚙ " else "") + n.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f))
+                    Text(n.until, style = MaterialTheme.typography.labelMedium, color = Brand.Blue)
+                }
+            }
+        }
+    }
+    val on: @Composable (Modifier) -> Unit = { m ->
+        SectionCard("Automations on", modifier = m.testTag("automations-on"),
+            trailing = { OutlinedButton(onClick = { actions.selectTab(Tab.SCHEDULE) }) { Text("Schedule") } }) {
+            if (home.automationsOn.isEmpty()) Text("None on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            home.automationsOn.forEach { a ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(a.schedule, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    a.next?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Brand.Blue) }
+                }
+            }
+        }
+    }
+    if (wide) {
+        your(Modifier.fillMaxWidth().widthIn(max = 1120.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.widthIn(max = 1120.dp)) {
+            next(Modifier.weight(1f))
+            on(Modifier.weight(1f))
+        }
+    } else {
+        your(Modifier.fillMaxWidth())
+        next(Modifier.fillMaxWidth())
+        on(Modifier.fillMaxWidth())
+    }
+}

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .accounts import OpenRouterAccount
+from .automations import AUTOMATION_METHODS, AutomationError, Automations
 from .files import FILES_METHODS, FilesError, FilesService, Found
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
@@ -300,8 +301,13 @@ class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
                  inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None,
-                 files: FilesService | None = None, todos: TodoStore | None = None):
+                 files: FilesService | None = None, todos: TodoStore | None = None,
+                 automations: Automations | None = None):
         self.store = store
+        self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
+        if automations is not None:
+            automations.notify = lambda msg: self.broadcast(msg)
+            automations.on_chat = self._automation_chat
         self.todos = todos  # the shared to-do list (§13)
         self.files = files  # browsing the agent's folders (§12)
         self.agents = agents
@@ -315,6 +321,19 @@ class ChatService:
         self.accounts = accounts or []
         self._jobs: set[asyncio.Task] = set()
         self._client_msgs: dict[str, tuple[float, dict]] = {}
+
+    def _automation_chat(self, agent_id: str, session_id: str, title: str, at: int, text: str) -> str:
+        """An automation run whose result goes to a chat: the run's own Hermes session becomes a conversation."""
+        conv = Conversation(id="c-" + secrets.token_hex(8), agent_id=agent_id, hermes_session_id=session_id,
+                            title=title[:MAX_TITLE], created_at=at, updated_at=at, last_role="assistant",
+                            last_text=text[:MAX_PREVIEW])
+        self.store.add(conv)
+        return conv.id
+
+    async def run_background(self) -> None:
+        """What runs while the bridge serves: watching the agent's jobs (§14)."""
+        if self.automations is not None:
+            await self.automations.poll()
 
     async def close(self) -> None:
         tasks = [t.task for t in self._turns.values() if t.task and not t.task.done()] + list(self._jobs)
@@ -933,6 +952,13 @@ class ChatService:
                 return await asyncio.to_thread(self.files.handle, method, p), None
             except FilesError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method in AUTOMATION_METHODS:
+            if self.automations is None:
+                raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            try:
+                return await self.automations.handle(method, p), None
+            except AutomationError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method in TODO_METHODS:
             if self.todos is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
@@ -975,7 +1001,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "chat.steer", "chat.aside", "chat.status",
-                          "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS
+                          "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

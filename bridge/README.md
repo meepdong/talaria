@@ -83,6 +83,20 @@ The apps can browse the files on the server, read-only (`spec/README.md` §12): 
 
 To show your OpenRouter balance in the apps, create a **management key** in OpenRouter (Settings → Management keys), save it in a file only the bridge can read (`install -m 600 -o talaria /dev/null /etc/talaria/openrouter.key`, then paste the key into it), and add `"openrouter_key_file": "/etc/talaria/openrouter.key"` to the agent. A management key can also create and delete API keys, so it never leaves the bridge: the apps only get the number.
 
+## Automations, calendar and Home
+
+The apps list Hermes's scheduled jobs as automations and can add, change, pause, run and delete them (`spec/README.md` §14). Nothing to configure: the bridge uses Hermes's jobs API and checks it every minute for changes and finished runs. Jobs made in any Hermes chat show up too. A run whose result goes to Home appears on every device's Home and as a notification; one that goes to a chat becomes a conversation.
+
+"When something arrives" and "after a calendar event" are jobs that check every 10 minutes in their window, answer `[SILENT]` until there's something to do, and leave a marker under `~/.talaria/automations/` in Hermes's workspace so they run once a day at most.
+
+To show the calendar, give the bridge a command that prints a day's events. For Hermes's Google Workspace skill, install [`deploy/calendar-day`](deploy/calendar-day) as its header says (root-owned, run as `hermes` through one sudoers line), check its two paths, and add to the agent:
+
+```json
+"calendar_command": ["/usr/bin/sudo", "-n", "-u", "hermes", "/usr/local/lib/talaria/calendar-day"]
+```
+
+Test it with `sudo -u talaria /usr/bin/sudo -n -u hermes /usr/local/lib/talaria/calendar-day $(date +%F)`. The bridge never holds the Google token.
+
 ## Commands
 
 | Command | What it does |

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Prints one day's Google Calendar events as JSON, for the bridge's calendar.day (spec §14).
+#
+# It runs as the hermes user, through Hermes's Google Workspace skill, so the calendar token
+# stays where it is. Install it root-owned, and let the bridge's user run only this:
+#   install -m 755 -o root -g root calendar-day /usr/local/lib/talaria/calendar-day
+#   echo 'talaria ALL=(hermes) NOPASSWD: /usr/local/lib/talaria/calendar-day' > /etc/sudoers.d/talaria-calendar
+#   chmod 440 /etc/sudoers.d/talaria-calendar
+# and in agents.json:
+#   "calendar_command": ["/usr/bin/sudo", "-n", "-u", "hermes", "/usr/local/lib/talaria/calendar-day"]
+set -eu
+
+# Edit these two if Hermes lives elsewhere.
+HERMES_PYTHON=/home/hermes/.hermes/hermes-agent/venv/bin/python
+GOOGLE_API=/home/hermes/.hermes/skills/productivity/google-workspace/scripts/google_api.py
+
+case "${1:-}" in
+  [0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]) day=$1 ;;
+  *) echo "usage: calendar-day YYYY-MM-DD" >&2; exit 2 ;;
+esac
+
+start=$(date -d "$day" +%Y-%m-%dT00:00:00%:z)
+end=$(date -d "$day + 1 day" +%Y-%m-%dT00:00:00%:z)
+export HOME=/home/hermes
+exec "$HERMES_PYTHON" "$GOOGLE_API" calendar list --start "$start" --end "$end"

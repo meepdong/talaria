@@ -185,3 +185,48 @@ def _error_from(status: int, body: bytes) -> HermesError:
         elif isinstance(err, str):
             message = err
     return HermesError(status, code, message)
+
+
+def _rows(data: dict, *keys: str) -> list[dict]:
+    for key in keys:
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+    return []
+
+
+class HermesJobs:
+    """Hermes's scheduled (cron) jobs, over its API server (spec/README.md §14)."""
+
+    def __init__(self, client: HermesClient):
+        self.client = client
+
+    async def list(self) -> list[dict]:
+        data = await self.client._call("GET", "/api/jobs", params={"include_disabled": "true"})
+        return _rows(data, "jobs", "data")
+
+    async def create(self, body: dict) -> dict:
+        data = await self.client._call("POST", "/api/jobs", json=body)
+        return data.get("job", data)
+
+    async def update(self, job_id: str, body: dict) -> dict:
+        data = await self.client._call("PATCH", f"/api/jobs/{job_id}", json=body)
+        return data.get("job", data)
+
+    async def action(self, job_id: str, action: str) -> dict:
+        data = await self.client._call("POST", f"/api/jobs/{job_id}/{action}", json={})
+        return data.get("job", data)
+
+    async def delete(self, job_id: str) -> None:
+        try:
+            await self.client._call("DELETE", f"/api/jobs/{job_id}")
+        except HermesError as exc:
+            if exc.status != 404:
+                raise
+
+    async def run_sessions(self, job_id: str, limit: int = 20) -> list[str]:
+        """The sessions this job's runs were saved as (`cron_<job id>_<time>`), newest first."""
+        data = await self.client._call("GET", "/api/sessions", params={"source": "cron", "limit": 100})
+        prefix = f"cron_{job_id}_"
+        ids = [r.get("id") or r.get("session_id") for r in _rows(data, "data", "sessions")]
+        return sorted((i for i in ids if isinstance(i, str) and i.startswith(prefix)), reverse=True)[:limit]

@@ -10,6 +10,10 @@ import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
+import io.github.meepdong.talaria.schedule.AutomationRan
+import io.github.meepdong.talaria.schedule.ScheduleRepository
+import io.github.meepdong.talaria.schedule.ScheduleState
+import io.github.meepdong.talaria.schedule.When
 import io.github.meepdong.talaria.todos.TodosRepository
 import io.github.meepdong.talaria.todos.TodosState
 import io.github.meepdong.talaria.chat.asChatApi
@@ -48,6 +52,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -92,7 +98,7 @@ class TalariaController(
         data class Confirm(val sas: Sas, val deadlineMs: Long) : Mode
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
-            val todos: TodosRepository,
+            val todos: TodosRepository, val schedule: ScheduleRepository,
         ) : Mode
     }
 
@@ -147,13 +153,15 @@ class TalariaController(
 
     private data class Live(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
-        val todos: TodosState? = null,
+        val todos: TodosState? = null, val schedule: ScheduleState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val live = mode.flatMapLatest { m ->
         if (m is Mode.Connected) {
-            combine(m.client.state, m.chat.state, m.files.state, m.todos.state) { st, c, f, t -> Live(m, st, c, f, t) }
+            combine(m.client.state, m.chat.state, m.files.state, m.todos.state, m.schedule.state) { st, c, f, t, sc ->
+                Live(m, st, c, f, t, sc)
+            }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -186,6 +194,17 @@ class TalariaController(
     private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
     private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
     private val todos: TodosRepository? get() = (mode.value as? Mode.Connected)?.todos
+    private val schedule: ScheduleRepository? get() = (mode.value as? Mode.Connected)?.schedule
+
+    /** Automation runs that report to Home, for a notification; a run for a chat refreshes the list. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val automationResults: Flow<AutomationRan> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) {
+            m.schedule.ran.onEach { if (it.run.conversationId != null) m.chat.refresh() }.filter { it.resultTo == "home" }
+        } else {
+            emptyFlow()
+        }
+    }
 
     /** Load the saved pairing and connect, and start the clock and the network check. */
     fun start() {
@@ -235,6 +254,7 @@ class TalariaController(
         (mode.value as? Mode.Connected)?.let {
             it.chat.stop()
             it.todos.stop()
+            it.schedule.stop()
             it.client.stop()
         }
     }
@@ -287,6 +307,7 @@ class TalariaController(
         val current = mode.value as? Mode.Connected ?: return
         current.chat.stop()
         current.todos.stop()
+        current.schedule.stop()
         current.client.stop()
         page.value = Page()
         test.value = null
@@ -320,6 +341,7 @@ class TalariaController(
         page.update { it.copy(tab = tab, status = false, menuOpen = false) }
         if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
         if (tab == Tab.FILES) files?.load()
+        if (tab == Tab.HOME || tab == Tab.SCHEDULE) schedule?.refresh()
     }
 
     override fun setMenuOpen(open: Boolean) {
@@ -506,6 +528,39 @@ class TalariaController(
         val todo = todos?.state?.value?.todos?.firstOrNull { it.id == id } ?: return
         newConversation()
         c.send(handOver(todo.text), conversationId = null, todoId = todo.id)
+    }
+
+    // Automations (§14)
+
+    override fun addAutomation(draft: AutomationDraft) {
+        val s = schedule ?: return
+        if (!draft.ready) return
+        val w = when (draft.kind) {
+            WhenKind.TIME -> When.Time(draft.schedule)
+            WhenKind.ARRIVES -> When.Arrives(draft.watch, draft.from, draft.until, draft.days.toList(), draft.fallback.ifBlank { null })
+            WhenKind.AFTER_EVENT -> When.AfterEvent(draft.event, draft.delayMinutes, draft.days.toList())
+        }
+        s.add(draft.name, w, draft.task, draft.resultTo)
+    }
+
+    override fun describeAutomation(text: String) {
+        schedule?.describe(text)
+    }
+
+    override fun clearDescribeReply() {
+        schedule?.clearReply()
+    }
+
+    override fun setAutomationPaused(id: String, paused: Boolean) {
+        schedule?.setPaused(id, paused)
+    }
+
+    override fun runAutomation(id: String) {
+        schedule?.runNow(id)
+    }
+
+    override fun deleteAutomation(id: String) {
+        schedule?.delete(id)
     }
 
     /** The platform's file picker: set while the app can show it, null otherwise. */
@@ -695,7 +750,8 @@ class TalariaController(
         page.value = Page()
         chat.start()
         val todos = TodosRepository(scope, client.asChatApi()).also { it.start() }
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos)
+        val schedule = ScheduleRepository(scope, client.asChatApi()).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule)
         client.start()
     }
 
@@ -721,10 +777,11 @@ class TalariaController(
                     view, withBalance,
                     tab = x.page.tab,
                     tabs = TABS,
-                    home = homeView(view, now, l.todos),
+                    home = homeView(view, now, l.todos).withSchedule(l.schedule, now),
                     menu = menuView(view, withBalance),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
+                    schedule = scheduleView(l.schedule, now),
                 )
             }
         }
@@ -747,7 +804,7 @@ class TalariaController(
         fun handOver(todo: String) = "From my to-do list: $todo\n\nPlease take care of this, or tell me what you need from me."
 
         /** The pages in the menu bar. */
-        val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.FILES)
+        val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.FILES, Tab.SCHEDULE)
 
         /** What people type for a short-code pairing: a host, host:port, or a wss:// URL. */
         fun bridgeUrl(address: String): String? {

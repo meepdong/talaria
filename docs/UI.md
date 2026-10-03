@@ -62,6 +62,14 @@ Paired apps open on Home. The menu bar runs down the side on a wide window and a
 
 **To do** (spec/README.md §13) is a short list kept on the bridge, so the phone and the laptop show the same one. Add a line, tick it off, or tap **Ask Hermes** to start a chat asking Hermes to do it. The to-do then shows "With Hermes…" while Hermes is replying, and "Open chat" afterwards. Ticked items stay until the end of the day; the older ones are counted.
 
+**Your day, Next up and Automations on** (spec/README.md §14). Your day shows today's results from automations that report to Home, such as the morning summary of the catch-up call. Next up lists the next calendar events and automation runs with how long until each ("in 25 min"). Automations on lists what's switched on and when it next works.
+
+## 2a′. Schedule (M2)
+
+Today's calendar, read through the agent, next to the agent's automations. Each automation shows when it runs, when it next works, how its last run went and where its result goes. It has a switch to pause it, **Run now** and **Delete**. Jobs Hermes made in any chat are listed too, marked "Made by Hermes".
+
+**New automation** offers two ways in. **Describe it**: type what you want ("every weekday at 8, summarise my unread email") and Hermes sets it up with its own scheduler. **Set it up yourself**: a name; when (at a time, when something arrives, or after a calendar event); what Hermes should do; and where the result goes (Home, a new chat, or the log only). **Morning catch-up summary** fills the form for the weekday summary of the company call: it watches 10:30–13:00 for the Gemini notes email, and summarises from the calendar alone if the email hasn't come by 13:00.
+
 ## 2b. Files (M2)
 
 The folders the bridge shares (spec/README.md §12): what was sent from Talaria, and whatever the owner adds in `agents.json`, such as Hermes's workspace. A chip per folder, then the folder's files, newest first, with a search by name. Tapping a folder opens it; **Open** fetches a file and hands it to the device's own viewer (a desktop refuses program files); **Ask Hermes** starts a chat with that file attached by name, so the agent reads it where it is and nothing is uploaded.

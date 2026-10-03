@@ -196,6 +196,13 @@ class MainActivity : ComponentActivity() {
             receiveShare(intent)
             return
         }
+        if (intent?.getBooleanExtra(AutomationNotifier.EXTRA_HOME, false) == true) {
+            // opened from an automation's result
+            intent.removeExtra(AutomationNotifier.EXTRA_HOME)
+            app.controller.showChats()
+            app.controller.selectTab(Tab.HOME)
+            return
+        }
         intent?.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)?.let { conv ->
             // opened from a reply notification
             intent.removeExtra(ReplyNotifier.EXTRA_CONVERSATION)

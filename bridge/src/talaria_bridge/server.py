@@ -92,12 +92,14 @@ class BridgeServer:
         ) as server:
             self._started = time.monotonic()
             monitor = asyncio.ensure_future(self.agents.run(self.push_status)) if self.agents.agents else None
+            background = asyncio.ensure_future(self.chat.run_background()) if self.chat is not None else None
             try:
                 yield server
             finally:
-                if monitor is not None:
-                    monitor.cancel()
-                    await asyncio.gather(monitor, return_exceptions=True)
+                for task in (monitor, background):
+                    if task is not None:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
                 if self.chat is not None:
                     await self.chat.close()
 
