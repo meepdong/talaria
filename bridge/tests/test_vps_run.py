@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,9 @@ from talaria_bridge.vps_config import VPSAllowlist
 
 from conftest import check
 from test_chat import call, chat_bridge, connected, recv  # noqa: F401 (chat_bridge is a fixture)
+
+# vps_run runs commands on the Linux VPS (process groups, /bin/echo); there is nothing to test on Windows.
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="vps_run is Linux-only")
 
 ALLOWLIST = """
 version: 1
