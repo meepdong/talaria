@@ -25,7 +25,9 @@ from .automations import AutomationStore, Automations
 from .files import INBOX, FileRoot, FilesService
 from .agent_tools import DEFAULT_PORT as AGENT_TOOLS_PORT
 from .agent_tools import MIN_TOKEN, AgentTools
-from .vps_config import VPSAllowlist, load_allowlist
+from .ops.client import DEFAULT_SOCKET as OPS_SOCKET
+from .ops.client import OpsClient
+from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
@@ -77,7 +79,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
     return b64u_encode(hashlib.sha256(spki).digest())
 
 
-def make_chat(home: Path, agents: list[AgentConfig], agent_tools: object | None = None) -> ChatService | None:
+def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
     clients, inboxes, accounts, roots, calendars = {}, {}, [], {}, {}
     for agent in agents:
@@ -108,11 +110,10 @@ def make_chat(home: Path, agents: list[AgentConfig], agent_tools: object | None 
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
                        files=FilesService(roots), todos=TodoStore(home / "chat.db"),
-                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars),
-                       agent_tools=agent_tools)
+                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars))
 
 
-def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> AgentTools | None:
+def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, ops: ServerOps | None = None) -> AgentTools | None:
     """The MCP endpoint for every agent with a tools_key_file (§15). An unreadable or short key leaves it out."""
     if chat is None or chat.todos is None:
         return None
@@ -130,22 +131,7 @@ def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> Age
                   file=sys.stderr)
             continue
         tokens[token] = agent.id
-    if not tokens:
-        return None
-
-    # Load VPS allowlist
-    allowlist = None
-    try:
-        allowlist = load_allowlist()
-        print(f"  vps tools: enabled ({', '.join(allowlist.list_commands())})")
-    except Exception as exc:
-        print(f"WARNING: VPS allowlist not loaded: {exc}", file=sys.stderr)
-
-    vps_enabled = os.environ.get("VPS_COMMANDS_ENABLED", "true").lower() != "false"
-    if not vps_enabled:
-        print("  vps tools: disabled (VPS_COMMANDS_ENABLED=false)")
-
-    return AgentTools(chat.todos, tokens, chat.todos_changed, allowlist=allowlist, vps_enabled=vps_enabled)
+    return AgentTools(chat.todos, tokens, chat.todos_changed, ops) if tokens else None
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:
@@ -211,13 +197,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     agents = load_agents(args.home / "agents.json")
     chat = make_chat(args.home, agents)
-    tools = make_agent_tools(agents, chat)
-    if tools and chat:
-        chat.agent_tools = tools  # so vps.approve from a device reaches the waiting vps_run call
-    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat)
-    # Set broadcast on tools so vps_run can send approval requests
-    if tools:
-        tools.set_broadcast(bridge.broadcast)
+    # server operations (§16) when talaria-ops is installed: its socket exists
+    ops = ServerOps(OpsClient(args.ops_socket)) if args.ops_socket.exists() else None
+    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops)
+    tools = make_agent_tools(agents, chat, ops)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
     if args.behind_proxy:
@@ -228,6 +211,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(f"  chat:      {', '.join(chat.agents) if chat else 'off (no agent has api_url in agents.json)'}")
     if tools:
         print(f"  tools:     http://127.0.0.1:{args.agent_tools_port}/mcp for {', '.join(sorted(set(tools.tokens.values())))}")
+    print(f"  server:    {'operations via ' + str(args.ops_socket) if ops else 'no operations (talaria-ops not installed)'}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
     sys.stdout.flush()  # under systemd stdout is a pipe, so these lines would wait in a buffer
 
@@ -333,6 +317,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--agent-tools-port", type=int, default=AGENT_TOOLS_PORT,
                        help="loopback port of the agents' MCP tools (§15)")
+    serve.add_argument("--ops-socket", type=Path, default=OPS_SOCKET,
+                       help="talaria-ops's socket; server operations are offered when it exists (§16)")
     serve.add_argument("--url", help="address devices use, e.g. wss://meep-vps.tailnet.ts.net/tnp")
     serve.add_argument("--dev", action="store_true", help="plain ws:// on loopback, for local testing")
     serve.add_argument("--behind-proxy", action="store_true",

@@ -21,7 +21,9 @@ class OpsClient:
     def __init__(self, path: Path = DEFAULT_SOCKET):
         self.path = path
 
-    async def request(self, req: dict, timeout: float) -> dict:
+    async def request(self, req: dict, timeout: float, accepted=None) -> dict:
+        """Send one request and return its answer. An execute is answered twice: first {"accepted": true} once the
+        signature checks out (then [accepted] is awaited), and the result when the operation is done."""
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(self.path), limit=4 * 1024 * 1024), 5)
         except (OSError, asyncio.TimeoutError) as exc:
@@ -30,6 +32,10 @@ class OpsClient:
             writer.write(json.dumps(req).encode() + b"\n")
             await writer.drain()
             line = await asyncio.wait_for(reader.readline(), timeout)
+            if line and json.loads(line).get("accepted"):
+                if accepted is not None:
+                    await accepted()
+                line = await asyncio.wait_for(reader.readline(), timeout)
         except (OSError, asyncio.TimeoutError) as exc:
             raise OpsUnavailable(f"talaria-ops did not answer ({exc.__class__.__name__})") from exc
         finally:
@@ -57,7 +63,8 @@ class OpsClient:
     async def prepare(self, op: str, params: dict, requested_by: str) -> dict:
         return await self.request({"cmd": "prepare", "op": op, "params": params, "requested_by": requested_by}, 60)
 
-    async def execute(self, request_id: str, device_id: str, choice: str, sig: str) -> dict | None:
+    async def execute(self, request_id: str, device_id: str, choice: str, sig: str, accepted=None) -> dict | None:
+        """Run an approved operation; [accepted] is awaited as soon as talaria-ops has checked the signature."""
         # apt.upgrade may take up to 30 min; bridge.update runs the test suite
         return (await self.request({"cmd": "execute", "request_id": request_id, "device_id": device_id,
-                                    "choice": choice, "sig": sig}, 2100))["result"]
+                                    "choice": choice, "sig": sig}, 2100, accepted))["result"]

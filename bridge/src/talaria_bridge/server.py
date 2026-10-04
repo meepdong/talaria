@@ -25,6 +25,7 @@ from .protocol.encoding import EncodingError, b64u_encode, now
 from .protocol.pairing import normalize_short_code
 from .protocol.sas import derive_sas
 from .registry import ClaimError, Registry
+from .server_ops import OpsError, ServerOps
 
 log = logging.getLogger("talaria.server")
 
@@ -54,6 +55,9 @@ class _Session:
     pings: dict[str, float] = field(default_factory=dict)
 
 
+OPS_METHODS = frozenset({"ops.catalogue", "ops.run", "ops.approve"})
+
+
 class _Reject(Exception):
     def __init__(self, reason: str):
         self.reason = reason
@@ -61,7 +65,7 @@ class _Reject(Exception):
 
 class BridgeServer:
     def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None,
-                 agents: AgentMonitor | None = None, chat: ChatService | None = None):
+                 agents: AgentMonitor | None = None, chat: ChatService | None = None, ops: ServerOps | None = None):
         self.registry = registry
         self.key = key
         self.settings = settings or ServerSettings()
@@ -69,6 +73,9 @@ class BridgeServer:
         self.chat = chat
         if chat is not None:
             chat.broadcast = self.broadcast
+        self.ops = ops
+        if ops is not None:
+            ops.broadcast = self.broadcast
         self._tasks: set[asyncio.Task] = set()
         self.bridge_pk = keys.public_key_b64u(key)
         self.bridge_id = keys.key_id(key)
@@ -123,12 +130,28 @@ class BridgeServer:
 
     async def broadcast(self, msg: dict) -> None:
         """Send one notification to every session that is past `ready` (chat, §9)."""
-        ready_sessions = sum(1 for s in self._sessions.values() if s.ready)
-        log.info("Broadcast %s to %d ready sessions (of %d total)", msg.get("method"), ready_sessions, len(self._sessions))
         for ws, session in list(self._sessions.items()):
             if session.ready:
                 with contextlib.suppress(ConnectionClosed):
                     await self._send(ws, msg)
+
+    async def _ops_request(self, ws: ServerConnection, session: _Session, method: str, msg_id, params: dict) -> None:
+        try:
+            if method == "ops.catalogue":
+                result = await self.ops.catalogue()
+            elif method == "ops.run":
+                result = await self.ops.run(params.get("op"), params.get("params"), f"device:{session.device_id}")
+            else:
+                result = await self.ops.approve(session.device_id, params)
+        except OpsError as exc:
+            result, error = None, (exc.code, exc.message)
+        except Exception:
+            log.exception("%s failed", method)
+            result, error = None, (-32603, "Internal error")
+        if msg_id is None:
+            return
+        with contextlib.suppress(ConnectionClosed):
+            await self._send(ws, m.result(msg_id, result) if result is not None else m.error(msg_id, *error))
 
     async def _chat_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
         try:
@@ -374,16 +397,25 @@ class BridgeServer:
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, {"ts": now()}))
         elif method == "capabilities.announce":
-            log.info("Device %s announced capabilities, session ready", device_id)
             self.registry.set_capabilities(device_id, json.dumps(msg.get("params") or {}))
             await self._send(ws, m.notification("ready"))
             session.ready = True
-            tools = self.chat.agent_tools if self.chat is not None else None
-            for request in tools.pending_vps_requests() if tools is not None else []:
+            for request in self.ops.pending_notifications() if self.ops is not None else []:
                 await self._send(ws, request)  # approvals asked while this device was away (§10.8)
         elif method == "status.get":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, self.status_report(session)))
+        elif method in OPS_METHODS and session.ready and self.ops is not None:
+            # an operation may run for minutes, so it runs beside the reader
+            params = msg.get("params")
+            task = asyncio.ensure_future(self._ops_request(ws, session, method, msg_id,
+                                                           params if isinstance(params, dict) else {}))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        elif method in OPS_METHODS and msg_id is not None:
+            await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND if self.ops is None else m.INVALID_REQUEST,
+                                         "Server operations are not set up on this bridge" if self.ops is None
+                                         else "Send capabilities.announce first"))
         elif method in CHAT_METHODS and not session.ready:
             if msg_id is not None:
                 await self._send(ws, m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first"))

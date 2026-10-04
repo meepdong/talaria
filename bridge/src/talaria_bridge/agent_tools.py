@@ -1,4 +1,4 @@
-"""Tools for the agent (spec/README.md §15): the to-do list and VPS commands over MCP, on loopback.
+"""Tools for the agent (spec/README.md §15): the to-do list and server operations over MCP, on loopback.
 
 A minimal MCP server on the Streamable HTTP transport: every POST gets one JSON-RPC response as
 application/json, and there is no event stream. Each agent authenticates with its own token.
@@ -11,16 +11,14 @@ import contextlib
 import hmac
 import json
 import logging
-import os
-import secrets
-import shlex
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from .protocol import messages as m
-from .protocol.encoding import now
 from .todos import TodoError, TodoStore
-from .vps_config import VPSAllowlist, load_allowlist
+
+if TYPE_CHECKING:
+    from .server_ops import ServerOps
 
 log = logging.getLogger("talaria.agent_tools")
 
@@ -29,7 +27,6 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 MAX_BODY = 256 * 1024
 MIN_TOKEN = 32
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
-VPS_APPROVAL_TIMEOUT = 120.0
 
 TOOLS = [
     {
@@ -47,7 +44,7 @@ TOOLS = [
             "text": {"type": "string", "description": "What to do, up to 500 characters."},
             "due": {"type": "string", "description": "Optional due date, YYYY-MM-DD."},
             "group": {"type": "string", "description": "Optional group, such as Home or Work: one already in"
-                                                        " todo_list when it fits. Left out, Talaria sorts it in."}},
+                                                       " todo_list when it fits. Left out, Talaria sorts it in."}},
             "required": ["text"]},
     },
     {
@@ -71,33 +68,23 @@ TOOLS = [
             "text": {"type": "string", "description": "Up to 2000 characters."}},
             "required": ["id", "text"]},
     },
-    {
-        "name": "vps_run",
-        "description": "Run a command on the VPS host. Use for builds, deploys, service management, logs, or opencode."
-                       " Every call requires on-device approval. Only allowlisted commands are permitted.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Allowlist command name (e.g., 'gradlew', 'systemctl', 'opencode')"},
-                "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments array (no shell interpolation)"},
-                "cwd": {"type": "string", "description": "Working directory", "default": "/opt/talaria"},
-                "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 300, "maximum": 1800},
-                "stream_output": {"type": "boolean", "description": "Stream output back to chat in real-time", "default": True},
-            },
-            "required": ["command"],
-        },
-    },
 ]
 
+SERVER_OP = {
+    "name": "server_op",
+    "description": "Run an operation on the server that hosts you and Talaria (spec §16). Read operations answer at once:"
+                   " system.overview, services.list, service.logs {service, lines}, docker.ps, tailscale.status,"
+                   " bridge.version, ssh.recent_logins {lines}, ops.history {lines}. Operations that change something"
+                   " ask the owner to approve on their phone first and wait up to 2 minutes: service.restart {service},"
+                   " docker.restart {container}, bridge.update, disk.cleanup, apt.upgrade, system.reboot."
+                   " If the owner denies or doesn't answer, it doesn't run; don't retry without asking them.",
+    "inputSchema": {"type": "object", "properties": {
+        "op": {"type": "string", "description": "The operation, e.g. system.overview or service.restart."},
+        "params": {"type": "object", "description": "Its parameters, e.g. {\"service\": \"docker\"}."}},
+        "required": ["op"]},
+}
+
 Changed = Callable[[], Awaitable[None]]
-
-
-class VPSCommandError(Exception):
-    def __init__(self, message: str, exit_code: int | None = None, output: str | None = None):
-        super().__init__(message)
-        self.message = message
-        self.exit_code = exit_code
-        self.output = output
 
 
 def _rpc_error(msg_id, code: int, message: str) -> dict:
@@ -126,25 +113,17 @@ def _brief(todo: dict) -> dict:
 
 
 class AgentTools:
-    def __init__(
-        self,
-        todos: TodoStore,
-        tokens: dict[str, str],
-        changed: Changed,
-        allowlist: VPSAllowlist | None = None,
-        vps_enabled: bool = True,
-    ):
-        """[tokens] maps each agent's token to its id; [changed] tells every device (todos.changed)."""
+    def __init__(self, todos: TodoStore, tokens: dict[str, str], changed: Changed, ops: ServerOps | None = None):
+        """[tokens] maps each agent's token to its id; [changed] tells every device (todos.changed);
+        [ops] adds server_op (§16) when talaria-ops is installed."""
         self.todos = todos
         self.tokens = tokens
         self.changed = changed
-        self.allowlist = allowlist
-        # vps_run is only offered when an allowlist is loaded; without one every call would fail.
-        self.vps_enabled = vps_enabled and allowlist is not None
-        self._rate_limits: dict[str, list[float]] = {}
-        self._vps_approvals: dict[str, asyncio.Future[dict]] = {}
-        self._vps_requests: dict[str, dict] = {}  # approval_id -> vps.approval.request params, while pending
-        self.broadcast: Callable[[dict], Awaitable[None]] | None = None
+        self.ops = ops
+
+    @property
+    def tools(self) -> list[dict]:
+        return TOOLS + [SERVER_OP] if self.ops is not None else TOOLS
 
     def agent_for(self, authorization: str | None) -> str | None:
         if not authorization or not authorization.startswith("Bearer "):
@@ -155,58 +134,6 @@ class AgentTools:
             if hmac.compare_digest(given, token.encode()):
                 found = agent_id
         return found
-
-    def _check_rate_limit(self, agent_id: str) -> bool:
-        """Check rate limit: max 5 commands per minute per agent."""
-        import time
-        now = time.time()
-        window_start = now - 60
-        if agent_id not in self._rate_limits:
-            self._rate_limits[agent_id] = []
-        self._rate_limits[agent_id] = [t for t in self._rate_limits[agent_id] if t > window_start]
-        if len(self._rate_limits[agent_id]) >= 5:
-            return False
-        self._rate_limits[agent_id].append(now)
-        return True
-
-    async def _request_vps_approval(self, agent_id: str, request: dict) -> dict:
-        """Send VPS approval request to all devices and wait for response."""
-        approval_id = "vps-" + secrets.token_hex(8)
-        future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        self._vps_approvals[approval_id] = future
-        params = {"approval_id": approval_id, "command": request["command"], "args": request["args"],
-                  "cwd": request["cwd"], "timeout": request["timeout"], "agent_id": agent_id,
-                  "expires_at": now() + int(VPS_APPROVAL_TIMEOUT)}
-        self._vps_requests[approval_id] = params
-        try:
-            if self.broadcast:
-                await self.broadcast(m.notification("vps.approval.request", params))
-            return await asyncio.wait_for(future, timeout=VPS_APPROVAL_TIMEOUT)
-        except asyncio.TimeoutError:
-            if self.broadcast:
-                await self.broadcast(m.notification("vps.approval.done",
-                                                    {"approval_id": approval_id, "choice": "expired"}))
-            raise VPSCommandError("Approval request timed out")
-        finally:
-            self._vps_approvals.pop(approval_id, None)
-            self._vps_requests.pop(approval_id, None)
-
-    def pending_vps_requests(self) -> list[dict]:
-        """The vps.approval.request notifications still waiting for an answer, for a device that just got ready."""
-        return [m.notification("vps.approval.request", p) for p in self._vps_requests.values()]
-
-    def resolve_vps_approval(self, approval_id: str, choice: str) -> bool:
-        """Resolve a pending VPS approval from chat.approve."""
-        future = self._vps_approvals.pop(approval_id, None)
-        self._vps_requests.pop(approval_id, None)
-        if future is None or future.done():
-            return False
-        future.set_result({"choice": choice})
-        return True
-
-    def set_broadcast(self, broadcast: Callable[[dict], Awaitable[None]]) -> None:
-        """Set the broadcast function for sending approval requests."""
-        self.broadcast = broadcast
 
     # JSON-RPC
 
@@ -225,28 +152,26 @@ class AgentTools:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "talaria", "version": "1"},
                 "instructions": "Talaria is the owner's app on their phone and laptop. These tools keep its to-do list,"
-                                " shown on Home, and can run allowlisted commands on the VPS.",
+                                " shown on Home, and, when offered, run operations on the server with the owner's approval.",
             }}
         if method == "ping":
             return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
         if method == "tools/list":
-            tools = TOOLS
-            if not self.vps_enabled:
-                tools = [t for t in TOOLS if t["name"] != "vps_run"]
-            return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}}
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": self.tools}}
         if method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
             if not isinstance(args, dict):
                 return _rpc_error(msg_id, -32602, "arguments must be an object")
-            if name not in {t["name"] for t in TOOLS}:
+            if name not in {t["name"] for t in self.tools}:
                 return _rpc_error(msg_id, -32602, f"Unknown tool: {name}")
-            if name == "vps_run" and not self.vps_enabled:
-                return _rpc_error(msg_id, -32602, "VPS commands are disabled")
             log.info("agent %s calls %s", agent_id, name)
             return {"jsonrpc": "2.0", "id": msg_id, "result": await self.call(name, args, agent_id)}
         return _rpc_error(msg_id, -32601, f"Method not found: {method}")
 
-    async def call(self, name: str, args: dict, agent_id: str) -> dict:
+    async def call(self, name: str, args: dict, agent_id: str = "agent") -> dict:
+        if name == "server_op" and self.ops is not None:
+            result, is_error = await self.ops.agent_call(args.get("op"), args.get("params"), agent_id)
+            return _tool_result(result, is_error=is_error)
         try:
             if name == "todo_list":
                 todos = self.todos.list()
@@ -257,137 +182,12 @@ class AgentTools:
                 todo = self.todos.add({k: args[k] for k in ("text", "due", "group") if k in args})
             elif name == "todo_comment":
                 todo = self.todos.comment({k: args[k] for k in ("id", "text") if k in args}, by="agent")
-            elif name == "vps_run":
-                return await self._call_vps_run(args, agent_id)
             else:
                 todo = self.todos.update({k: args[k] for k in ("id", "text", "due", "done", "group") if k in args})
         except TodoError as exc:
             return _tool_result(exc.message, is_error=True)
-        except VPSCommandError as exc:
-            return _tool_result(
-                f"Command failed (exit {exc.exit_code}): {exc.message}\nOutput:\n{exc.output or '(none)'}",
-                is_error=True,
-            )
-        except Exception as exc:
-            log.exception("vps_run error")
-            return _tool_result(f"Internal error: {exc}", is_error=True)
         await self.changed()
         return _tool_result({"todo": _brief(todo)})
-
-    async def _call_vps_run(self, args: dict, agent_id: str) -> dict:
-        log.info("agent %s calls vps_run: %s", agent_id, args)
-        if not self.vps_enabled:
-            raise VPSCommandError("VPS commands are disabled")
-        if not self._check_rate_limit(agent_id):
-            raise VPSCommandError("Rate limit exceeded: max 5 commands per minute")
-        if self.allowlist is None:
-            raise VPSCommandError("VPS allowlist not configured")
-
-        command_name = args.get("command")
-        if not isinstance(command_name, str):
-            raise VPSCommandError("'command' must be a string")
-
-        cmd_args = args.get("args", [])
-        if not isinstance(cmd_args, list) or not all(isinstance(a, str) for a in cmd_args):
-            raise VPSCommandError("'args' must be an array of strings")
-
-        cwd = args.get("cwd", "/opt/talaria")
-        if not isinstance(cwd, str):
-            raise VPSCommandError("'cwd' must be a string")
-
-        timeout = args.get("timeout", 300)
-        if not isinstance(timeout, int) or timeout < 1 or timeout > 1800:
-            raise VPSCommandError("'timeout' must be an integer between 1 and 1800")
-
-        stream_output = args.get("stream_output", True)
-        if not isinstance(stream_output, bool):
-            raise VPSCommandError("'stream_output' must be a boolean")
-
-        # Validate against allowlist
-        try:
-            entry = self.allowlist.validate(command_name, cmd_args)
-        except ValueError as exc:
-            raise VPSCommandError(str(exc))
-
-        # Request approval from device
-        approval_request = {
-            "command": command_name,
-            "args": cmd_args,
-            "cwd": cwd,
-            "timeout": timeout,
-        }
-        approval_result = await self._request_vps_approval(agent_id, approval_request)
-        choice = approval_result.get("choice")
-        if choice == "deny":
-            raise VPSCommandError("Command denied by user")
-        # For "once" and "session", we proceed. "always" would need persistent storage.
-
-        # Build command
-        cmd = [entry.path] + cmd_args
-
-        log.info("agent %s runs VPS command: %s", agent_id, shlex.join(cmd))
-
-        # Execute with streaming
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                preexec_fn=os.setsid,  # Create new process group for clean kill
-            )
-        except Exception as exc:
-            raise VPSCommandError(f"Failed to start command: {exc}")
-
-        stdout_lines = []
-        stderr_lines = []
-
-        async def read_stream(stream, lines_list, prefix=""):
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                decoded = line.decode("utf-8", "replace").rstrip("\n")
-                lines_list.append(f"{prefix}{decoded}")
-
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    read_stream(proc.stdout, stdout_lines, ""),
-                    read_stream(proc.stderr, stderr_lines, "ERR: "),
-                    proc.wait(),
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            # Kill the entire process group
-            try:
-                os.killpg(os.getpgid(proc.pid), 9)
-            except Exception:
-                pass
-            await proc.wait()  # reap it, so no zombie is left behind
-            raise VPSCommandError(f"Command timed out after {timeout}s", exit_code=-1, output="\n".join(stdout_lines + stderr_lines))
-
-        output = "\n".join(stdout_lines + stderr_lines)
-        exit_code = proc.returncode
-
-        if stream_output and output:
-            # Return streaming-friendly format
-            return _tool_result({
-                "exit_code": exit_code,
-                "output": output,
-                "command": shlex.join(cmd),
-                "cwd": cwd,
-            })
-        else:
-            if exit_code != 0:
-                raise VPSCommandError(f"Command exited with code {exit_code}", exit_code=exit_code, output=output)
-            return _tool_result({
-                "exit_code": exit_code,
-                "output": output,
-                "command": shlex.join(cmd),
-                "cwd": cwd,
-            })
 
     # HTTP
 

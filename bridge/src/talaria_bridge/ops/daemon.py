@@ -81,7 +81,8 @@ class OpsDaemon:
 
     # Requests
 
-    async def handle(self, req: object) -> dict:
+    async def handle(self, req: object, accepted=None) -> dict:
+        """One request. For an approved execute, [accepted] (if given) is awaited once the signature checks out."""
         try:
             if not isinstance(req, dict) or not isinstance(req.get("cmd"), str):
                 raise OpError("bad request")
@@ -94,7 +95,7 @@ class OpsDaemon:
                 return await self.prepare(req.get("op"), req.get("params"), self._by(req))
             if cmd == "execute":
                 return {"result": await self.execute(req.get("request_id"), req.get("device_id"),
-                                                     req.get("choice"), req.get("sig"))}
+                                                     req.get("choice"), req.get("sig"), accepted)}
             raise OpError(f"unknown command {cmd!r}")
         except OpError as exc:
             return {"error": str(exc)}
@@ -130,7 +131,8 @@ class OpsDaemon:
         return {"request_id": request_id, "op": p.op, "params_json": p.params_json, "tier": p.tier,
                 "summary": p.summary, "expires_at": p.expires_at}
 
-    async def execute(self, request_id: object, device_id: object, choice: object, sig: object) -> dict | None:
+    async def execute(self, request_id: object, device_id: object, choice: object, sig: object,
+                      accepted=None) -> dict | None:
         if not all(isinstance(x, str) for x in (request_id, device_id, choice, sig)):
             raise OpError("request_id, device_id, choice and sig are required")
         if choice not in ("once", "deny"):
@@ -151,6 +153,8 @@ class OpsDaemon:
                                "tier": p.tier, "requested_by": p.requested_by, "approved_by": device_id,
                                "outcome": "denied"})
             return None
+        if accepted is not None:
+            await accepted()
         return await self._execute(p.op, p.params, p.requested_by, approved_by=device_id, request_id=request_id)
 
     # Internals
@@ -226,7 +230,10 @@ class OpsDaemon:
                     except ValueError:
                         answer = {"error": "bad request"}
                     else:
-                        answer = await self.handle(req)
+                        async def accepted() -> None:  # execute answers twice: accepted, then the result
+                            writer.write(json.dumps({"accepted": True}).encode() + b"\n")
+                            await writer.drain()
+                        answer = await self.handle(req, accepted)
                     writer.write(json.dumps(answer, ensure_ascii=False).encode() + b"\n")
                     await writer.drain()
             except (ConnectionError, asyncio.LimitOverrunError, ValueError):
