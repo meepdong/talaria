@@ -116,6 +116,12 @@ data class MenuView(
     val defaultIsAgents: Boolean = true,
     /** The models to pick from, selected by the default. */
     val defaultModelGroups: List<ModelGroup> = emptyList(),
+    /** App version string (e.g., "0.1.0"). */
+    val version: String = "",
+    /** Whether an update is available. */
+    val updateAvailable: Boolean = false,
+    /** Update version if available. */
+    val updateVersion: String = "",
 )
 
 /** Something at work: a reply being written. [conversationId] opens it. */
@@ -202,6 +208,12 @@ interface TalariaActions {
     fun stopReply(turnId: String) {}
     /** Answer the approval a running reply waits for: once, session, always or deny. */
     fun approve(turnId: String, choice: String) {}
+    
+    /** Answer a VPS command approval request from the bridge. */
+    fun vpsApprove(approvalId: String, choice: String) {}
+    
+    /** Dismiss a completed VPS command result card. */
+    fun vpsDismiss(approvalId: String) {}
     fun loadOlder() {}
     fun renameConversation(id: String, title: String) {}
     fun deleteConversation(id: String) {}
@@ -223,6 +235,9 @@ interface TalariaActions {
 
     fun selectTab(tab: Tab) {}
     fun setMenuOpen(open: Boolean) {}
+
+    /** Check for app updates and show if available. */
+    fun checkForUpdates() {}
 
     /** The Chat button: a new chat, ready to type. */
     fun startChat() {}

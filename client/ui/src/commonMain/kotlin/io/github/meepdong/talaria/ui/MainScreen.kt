@@ -296,6 +296,38 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                     Text("Connection details")
                 }
             }
+
+            // App version and update
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MenuSection("About") {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Version ${menu.version}", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (menu.updateAvailable) {
+                        Text("Update ${menu.updateVersion} available", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                if (menu.updateAvailable) {
+                    Button(
+                        onClick = actions::checkForUpdates,
+                        modifier = Modifier.fillMaxWidth().testTag("update-button"),
+                    ) {
+                        Text("Install Update")
+                    }
+                } else {
+                    TextButton(
+                        onClick = actions::checkForUpdates,
+                        modifier = Modifier.fillMaxWidth().testTag("check-update"),
+                    ) {
+                        Text("Check for updates")
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
         }
     }

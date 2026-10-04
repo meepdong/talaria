@@ -174,14 +174,20 @@ class TalariaController(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
         val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
         val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(), val canShare: Boolean = false,
+        val vpsApprovals: List<VpsApprovalItem> = emptyList(),
+        val vpsResults: List<VpsResultItem> = emptyList(),
     )
 
     private val extras = combine(
         combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
-        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) }, picker, voice, speechInput,
-    ) { q, files, pick, v, input ->
+        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) },
+        picker, voice, speechInput,
+        mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsApprovals else emptyFlow() },
+        mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsResults else emptyFlow() },
+    ) { q, files, pick, v, input, vpsApprovalsFlow, vpsResultsFlow ->
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
-            files.second, files.third, canShare = textSharer != null)
+            files.second, files.third, canShare = textSharer != null,
+            vpsApprovals = vpsApprovalsFlow, vpsResults = vpsResultsFlow)
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -193,6 +199,14 @@ class TalariaController(
     /** Every reply that finishes, for notifications. The apps decide whether one is needed. */
     @OptIn(ExperimentalCoroutinesApi::class)
     val replies: Flow<FinishedReply> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.replies else emptyFlow() }
+
+    /** VPS command approval requests from the bridge. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val vpsApprovals: Flow<VpsApprovalRequest> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsApprovals else emptyFlow() }
+
+    /** VPS command results (completed/failed). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val vpsResults: Flow<VpsCommandResult> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsResults else emptyFlow() }
 
     private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
     private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
@@ -734,6 +748,14 @@ class TalariaController(
         chat?.approve(turnId, choice)
     }
 
+    override fun vpsApprove(approvalId: String, choice: String) {
+        chat?.vpsApprove(approvalId, choice)
+    }
+
+    override fun vpsDismiss(approvalId: String) {
+        // No-op for now, the result is auto-dismissed or shown as a card
+    }
+
     override fun loadOlder() {
         val c = chat ?: return
         c.state.value.openId?.let { c.loadOlder(it) }
@@ -792,6 +814,11 @@ class TalariaController(
 
     override fun showChats() {
         page.value = page.value.copy(status = false)
+    }
+
+    override fun checkForUpdates() {
+        // TODO: Implement update check - for now just show a notice
+        chat?.notice("Update check not yet implemented. Current version: $VERSION")
     }
 
     /** A reply typed into a notification, sent without opening the app. */
@@ -861,13 +888,13 @@ class TalariaController(
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
-                    x.serverPending).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
+                    x.serverPending, x.vpsApprovals, x.vpsResults).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,
                     tabs = TABS,
                     home = homeView(view, now, l.todos).withSchedule(l.schedule, now),
-                    menu = menuView(view, withBalance, l.chat?.models),
+                    menu = menuView(view, withBalance, l.chat?.models, VERSION),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
                     schedule = scheduleView(l.schedule, now),
@@ -878,8 +905,8 @@ class TalariaController(
     }
 
     companion object {
-        /** The countdown on Confirm code: the bridge gives its operator 120 s to approve. */
-        const val APPROVAL_WINDOW_MS = 120_000L
+/** App version, keep in sync with build.gradle.kts. */
+    const val VERSION = "0.1.0"
 
         /** How long to wait for the decision, a little past the bridge's own limit. */
         const val DECISION_TIMEOUT_MS = 150_000L

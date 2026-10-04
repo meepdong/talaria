@@ -92,7 +92,7 @@ fun dueLabel(due: LocalDate, today: LocalDate, done: Boolean = false): String = 
 }
 
 /** The ☰ panel: replies at work, the default model, provider balances and the connection rows. */
-fun menuView(chat: ChatView, status: StatusView, models: ModelOptions? = null): MenuView {
+fun menuView(chat: ChatView, status: StatusView, models: ModelOptions? = null, version: String = "0.1.0"): MenuView {
     val default = models?.forNewChats
     return MenuView(
         running = chat.conversations.filter { it.running }.map { RunningItem(it.title, "Hermes is replying", it.id) },
@@ -103,6 +103,7 @@ fun menuView(chat: ChatView, status: StatusView, models: ModelOptions? = null): 
         defaultModelGroups = models?.providers.orEmpty().map { p ->
             ModelGroup(p.id, p.name, p.models.map { m -> ModelItem(p.id, m, m.substringAfterLast('/'), default == ModelChoice(p.id, m)) })
         },
+        version = version,
     )
 }
 
