@@ -112,17 +112,10 @@ def make_chat(home: Path, agents: list[AgentConfig], agent_tools: object | None 
                        agent_tools=agent_tools)
 
 
-def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, home: Path) -> AgentTools | None:
+def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> AgentTools | None:
     """The MCP endpoint for every agent with a tools_key_file (§15). An unreadable or short key leaves it out."""
-    if chat is None:
-        # Create TodoStore directly if chat not available yet
-        todos = TodoStore(home / "chat.db")
-        todos_changed = lambda: None  # placeholder, will be replaced after chat is created
-    elif chat.todos is None:
+    if chat is None or chat.todos is None:
         return None
-    else:
-        todos = chat.todos
-        todos_changed = chat.todos_changed
     tokens = {}
     for agent in agents:
         if agent.tools_key_file is None:
@@ -152,7 +145,7 @@ def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, home: 
     if not vps_enabled:
         print("  vps tools: disabled (VPS_COMMANDS_ENABLED=false)")
 
-    return AgentTools(todos, tokens, todos_changed, allowlist=allowlist, vps_enabled=vps_enabled)
+    return AgentTools(chat.todos, tokens, chat.todos_changed, allowlist=allowlist, vps_enabled=vps_enabled)
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:
@@ -217,13 +210,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         registry.db.execute("DELETE FROM meta WHERE key = 'tls_spki_sha256'")
 
     agents = load_agents(args.home / "agents.json")
-    # Create agent_tools first so we can pass it to chat
-    # Use a placeholder todos_changed that will be replaced after chat is created
-    tools = make_agent_tools(agents, None, args.home)
-    chat = make_chat(args.home, agents, tools)
-    # Update the todos_changed callback now that chat exists
+    chat = make_chat(args.home, agents)
+    tools = make_agent_tools(agents, chat)
     if tools and chat:
-        tools.changed = chat.todos_changed
+        chat.agent_tools = tools  # so vps.approve from a device reaches the waiting vps_run call
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat)
     # Set broadcast on tools so vps_run can send approval requests
     if tools:

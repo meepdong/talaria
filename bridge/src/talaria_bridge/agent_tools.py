@@ -137,7 +137,8 @@ class AgentTools:
         self.tokens = tokens
         self.changed = changed
         self.allowlist = allowlist
-        self.vps_enabled = vps_enabled
+        # vps_run is only offered when an allowlist is loaded; without one every call would fail.
+        self.vps_enabled = vps_enabled and allowlist is not None
         self._rate_limits: dict[str, list[float]] = {}
         self._vps_approvals: dict[str, asyncio.Future[dict]] = {}
 
