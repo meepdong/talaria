@@ -121,11 +121,17 @@ private fun AutomationRow(a: AutomationItem, actions: TalariaActions) {
         }
         Text(a.schedule, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
-        val facts = listOfNotNull(
-            a.next?.let { "Next: $it" }, a.last, "Result: ${a.resultTo}", if (a.byAgent) "Made by Hermes" else null,
-        )
+        val facts = listOfNotNull(a.next?.let { "Next: $it" }, a.last, if (a.byAgent) "Made by Hermes" else null)
         Text(facts.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
             color = if (a.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        // where its results go; Home also notifies every device (§14), for jobs made anywhere, Hermes's own included
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Results:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            RESULT_CHOICES.forEach { (key, label) ->
+                FilterChip(selected = a.resultKey == key, onClick = { if (a.resultKey != key) actions.setAutomationResultTo(a.id, key) },
+                    label = { Text(label) }, modifier = Modifier.testTag("automation-result-$key-${a.id}"))
+            }
+        }
         Row {
             TextButton(onClick = { actions.runAutomation(a.id) }, modifier = Modifier.testTag("automation-run-${a.id}")) { Text("Run now") }
             if (a.blocked) {
@@ -213,7 +219,7 @@ private fun ColumnScope.DraftForm(draft: AutomationDraft, change: (AutomationDra
     Field("What Hermes should do", draft.task, "draft-task", minLines = 3) { change(draft.copy(task = it.take(4000))) }
     Text("Send the result to", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("home" to "Home", "chat" to "A new chat", "log" to "Log only").forEach { (key, label) ->
+        RESULT_CHOICES.forEach { (key, label) ->
             FilterChip(selected = draft.resultTo == key, onClick = { change(draft.copy(resultTo = key)) }, label = { Text(label) },
                 modifier = Modifier.testTag("result-$key"))
         }
@@ -333,3 +339,6 @@ fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
         on(Modifier.fillMaxWidth())
     }
 }
+
+/** Where an automation's results go (§14). */
+private val RESULT_CHOICES = listOf("home" to "Home", "chat" to "A new chat", "log" to "Log only")

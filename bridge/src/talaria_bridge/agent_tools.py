@@ -15,9 +15,11 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from .automations import AutomationError
 from .todos import TodoError, TodoStore
 
 if TYPE_CHECKING:
+    from .automations import Automations
     from .server_ops import ServerOps
 
 log = logging.getLogger("talaria.agent_tools")
@@ -70,6 +72,20 @@ TOOLS = [
     },
 ]
 
+REPORT_TO = {
+    "name": "automation_report_to",
+    "description": "Choose where one of your scheduled (cron) jobs reports in Talaria, the owner's app (spec §14):"
+                   " \"home\" shows each run's result on Home and as a notification on their phone and laptop,"
+                   " \"chat\" opens a new Talaria chat per run, \"log\" keeps it in the job's history only."
+                   " When the owner asks in Talaria for an automation, a reminder or a notification, don't ask where to"
+                   " send it: create the job with your scheduling tool delivering locally (deliver: local), then call"
+                   " this with its id and \"home\" (or \"chat\" if they want to discuss each result).",
+    "inputSchema": {"type": "object", "properties": {
+        "id": {"type": "string", "description": "The job's id, as your scheduling tool returned it."},
+        "to": {"type": "string", "enum": ["home", "chat", "log"]}},
+        "required": ["id", "to"]},
+}
+
 SERVER_OP = {
     "name": "server_op",
     "description": "Run an operation on the server that hosts you and Talaria (spec §16). Read operations answer at once:"
@@ -113,17 +129,20 @@ def _brief(todo: dict) -> dict:
 
 
 class AgentTools:
-    def __init__(self, todos: TodoStore, tokens: dict[str, str], changed: Changed, ops: ServerOps | None = None):
+    def __init__(self, todos: TodoStore, tokens: dict[str, str], changed: Changed, ops: ServerOps | None = None,
+                 automations: Automations | None = None):
         """[tokens] maps each agent's token to its id; [changed] tells every device (todos.changed);
-        [ops] adds server_op (§16) when talaria-ops is installed."""
+        [ops] adds server_op (§16) when talaria-ops is installed; [automations] adds automation_report_to (§14)."""
         self.todos = todos
         self.tokens = tokens
         self.changed = changed
         self.ops = ops
+        self.automations = automations
 
     @property
     def tools(self) -> list[dict]:
-        return TOOLS + [SERVER_OP] if self.ops is not None else TOOLS
+        return (TOOLS + ([REPORT_TO] if self.automations is not None else [])
+                + ([SERVER_OP] if self.ops is not None else []))
 
     def agent_for(self, authorization: str | None) -> str | None:
         if not authorization or not authorization.startswith("Bearer "):
@@ -152,7 +171,9 @@ class AgentTools:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "talaria", "version": "1"},
                 "instructions": "Talaria is the owner's app on their phone and laptop. These tools keep its to-do list,"
-                                " shown on Home, and, when offered, run operations on the server with the owner's approval.",
+                                " shown on Home; choose where your scheduled jobs report in it (automation_report_to:"
+                                " Home also notifies their devices, so you never need to ask where to send a result);"
+                                " and, when offered, run operations on the server with the owner's approval.",
             }}
         if method == "ping":
             return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
@@ -169,6 +190,14 @@ class AgentTools:
         return _rpc_error(msg_id, -32601, f"Method not found: {method}")
 
     async def call(self, name: str, args: dict, agent_id: str = "agent") -> dict:
+        if name == "automation_report_to" and self.automations is not None:
+            if args.get("to") not in ("home", "chat", "log"):
+                return _tool_result("to must be home, chat or log", is_error=True)
+            try:
+                a = (await self.automations.update({"id": args.get("id"), "result_to": args["to"]}))["automation"]
+            except AutomationError as exc:
+                return _tool_result(exc.message, is_error=True)
+            return _tool_result({"id": a["id"], "name": a["name"], "result_to": a["result_to"]})
         if name == "server_op" and self.ops is not None:
             result, is_error = await self.ops.agent_call(args.get("op"), args.get("params"), agent_id)
             return _tool_result(result, is_error=is_error)

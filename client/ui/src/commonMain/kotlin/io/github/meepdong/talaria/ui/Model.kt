@@ -293,6 +293,9 @@ interface TalariaActions {
     fun describeAutomation(text: String) {}
     fun clearDescribeReply() {}
     fun setAutomationPaused(id: String, paused: Boolean) {}
+
+    /** Where an automation's results go: "home" (Home and a notification), "chat" or "log" (§14). */
+    fun setAutomationResultTo(id: String, resultTo: String) {}
     fun runAutomation(id: String) {}
 
     /** Run its task now in a new chat, where an approval it needs can be answered. */

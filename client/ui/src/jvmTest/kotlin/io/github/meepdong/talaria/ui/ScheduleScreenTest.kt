@@ -45,6 +45,7 @@ class ScheduleScreenTest {
         override fun addAutomation(draft: AutomationDraft) { drafts += draft }
         override fun describeAutomation(text: String) { calls += "describe $text" }
         override fun setAutomationPaused(id: String, paused: Boolean) { calls += "paused $id $paused" }
+        override fun setAutomationResultTo(id: String, resultTo: String) { calls += "result $id $resultTo" }
         override fun runAutomation(id: String) { calls += "run $id" }
         override fun runAutomationInChat(id: String) { calls += "chat $id" }
         override fun deleteAutomation(id: String) { calls += "delete $id" }
@@ -100,6 +101,7 @@ class ScheduleScreenTest {
         assertEquals("in 55 min", m.next)
         assertEquals("Checked Fri 12:10, nothing yet", m.last)
         assertEquals("A new chat", d.resultTo)
+        assertEquals("chat", d.resultKey)
         assertTrue(r.paused && r.failed && r.byAgent)
         assertEquals("Failed Fri 17:00: No access", r.last)
 
@@ -159,6 +161,9 @@ class ScheduleScreenTest {
         onNodeWithText("Company catch-up").assertExists()
         onNodeWithTag("automation-run-00000000000a").performScrollTo().performClick()
         onNodeWithTag("automation-on-00000000000b").performScrollTo().performClick()
+        // a job Hermes made reports to Home from now on; picking the current choice again does nothing
+        onNodeWithTag("automation-result-home-0000000000ff").performScrollTo().performClick()
+        onNodeWithTag("automation-result-chat-00000000000b").performScrollTo().performClick()
         onNodeWithTag("automation-delete-0000000000ff").performScrollTo().performClick()
         onNodeWithTag("describe-input").performScrollTo().performTextInput("every weekday at 8, summarise my email")
         onNodeWithTag("describe").performScrollTo().performClick()
@@ -168,7 +173,7 @@ class ScheduleScreenTest {
         onNodeWithTag("draft-from").performScrollTo().assertTextContains("10:30")
         onNodeWithTag("add-automation").performScrollTo().assertIsEnabled().performClick()
         assertEquals(listOf(AutomationDraft.MORNING_SUMMARY), actions.drafts)
-        assertEquals(listOf("run 00000000000a", "paused 00000000000b true", "delete 0000000000ff",
+        assertEquals(listOf("run 00000000000a", "paused 00000000000b true", "result 0000000000ff home", "delete 0000000000ff",
             "describe every weekday at 8, summarise my email"), actions.calls)
     }
 

@@ -293,3 +293,46 @@ async def test_calendar_day(tmp_path: Path):
     with pytest.raises(AutomationError):
         await none.calendar_day({"date": "5 Oct"})
     assert calendar_event({"summary": "x"}) is None
+
+
+async def test_the_agent_sends_its_own_job_to_home(tmp_path: Path):
+    from talaria_bridge.agent_tools import AgentTools
+    from talaria_bridge.todos import TodoStore
+
+    autos, hermes, sent = setup(tmp_path)
+    todos = TodoStore(tmp_path / "chat.db")
+
+    async def changed() -> None:
+        pass
+
+    tools = AgentTools(todos, {"t" * 40: "hermes"}, changed, automations=autos)
+    listed = await tools.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, "hermes")
+    report = next(t for t in listed["result"]["tools"] if t["name"] == "automation_report_to")
+    assert "don't ask where to send it" in report["description"]
+
+    # Hermes makes a job with its own scheduling tool, in a chat: Talaria hasn't seen it yet
+    hermes.jobs["00000000abcd"] = {"id": "00000000abcd", "name": "Water the plants", "enabled": True,
+                                   "state": "scheduled", "schedule": "0 8 * * *", "prompt": "Remind me.",
+                                   "deliver": "local"}
+
+    async def call(args: dict) -> tuple[dict | str, bool]:
+        out = await tools.call("automation_report_to", args, "hermes")
+        text = out["content"][0]["text"]
+        return (text if out.get("isError") else json.loads(text)), bool(out.get("isError"))
+
+    assert await call({"id": "00000000abcd", "to": "home"}) == (
+        {"id": "00000000abcd", "name": "Water the plants", "result_to": "home"}, False)
+    assert hermes.jobs["00000000abcd"]["prompt"] == "Remind me.", "Hermes's job itself is left alone"
+    text, err = await call({"id": "00000000ffff", "to": "home"})
+    assert err and "Unknown automation" in text
+    text, err = await call({"id": "00000000abcd", "to": "telegram"})
+    assert err and "home, chat or log" in text
+
+    await autos.poll_once()
+    sent.clear()
+    hermes.ran("00000000abcd", int(time.time()) - 30, "Time to water the plants.")
+    await autos.poll_once()
+    ran = [check("automations.ran", x)["params"] for x in sent if x["method"] == "automations.ran"]
+    assert [(r["name"], r["result_to"]) for r in ran] == [("Water the plants", "home")]  # devices notify
+    assert [r["name"] for r in result("home.get.result", autos.home({}))["results"]] == ["Water the plants"]
+    todos.close()

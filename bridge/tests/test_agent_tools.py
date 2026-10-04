@@ -126,6 +126,7 @@ def test_tools_key_from_agents_json(tmp_path: Path, key: str, ok: bool):
 
     class Chat:
         todos = TodoStore(tmp_path / "chat.db")
+        automations = None
 
         async def todos_changed(self) -> None:
             pass

@@ -615,6 +615,10 @@ class TalariaController(
         schedule?.setPaused(id, paused)
     }
 
+    override fun setAutomationResultTo(id: String, resultTo: String) {
+        schedule?.setResultTo(id, resultTo)
+    }
+
     override fun runAutomation(id: String) {
         schedule?.runNow(id)
     }

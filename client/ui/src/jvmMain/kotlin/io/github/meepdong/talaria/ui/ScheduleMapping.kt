@@ -96,6 +96,7 @@ fun automationItem(a: Automation, nowMs: Long, zone: ZoneId = ZoneId.systemDefau
         blocked = a.lastStatus == "blocked",
         byAgent = a.madeIn == "agent",
         resultTo = resultLabel(a.resultTo),
+        resultKey = a.resultTo,
     )
 }
 

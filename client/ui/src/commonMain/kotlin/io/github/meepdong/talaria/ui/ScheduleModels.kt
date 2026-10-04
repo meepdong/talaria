@@ -43,6 +43,8 @@ data class AutomationItem(
     val byAgent: Boolean = false,
     /** "Home", "A new chat" or "Log only". */
     val resultTo: String = "",
+    /** The same as a key: "home", "chat" or "log" (§14). */
+    val resultKey: String = "",
 )
 
 /** What "Your day" shows: a result from today. [blocked] is what the agent wasn't allowed to do on its own. */
