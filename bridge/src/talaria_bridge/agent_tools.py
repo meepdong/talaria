@@ -28,7 +28,7 @@ TOOLS = [
     {
         "name": "todo_list",
         "description": "List the owner's to-dos, the list shown on Home in the Talaria app on their phone and laptop."
-                       " Open ones come first, oldest first.",
+                       " Open ones come first, oldest first, with their group and the owner's comments.",
         "inputSchema": {"type": "object", "properties": {
             "include_done": {"type": "boolean", "description": "Also list the recently ticked-off ones."}}},
     },
@@ -38,19 +38,31 @@ TOOLS = [
                        " note or add something to do.",
         "inputSchema": {"type": "object", "properties": {
             "text": {"type": "string", "description": "What to do, up to 500 characters."},
-            "due": {"type": "string", "description": "Optional due date, YYYY-MM-DD."}},
+            "due": {"type": "string", "description": "Optional due date, YYYY-MM-DD."},
+            "group": {"type": "string", "description": "Optional group, such as Home or Work: one already in"
+                                                       " todo_list when it fits. Left out, Talaria sorts it in."}},
             "required": ["text"]},
     },
     {
         "name": "todo_update",
-        "description": "Change one of the owner's to-dos: tick it off (done: true), open it again, reword it or set its"
-                       " due date (due: null clears it). Get ids from todo_list.",
+        "description": "Change one of the owner's to-dos: tick it off (done: true), open it again, reword it, set its"
+                       " due date (due: null clears it) or move it to another group. Get ids from todo_list.",
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string"},
             "text": {"type": "string"},
             "due": {"type": ["string", "null"], "description": "YYYY-MM-DD, or null to clear it."},
-            "done": {"type": "boolean"}},
+            "done": {"type": "boolean"},
+            "group": {"type": ["string", "null"], "description": "Up to 40 characters, or null to clear it."}},
             "required": ["id"]},
+    },
+    {
+        "name": "todo_comment",
+        "description": "Add a comment to one of the owner's to-dos, such as progress or what you need from them."
+                       " It shows under the to-do in the app, marked as yours.",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "text": {"type": "string", "description": "Up to 2000 characters."}},
+            "required": ["id", "text"]},
     },
 ]
 
@@ -75,6 +87,10 @@ def _brief(todo: dict) -> dict:
         out["due"] = todo["due"]
     if todo["done"]:
         out["done"] = True
+    if todo.get("group"):
+        out["group"] = todo["group"]
+    if todo.get("comments"):
+        out["comments"] = [{"text": c["text"], "by": c["by"]} for c in todo["comments"]]
     return out
 
 
@@ -136,9 +152,11 @@ class AgentTools:
                     todos = [t for t in todos if not t["done"]]
                 return _tool_result({"todos": [_brief(t) for t in todos]})
             if name == "todo_add":
-                todo = self.todos.add({k: args[k] for k in ("text", "due") if k in args})
+                todo = self.todos.add({k: args[k] for k in ("text", "due", "group") if k in args})
+            elif name == "todo_comment":
+                todo = self.todos.comment({k: args[k] for k in ("id", "text") if k in args}, by="agent")
             else:
-                todo = self.todos.update({k: args[k] for k in ("id", "text", "due", "done") if k in args})
+                todo = self.todos.update({k: args[k] for k in ("id", "text", "due", "done", "group") if k in args})
         except TodoError as exc:
             return _tool_result(exc.message, is_error=True)
         await self.changed()

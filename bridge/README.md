@@ -67,7 +67,7 @@ Chat (M2) goes through the bridge to the Hermes API server, so devices never hol
              "api_url": "http://127.0.0.1:8642", "api_key_file": "/etc/talaria/hermes-api.key"}]}
 ```
 
-Each Talaria conversation is a Hermes session, so it also shows up in Hermes's own session list. The bridge keeps which session belongs to which conversation in `chat.db`, along with the shared to-do list (§13). Protocol details: `spec/README.md` §9 and §13.
+Each Talaria conversation is a Hermes session, so it also shows up in Hermes's own session list. The bridge keeps which session belongs to which conversation in `chat.db`, along with the shared to-do list (§13). Hermes sorts new to-dos into groups in short throwaway sessions that are deleted straight after, so they never stay in its session list. Protocol details: `spec/README.md` §9 and §13.
 
 Photos go to Hermes inline with the message. Other files (PDFs, documents) need a folder Hermes can read: add `"inbox_dir": "/var/lib/talaria/inbox"` to the agent, owned by the bridge's user with Hermes's user in its group, and setgid so new folders keep that group (`chown talaria:hermes`, `chmod 2750`). Without `inbox_dir` the agent takes photos only. Uploads in progress wait in `blobs/` under the bridge's data folder. Protocol details: `spec/README.md` §10.
 
@@ -99,7 +99,7 @@ Test it with `sudo -u talaria /usr/bin/sudo -n -u hermes /usr/local/lib/talaria/
 
 ## Tools for the agent
 
-The bridge can give Hermes tools to keep the to-do list on Home (`spec/README.md` §15): list, add, reword and tick off. To-dos it adds in any chat or automation show up on every device. The tools are an MCP server on `http://127.0.0.1:8767/mcp`, reachable only from the server itself, and each agent needs its own token. Make one in a file only the bridge can read and add it to the agent:
+The bridge can give Hermes tools to keep the to-do list (`spec/README.md` §15): list, add, reword, group, comment on and tick off. To-dos it adds in any chat or automation show up on every device. The tools are an MCP server on `http://127.0.0.1:8767/mcp`, reachable only from the server itself, and each agent needs its own token. Make one in a file only the bridge can read and add it to the agent:
 
 ```sh
 install -m 600 -o talaria /dev/null /etc/talaria/hermes-tools.key

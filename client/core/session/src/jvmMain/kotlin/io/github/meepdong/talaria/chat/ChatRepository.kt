@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -273,7 +274,7 @@ class ChatRepository(
                     ModelOptions.Provider(id, o.str("name") ?: id,
                         (o["models"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content })
                 }
-                _state.update { it.copy(models = ModelOptions(parseModel(r.obj("current")), providers)) }
+                _state.update { it.copy(models = ModelOptions(parseModel(r.obj("current")), providers, parseModel(r.obj("default")))) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -300,6 +301,23 @@ class ChatRepository(
                 throw e
             } catch (e: Exception) {
                 notice("Couldn't switch the model: ${e.message}")
+            }
+        }
+    }
+
+    /** Start every device's new chats on [choice], or on the agent's own model when null (§11). */
+    fun setDefaultModel(choice: ModelChoice?) {
+        _state.update { s -> s.copy(models = s.models?.copy(default = choice)) }
+        scope.launch {
+            try {
+                api.request("agent.set_default_model", buildJsonObject {
+                    if (choice == null) put("model", JsonNull) else put("model", choice.json())
+                })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't set the default model: ${e.message}")
+                loadModels()
             }
         }
     }
@@ -623,6 +641,7 @@ class ChatRepository(
                 "chat.queued" -> onQueued(p)
                 "chat.aside.done" -> onAside(p)
                 "chat.hidden" -> onHidden(p)
+                "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
             }
         }
     }
@@ -650,7 +669,7 @@ class ChatRepository(
         changed(conv)
         mine += turn
         _state.update { s0 ->
-            val draftModel = s0.draftModel
+            val draftModel = s0.draftModel ?: s0.models?.default
             var s = s0.claimDraft(cmid, conv)
             s = s.withMessages(conv) { list ->
                 list.map {

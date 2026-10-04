@@ -51,7 +51,7 @@ async def test_hermes_keeps_the_list_every_device_sees(chat_bridge):  # noqa: F8
                                    headers=AUTH)
             assert note.status_code == 202
             names = [t["name"] for t in (await mcp(http, 2, "tools/list"))["result"]["tools"]]
-            assert names == ["todo_list", "todo_add", "todo_update"]
+            assert names == ["todo_list", "todo_add", "todo_update", "todo_comment"]
 
             added, err = await tool(http, "todo_add", {"text": "Buy milk", "due": "2026-10-05"})
             assert not err and added["todo"]["text"] == "Buy milk" and added["todo"]["due"] == "2026-10-05"
@@ -66,6 +66,19 @@ async def test_hermes_keeps_the_list_every_device_sees(chat_bridge):  # noqa: F8
             assert (await next_changed(phone))["todos"][0]["done"] is True
             assert (await tool(http, "todo_list", {}))[0] == {"todos": []}
             assert len((await tool(http, "todo_list", {"include_done": True}))[0]["todos"]) == 1
+
+            await tool(http, "todo_update", {"id": todo_id, "done": False, "group": "Errands"})
+            await next_changed(phone)
+            await call(phone, "c1", "todos.comment", {"id": todo_id, "text": "Oat milk"})
+            noted, err = await tool(http, "todo_comment", {"id": todo_id, "text": "Added to the shop order"})
+            assert not err and noted["todo"]["comments"] == [{"text": "Oat milk", "by": "you"},
+                                                             {"text": "Added to the shop order", "by": "agent"}]
+            seen = (await next_changed(phone))["todos"][0]
+            assert seen["group"] == "Errands" and seen["comments"][1]["by"] == "agent"
+            (listed,) = (await tool(http, "todo_list", {}))[0]["todos"]
+            assert listed["group"] == "Errands" and len(listed["comments"]) == 2
+            put, err = await tool(http, "todo_add", {"text": "Gym", "group": "Health"})
+            assert put["todo"]["group"] == "Health"
 
             missing, err = await tool(http, "todo_update", {"id": "td-nope", "done": True})
             assert err and isinstance(missing, str)

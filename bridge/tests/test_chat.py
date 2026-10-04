@@ -716,6 +716,39 @@ async def test_openrouter_balance(tmp_path: Path):
     chat.store.close()
 
 
+async def test_default_model_for_new_chats(chat_bridge):
+    bridge, hermes = chat_bridge
+    phone, laptop = await connected(bridge), await connected(bridge)
+    pick = {"provider": "openrouter", "model": "m-2"}
+    res = check("agent.set_default_model.result", await call(phone, "d1", "agent.set_default_model", {"model": pick}))
+    assert res["result"] == {"agent_id": "hermes", "default": pick}
+    while (msg := await recv(laptop)).get("method") != "agent.default_model":
+        pass
+    assert check("agent.default_model", msg)["params"] == {"agent_id": "hermes", "default": pick}
+    models = check("agent.models.result", await call(laptop, "m1", "agent.models"))["result"]
+    assert models["default"] == pick and models["current"]["model"] == "m-1"
+    await laptop.close()
+
+    # a new chat starts on it, and can still change
+    first = (await call(phone, "c1", "chat.send", {"text": "Hi"}))["result"]
+    await until_done(phone, first["turn_id"])
+    assert hermes.locks["talaria_" + first["conversation_id"][2:]] == pick
+    other = {"provider": "openrouter", "model": "m-1"}
+    chosen = (await call(phone, "c2", "chat.send", {"text": "Hi", "model": other}))["result"]
+    await until_done(phone, chosen["turn_id"])
+    assert hermes.locks["talaria_" + chosen["conversation_id"][2:]] == other
+
+    # one the agent can't route doesn't stop the chat
+    await call(phone, "d2", "agent.set_default_model", {"model": {"provider": "openrouter", "model": "nope"}})
+    kept = (await call(phone, "c3", "chat.send", {"text": "Hi"}))["result"]
+    await until_done(phone, kept["turn_id"])
+    assert "talaria_" + kept["conversation_id"][2:] not in hermes.locks
+
+    cleared = check("agent.set_default_model.result", await call(phone, "d3", "agent.set_default_model", {"model": None}))
+    assert cleared["result"] == {"agent_id": "hermes"}
+    assert "default" not in (await call(phone, "m2", "agent.models"))["result"]
+
+
 def test_store_adds_model_columns_to_an_old_database(tmp_path: Path):
     import sqlite3
     db = sqlite3.connect(tmp_path / "chat.db")

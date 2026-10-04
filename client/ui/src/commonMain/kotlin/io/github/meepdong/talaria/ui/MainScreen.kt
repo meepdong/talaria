@@ -136,6 +136,7 @@ private fun Page(screen: Screen.Chat, actions: TalariaActions, modifier: Modifie
             Box(Modifier.weight(1f)) {
                 when (screen.tab) {
                     Tab.HOME -> HomeScreen(screen, actions)
+                    Tab.TODOS -> TodosScreen(screen.todos, actions)
                     Tab.FILES -> FilesScreen(screen.files, actions)
                     Tab.SCHEDULE -> ScheduleScreen(screen.schedule, actions)
                     Tab.CHATS -> {}  // shown above, with its own headers
@@ -255,6 +256,13 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                         }
                     }
                 }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MenuSection("Default model for new chats") {
+                DefaultModelPicker(menu, actions)
+                Text("Each chat can still switch from the model button at its top.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
 
             if (menu.balances.isNotEmpty()) {

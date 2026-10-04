@@ -56,7 +56,9 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.
 - **Share to Talaria (Android):** Talaria is in the share sheet for files, photos and text from any app; sharing opens a new chat with them attached, ready to send.
 - **Home and menu bar:** Home, Chats, Files and Schedule, down the side on desktop and along the bottom on a phone. Home shows the day at a glance (morning summary, to-dos, what's next, automations) with Chat and Talk buttons; a ☰ menu holds running work, the OpenRouter balance and the connection.
-- **Agent keeps the to-dos:** the agent can list, add, reword and tick off the to-dos on Home from any chat or automation, through tools the bridge serves only to it on the server (no delete, so a bad instruction can't wipe the list).
+- **To-dos page:** the whole list in its own tab, grouped by the agent by context (re-sortable), with comments from you and the agent, due dates, groups, and Ask Hermes on each.
+- **Agent keeps the to-dos:** the agent can list, add, reword, group, comment on and tick off the to-dos from any chat or automation, through tools the bridge serves only to it on the server (no delete, so a bad instruction can't wipe the list).
+- **Default model:** pick the model new chats start on, for every device, from the ☰ menu; each chat can still switch.
 - **Files:** browse the files sent to the agent and the ones it saved in its workspace.
 - **Automations:** the agent's scheduled jobs, created from the app (form or plain words) or in chat, started at a time, when an email or file arrives, or after a calendar event; first one: a weekday summary of the day from the morning call's transcript. Google Calendar next to them, read through the agent.
 - **Exit:** used daily for a week instead of Telegram, on phone and laptop, including voice and photo messages.

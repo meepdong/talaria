@@ -66,9 +66,19 @@ object TalariaIcons {
         moveTo(5f, 12f); lineTo(19f, 12f)
     }
 
+    val Todos = icon("todos") {
+        moveTo(4f, 6f); lineTo(5.5f, 7.5f); lineTo(8f, 5f)
+        moveTo(11f, 6.5f); lineTo(20f, 6.5f)
+        moveTo(4f, 12f); lineTo(5.5f, 13.5f); lineTo(8f, 11f)
+        moveTo(11f, 12.5f); lineTo(20f, 12.5f)
+        moveTo(4f, 18.5f); lineTo(8f, 18.5f)
+        moveTo(11f, 18.5f); lineTo(20f, 18.5f)
+    }
+
     fun forTab(tab: Tab): ImageVector = when (tab) {
         Tab.HOME -> Home
         Tab.CHATS -> Chat
+        Tab.TODOS -> Todos
         Tab.FILES -> Files
         Tab.SCHEDULE -> Schedule
     }

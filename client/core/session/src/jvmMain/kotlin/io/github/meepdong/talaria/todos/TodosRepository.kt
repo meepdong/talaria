@@ -32,7 +32,14 @@ data class Todo(
     val due: String? = null,
     /** The conversation it was handed to the agent in. */
     val conversationId: String? = null,
+    /** Such as "Home" or "Work"; the agent sorts new ones in. */
+    val group: String? = null,
+    /** Oldest first. */
+    val comments: List<TodoComment> = emptyList(),
 )
+
+/** A note on a to-do, from a device or from the agent. [at] is Unix seconds. */
+data class TodoComment(val id: String, val text: String, val byAgent: Boolean, val at: Long)
 
 data class TodosState(
     /** Open first, oldest first, then recently done. */
@@ -41,6 +48,8 @@ data class TodosState(
     val error: String? = null,
     /** False when the bridge keeps no to-dos (an older bridge). */
     val available: Boolean = true,
+    /** The agent is sorting the list into groups (Sort again). */
+    val regrouping: Boolean = false,
 )
 
 /** The to-do list kept on the bridge, the same on every device. */
@@ -70,13 +79,50 @@ class TodosRepository(private val scope: CoroutineScope, private val api: ChatAp
         call("todos.list", JsonObject(emptyMap())) { r -> _state.update { it.copy(todos = list(r), loaded = true, available = true) } }
     }
 
-    fun add(text: String, due: String? = null) {
+    fun add(text: String, due: String? = null, group: String? = null) {
         val t = text.trim()
         if (t.isEmpty()) return
         call("todos.add", buildJsonObject {
             put("text", t.take(MAX_TEXT))
             due?.let { put("due", it) }
+            group?.trim()?.takeIf { it.isNotEmpty() }?.let { put("group", it.take(MAX_GROUP)) }
         }) { r -> r.obj("todo")?.let(::todo)?.let(::upsert) }
+    }
+
+    /** Move it to [group], or out of any group when null. */
+    fun setGroup(id: String, group: String?) {
+        val g = group?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_GROUP)
+        _state.update { s -> s.copy(todos = s.todos.map { if (it.id == id) it.copy(group = g) else it }) }
+        call("todos.update", buildJsonObject {
+            put("id", id)
+            if (g == null) put("group", JsonNull) else put("group", g)
+        }) { r -> r.obj("todo")?.let(::todo)?.let(::upsert) }
+    }
+
+    fun comment(id: String, text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        call("todos.comment", buildJsonObject {
+            put("id", id)
+            put("text", t.take(MAX_COMMENT))
+        }) { r -> r.obj("todo")?.let(::todo)?.let(::upsert) }
+    }
+
+    fun uncomment(id: String, commentId: String) {
+        _state.update { s -> s.copy(todos = s.todos.map { t -> if (t.id == id) t.copy(comments = t.comments.filterNot { it.id == commentId }) else t }) }
+        call("todos.uncomment", buildJsonObject {
+            put("id", id)
+            put("comment_id", commentId)
+        }) { r -> r.obj("todo")?.let(::todo)?.let(::upsert) }
+    }
+
+    /** Ask the agent to sort every open to-do into groups again. */
+    fun regroup() {
+        if (_state.value.regrouping) return
+        _state.update { it.copy(regrouping = true, error = null) }
+        call("todos.regroup", JsonObject(emptyMap()), onFailure = { _state.update { it.copy(regrouping = false) } }) { r ->
+            _state.update { it.copy(todos = list(r), regrouping = false) }
+        }
     }
 
     fun setDone(id: String, done: Boolean) {
@@ -108,17 +154,19 @@ class TodosRepository(private val scope: CoroutineScope, private val api: ChatAp
         }
     }
 
-    private fun call(method: String, params: JsonObject, onResult: (JsonObject) -> Unit) {
+    private fun call(method: String, params: JsonObject, onFailure: () -> Unit = {}, onResult: (JsonObject) -> Unit) {
         scope.launch {
             try {
-                onResult(api.request(method, params))
+                onResult(api.request(method, params, timeoutMs = if (method == "todos.regroup") REGROUP_TIMEOUT_MS else null))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: RpcException) {
+                onFailure()
                 if (e.code == METHOD_NOT_FOUND) _state.update { it.copy(available = false) }
                 else _state.update { it.copy(error = e.message) }
                 if (method != "todos.list") refresh()
             } catch (e: TnpException) {
+                onFailure()
                 _state.update { it.copy(error = "Not connected to the bridge") }
             }
         }
@@ -135,10 +183,21 @@ class TodosRepository(private val scope: CoroutineScope, private val api: ChatAp
         doneAt = o.long("done_at"),
         due = o.str("due"),
         conversationId = o.str("conversation_id"),
+        group = o.str("group"),
+        comments = (o["comments"] as? JsonArray).orEmpty().mapNotNull { e ->
+            val c = e as? JsonObject ?: return@mapNotNull null
+            TodoComment(c.str("id") ?: return@mapNotNull null, c.str("text") ?: return@mapNotNull null,
+                c.str("by") == "agent", c.long("at") ?: 0)
+        },
     )
 
     companion object {
         const val MAX_TEXT = 500
+        const val MAX_GROUP = 40
+        const val MAX_COMMENT = 2000
+
+        /** Sorting asks the agent, which can take a while. */
+        const val REGROUP_TIMEOUT_MS = 120_000L
         private const val METHOD_NOT_FOUND = -32601
 
         /** Open first, oldest first; then done, newest first. */
