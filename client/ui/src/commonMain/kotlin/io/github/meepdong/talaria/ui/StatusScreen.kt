@@ -162,9 +162,11 @@ private fun StatusRowItem(row: StatusRow) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row {
-                Text(row.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                // the label keeps its width; a long value wraps instead of squeezing it
+                Text(row.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                Spacer(Modifier.width(12.dp))
                 Text(row.value, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.End,
-                    modifier = Modifier.testTag("row-${row.label}"))
+                    modifier = Modifier.weight(1f).testTag("row-${row.label}"))
             }
             row.detail?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
