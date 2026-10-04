@@ -175,3 +175,28 @@ def test_bad_agents_json_stops_serve(tmp_path: Path, capsys):
     (tmp_path / "agents.json").write_text('{"agents": [{"id": ""}]}')
     assert main(["--home", str(tmp_path), "serve", "--dev"]) == 2
     assert "agents.json" in capsys.readouterr().err
+
+
+async def test_dashboard_down_but_chat_api_up_counts_as_ready():
+    def probe(url: str, timeout_s: float) -> dict:
+        if url == "http://127.0.0.1:8642/health":
+            return {"state": "ready"}
+        return {"state": "offline", "detail": "not reachable: [Errno 111] Connection refused"}
+
+    agent = AgentConfig("hermes", "Hermes", "http://127.0.0.1:9119/api/status",
+                        api_url="http://127.0.0.1:8642", api_key_file="/k")
+    monitor = AgentMonitor([agent], probe=probe)
+    await monitor.check_all()
+    row = monitor.report()[0]
+    assert row["state"] == "ready"
+    assert "9119" in row["detail"]
+
+    # without an API server the dashboard's answer stands
+    plain = AgentMonitor([AgentConfig("hermes", "Hermes", "http://127.0.0.1:9119/api/status")], probe=probe)
+    await plain.check_all()
+    assert plain.report()[0]["state"] == "offline"
+
+    # both down: still offline, with the dashboard's reason
+    monitor.probe = lambda url, t: {"state": "offline", "detail": "down"}
+    await monitor.check_all()
+    assert monitor.report()[0] == {"id": "hermes", "name": "Hermes", "state": "offline", "detail": "down"}

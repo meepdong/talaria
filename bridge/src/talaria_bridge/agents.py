@@ -120,8 +120,7 @@ class AgentMonitor:
 
     async def check_all(self) -> bool:
         """Probe every agent once. Returns True if any agent's report changed."""
-        results = await asyncio.gather(*(
-            asyncio.to_thread(self.probe, a.health_url, self.timeout_s) for a in self.agents))
+        results = await asyncio.gather(*(self._check(a) for a in self.agents))
         changed = False
         for agent, result in zip(self.agents, results):
             if result != self._states[agent.id]:
@@ -129,6 +128,16 @@ class AgentMonitor:
                 self._states[agent.id] = result
                 changed = True
         return changed
+
+    async def _check(self, agent: AgentConfig) -> dict:
+        result = await asyncio.to_thread(self.probe, agent.health_url, self.timeout_s)
+        if result.get("state") != "offline" or not agent.api_url:
+            return result
+        # health_url is often Hermes's dashboard, a separate process; chat only needs the API server
+        api = await asyncio.to_thread(self.probe, agent.api_url.rstrip("/") + "/health", self.timeout_s)
+        if api.get("state") != "ready":
+            return result
+        return {**api, "detail": f"chat is up, but its health check isn't answering ({agent.health_url})"}
 
     async def run(self, on_change: Callable[[], Awaitable[None]]) -> None:
         while True:

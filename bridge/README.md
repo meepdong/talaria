@@ -56,7 +56,7 @@ Everything is stored in `~/.talaria` (`%USERPROFILE%\.talaria` on Windows), or `
   ```json
   {"agents": [{"id": "hermes", "name": "Hermes", "health_url": "http://127.0.0.1:8642/health"}]}
   ```
-  Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON `status` says otherwise), any other HTTP status is `degraded`, and no answer is `offline`.
+  Each agent is checked every 30 s. A 2xx answer is `ready` (or `degraded` if its JSON `status` says otherwise), any other HTTP status is `degraded`, and no answer is `offline`. If the health URL doesn't answer but the agent has an `api_url` whose `/health` does (Hermes's dashboard is a separate process from its API server), the agent counts as `ready` with a note.
 
 ## Chat
 
