@@ -1,7 +1,6 @@
 package io.github.meepdong.talaria.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +26,8 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,7 +45,6 @@ fun Modifier.onSecondaryClick(action: () -> Unit): Modifier = pointerInput(Unit)
 private enum class MessageDialog { SELECT, MOVE, DELETE }
 
 /** Long press (or right click) a message for its menu: copy, select, share, move, delete (UI.md §4). */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WithMessageMenu(m: MessageItem, view: ChatView, actions: TalariaActions, content: @Composable () -> Unit) {
     var menu by remember { mutableStateOf(false) }
@@ -52,8 +52,11 @@ fun WithMessageMenu(m: MessageItem, view: ChatView, actions: TalariaActions, con
     @Suppress("DEPRECATION") val clipboard = LocalClipboardManager.current
     val hasText = m.text.isNotBlank()
     val canRemove = view.openId != null && m.state !in setOf(ItemState.STREAMING, ItemState.SENDING, ItemState.QUEUED)
-    Box(Modifier.fillMaxWidth().combinedClickable(interactionSource = null, indication = null, onClick = {}, onLongClick = { menu = true })
-        .onSecondaryClick { menu = true }.testTag("hold-${m.key}")) {
+    // a gesture rather than combinedClickable, which would merge the message's buttons into one node
+    Box(Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onLongPress = { menu = true }) }
+        .onSecondaryClick { menu = true }
+        .semantics { onLongClick("Message options") { menu = true; true } }
+        .testTag("hold-${m.key}")) {
         content()
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             @Composable
