@@ -58,6 +58,10 @@ fun sizeLabel(bytes: Long): String = when {
 private fun Attachment.chip(images: ImageCache) =
     AttachmentChip(name, kind == Attachment.Kind.IMAGE, size?.let(::sizeLabel), images[preview])
 
+private val APPROVAL_LABELS = mapOf(
+    "once" to "Allow once", "session" to "Allow for this chat", "always" to "Always allow", "deny" to "Deny",
+)
+
 private fun ChatMessage.item(nowMs: Long, images: ImageCache) = MessageItem(
     key = key,
     fromUser = role == Role.USER,
@@ -69,6 +73,9 @@ private fun ChatMessage.item(nowMs: Long, images: ImageCache) = MessageItem(
         toolNames.map { ToolChip(it, "completed") },
     commentary = commentary,
     waitingForApproval = waitingForApproval,
+    approval = approval?.takeIf { waitingForApproval }?.let { a ->
+        ApprovalItem(a.command, a.description, a.choices.mapNotNull { c -> APPROVAL_LABELS[c]?.let { c to it } })
+    },
     error = error,
     attachments = attachments.map { it.chip(images) },
 )

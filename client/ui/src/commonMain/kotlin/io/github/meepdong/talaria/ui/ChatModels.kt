@@ -32,9 +32,14 @@ data class MessageItem(
     val tools: List<ToolChip> = emptyList(),
     val commentary: String? = null,
     val waitingForApproval: Boolean = false,
+    /** What the agent asks to run, with the answers it takes; null while it isn't asking. */
+    val approval: ApprovalItem? = null,
     val error: String? = null,
     val attachments: List<AttachmentChip> = emptyList(),
 )
+
+/** An approval card: [choices] are (choice, button label), in Hermes's order. */
+data class ApprovalItem(val command: String?, val description: String?, val choices: List<Pair<String, String>>)
 
 data class ChatView(
     val conversations: List<ConversationItem>,

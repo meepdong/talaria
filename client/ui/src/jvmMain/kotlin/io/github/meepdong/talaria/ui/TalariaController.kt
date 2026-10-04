@@ -688,6 +688,10 @@ class TalariaController(
         chat?.stop(turnId)
     }
 
+    override fun approve(turnId: String, choice: String) {
+        chat?.approve(turnId, choice)
+    }
+
     override fun loadOlder() {
         val c = chat ?: return
         c.state.value.openId?.let { c.loadOlder(it) }

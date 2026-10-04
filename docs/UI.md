@@ -112,6 +112,7 @@ The folders the bridge shares (spec/README.md §12): what was sent from Talaria,
 **Voice:** hold 🎤 to talk (or tap to toggle). Live transcript fills the box; edit, then send. Optional auto-send.
 **Attach:** camera, photo, PDF, file. Images are downscaled and location data removed.
 **Composer:** one rounded field with 📎 on the left and 🎤 on the right inside it, and a round ➤ beside it, so the text gets the width on a phone.
+**Approvals:** when Hermes wants to run something it flags as risky, the reply shows a card with the command, why it was flagged, and Allow once / Allow for this chat / Always allow / Deny (only the answers Hermes offers). Any paired device can answer; the card goes away on all of them.
 **Model:** the chip in the header opens a dropdown of the models Hermes has keys for, grouped by provider, with a search box at the top. `/model name` picks a model directly when one matches, and opens the dropdown filtered to the matches when several do.
 
 ## 5. Group chat

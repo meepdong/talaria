@@ -36,7 +36,8 @@
             "text",
             "tool_progress",
             "commentary",
-            "approval"
+            "approval",
+            "approval_done"
           ]
         },
         "text": {
@@ -63,6 +64,48 @@
           "required": [
             "name",
             "state"
+          ]
+        },
+        "approval": {
+          "type": "object",
+          "description": "The pending approval (\u00a79): what the agent wants to run and the answers it accepts.",
+          "properties": {
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "once",
+                  "session",
+                  "always",
+                  "deny"
+                ]
+              }
+            },
+            "command": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "request_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "choices"
+          ]
+        },
+        "choice": {
+          "enum": [
+            "once",
+            "session",
+            "always",
+            "deny"
           ]
         }
       },

@@ -247,6 +247,22 @@ class ChatRepository(
         }
     }
 
+    /** Answer the approval [turnId] waits for: once, session, always or deny (§9). */
+    fun approve(turnId: String, choice: String) {
+        scope.launch {
+            try {
+                api.request("chat.approve", buildJsonObject {
+                    put("turn_id", turnId)
+                    put("choice", choice)
+                })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't answer the approval: ${e.message}")
+            }
+        }
+    }
+
     /** A note for the open conversation's running reply (Hermes's /steer). */
     fun steer(text: String) {
         val turn = _state.value.openSummary?.activeTurnId
@@ -691,15 +707,16 @@ class ChatRepository(
     }
 
     private fun applyDelta(m: ChatMessage, p: JsonObject): ChatMessage = when (p.str("kind")) {
-        "text" -> m.copy(text = m.text + p.str("text").orEmpty(), waitingForApproval = false)
+        "text" -> m.copy(text = m.text + p.str("text").orEmpty(), waitingForApproval = false, approval = null)
         "tool_progress" -> p.obj("tool")?.let { t ->
             val step = ToolStep(t.str("name") ?: "tool", t.str("state") ?: "started", t.str("preview"))
             val open = m.tools.indexOfLast { it.name == step.name && it.state == "started" }
             val tools = if (step.state != "started" && open >= 0) m.tools.mapIndexed { i, x -> if (i == open) step else x } else m.tools + step
-            m.copy(tools = tools, waitingForApproval = false)
+            m.copy(tools = tools, waitingForApproval = false, approval = null)
         } ?: m
-        "commentary" -> m.copy(commentary = p.str("text"), waitingForApproval = false)
-        "approval" -> m.copy(commentary = p.str("text"), waitingForApproval = true)
+        "commentary" -> m.copy(commentary = p.str("text"), waitingForApproval = false, approval = null)
+        "approval" -> m.copy(commentary = p.str("text"), waitingForApproval = true, approval = parseApproval(p.obj("approval")))
+        "approval_done" -> m.copy(commentary = APPROVAL_ANSWERS[p.str("choice")], waitingForApproval = false, approval = null)
         else -> m
     }
 
@@ -740,7 +757,7 @@ class ChatRepository(
             }.sortedByDescending { it.updatedAt })
             s = s.withMessages(conv, onlyLoaded = true) { list ->
                 val done = { m: ChatMessage ->
-                    m.copy(text = text.ifEmpty { m.text }, state = state, error = error, waitingForApproval = false, commentary = null)
+                    m.copy(text = text.ifEmpty { m.text }, state = state, error = error, waitingForApproval = false, approval = null, commentary = null)
                 }
                 if (list.any { it.key == "reply:$turn" }) list.map { if (it.key == "reply:$turn") done(it) else it }
                 else list + done(ChatMessage("reply:$turn", Role.ASSISTANT, "", null, state, turnId = turn))
@@ -786,6 +803,7 @@ class ChatRepository(
                         else m.copy(text = t.str("text").orEmpty(), tools = tools,
                             commentary = if (status == "running") commentary else null,
                             waitingForApproval = waiting && status == "running",
+                            approval = if (waiting && status == "running") parseApproval(t.obj("approval")) else null,
                             state = if (status == "running") MessageState.STREAMING else m.state,
                             error = t.str("error"))
                     }
@@ -870,4 +888,14 @@ private fun ChatState.upsert(c: ConversationSummary): ChatState =
 private fun ModelChoice.json() = buildJsonObject {
     put("provider", provider)
     put("model", model)
+}
+
+private val APPROVAL_ANSWERS = mapOf(
+    "once" to "Allowed once", "session" to "Allowed for this chat", "always" to "Always allowed", "deny" to "Denied",
+)
+
+private fun parseApproval(o: JsonObject?): PendingApproval? {
+    o ?: return null
+    val choices = (o["choices"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+    return PendingApproval(choices.ifEmpty { listOf("once", "deny") }, o.str("command"), o.str("description"))
 }

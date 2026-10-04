@@ -116,9 +116,14 @@ data class ChatMessage(
     /** The agent's latest progress note while it works. */
     val commentary: String? = null,
     val waitingForApproval: Boolean = false,
+    /** What the agent asks to run while [waitingForApproval], and the answers it takes. */
+    val approval: PendingApproval? = null,
     val error: String? = null,
     val attachments: List<Attachment> = emptyList(),
 )
+
+/** An approval a running reply waits for (§9): answer it with one of [choices] through [ChatRepository.approve]. */
+data class PendingApproval(val choices: List<String>, val command: String?, val description: String?)
 
 /** The loaded part of one conversation. */
 data class ConversationThread(

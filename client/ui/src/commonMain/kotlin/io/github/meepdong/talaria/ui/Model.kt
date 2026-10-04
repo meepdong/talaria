@@ -164,6 +164,8 @@ interface TalariaActions {
     fun closeStatus() {}
     fun retryMessage(key: String) {}
     fun stopReply(turnId: String) {}
+    /** Answer the approval a running reply waits for: once, session, always or deny. */
+    fun approve(turnId: String, choice: String) {}
     fun loadOlder() {}
     fun renameConversation(id: String, title: String) {}
     fun deleteConversation(id: String) {}

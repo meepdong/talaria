@@ -50,6 +50,7 @@ class FakeHermes:
         self.down = False
         self.messages: list = []  # every message a turn was sent with
         self.steered: list[tuple[str, str]] = []
+        self.approvals: list[tuple[str, dict]] = []
         self.locks: dict[str, dict] = {}
         self.deleted: list[str] = []
 
@@ -69,6 +70,13 @@ class FakeHermes:
         if path.startswith("/v1/runs/") and path.endswith("/steer"):
             self.steered.append((path.split("/")[3], json.loads(req.content)["input"]))
             return httpx.Response(200, json={"object": "hermes.run.steer", "accepted": True})
+        if path.startswith("/v1/runs/") and path.endswith("/approval"):
+            if not self.hold or self.release.is_set():
+                return httpx.Response(409, json={"error": {"message": "Run has no pending approval",
+                                                           "code": "approval_not_pending"}})
+            self.approvals.append((path.split("/")[3], json.loads(req.content)))
+            self.release.set()
+            return httpx.Response(200, json={"object": "hermes.run.approval_response"})
         if path == "/api/model/options":
             return httpx.Response(200, json={"provider": "openrouter", "model": "m-1", "providers": [
                 {"slug": "openrouter", "name": "OpenRouter", "authenticated": True, "models": ["m-1", "m-2"]},
@@ -615,6 +623,42 @@ async def test_models_steer_status_and_aside(chat_bridge):
     late = await call(ws, "t2", "chat.steer", {"turn_id": "t-missing", "text": "x"})
     assert late["error"]["code"] == m.NOT_FOUND
     await ws.close()
+
+
+async def test_approve_from_the_app(chat_bridge):
+    bridge, hermes = chat_bridge
+    hermes.hold = True
+    hermes.script = [("approval.request", {"command": "rm -rf /tmp/build", "description": "recursive delete",
+                                           "request_id": "req-1", "choices": ["once", "session", "deny"]}),
+                     ("assistant.delta", {"delta": "Done"})]
+    hermes.final = "Done"
+    phone, laptop = await connected(bridge), await connected(bridge)
+    res = (await call(phone, "c1", "chat.send", {"text": "Clean the build"}))["result"]
+    for ws in (phone, laptop):
+        while (msg := await recv(ws)).get("method") != "chat.delta":
+            pass
+        check("chat.delta", msg)
+        assert msg["params"]["kind"] == "approval"
+        assert msg["params"]["approval"] == {"choices": ["once", "session", "deny"], "command": "rm -rf /tmp/build",
+                                             "description": "recursive delete", "request_id": "req-1"}
+    snap = check("chat.turn.get.result", await call(phone, "g1", "chat.turn.get", {"turn_id": res["turn_id"]}))
+    assert snap["result"]["turn"]["waiting_for_approval"] is True
+    assert snap["result"]["turn"]["approval"]["request_id"] == "req-1"
+
+    bad = await call(phone, "a0", "chat.approve", {"turn_id": res["turn_id"], "choice": "always"})
+    assert bad["error"]["code"] == m.INVALID_PARAMS  # Hermes didn't offer it here
+    ok = check("chat.approve.result", await call(laptop, "a1", "chat.approve", {"turn_id": res["turn_id"], "choice": "session"}))
+    assert ok["result"] == {"turn_id": res["turn_id"], "choice": "session"}
+    assert hermes.approvals == [("run_1", {"choice": "session", "request_id": "req-1"})]
+    while (msg := await recv(phone)).get("method") != "chat.delta" or msg["params"]["kind"] != "approval_done":
+        pass
+    check("chat.delta", msg)
+    assert msg["params"]["choice"] == "session"
+    await until_done(phone, res["turn_id"])
+    late = await call(phone, "a2", "chat.approve", {"turn_id": res["turn_id"], "choice": "once"})
+    assert late["error"]["code"] == m.CONFLICT
+    await phone.close()
+    await laptop.close()
 
 
 async def test_openrouter_balance(tmp_path: Path):

@@ -108,6 +108,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `chat.delta` | notification | `{conversation_id, turn_id, seq, kind, text?, tool?}` |
 | `chat.done` | notification | `{conversation_id, turn_id, seq, status, text, error?, usage?, runtime?}` |
 | `chat.cancel` | request | `{turn_id}` → `{turn_id, status}` |
+| `chat.approve` | request | `{turn_id, choice}` → `{turn_id, choice}` |
 | `chat.turn.get` | request | `{turn_id}` → `{turn: snapshot}` |
 | `chat.history` | request | `{conversation_id, before?, limit?}` → `{messages, next_before}` |
 | `conversations.list` | request | `{}` → `{conversations}` |
@@ -122,11 +123,14 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 - `text`: `text` is the next piece of the answer.
 - `tool_progress`: `tool` is `{name, state, preview?}`, with `state` one of `started`, `completed`, `failed`. `preview` is at most 500 characters.
 - `commentary`: `text` is a progress note the agent wrote between tool calls. It is not part of the answer.
-- `approval`: the agent is waiting for an approval; `text` describes it. Approving from the app comes later, so clients show "Waiting for approval in Hermes".
+- `approval`: the agent is waiting for an approval before it runs something. `text` describes it, and `approval` is `{choices, command?, description?, request_id?}`: what it wants to run, why it was flagged, and the answers it accepts, from `once`, `session` (this conversation), `always` and `deny`.
+- `approval_done`: the approval was answered from a device; `choice` says how. Every device drops its approval card.
 
 **Done.** `status` is `completed`, `failed` (with `error`) or `cancelled`. `text` is the whole answer, which may differ from the joined `text` deltas, and clients replace the streamed text with it. `usage` holds `input_tokens`, `output_tokens`, `total_tokens`; `runtime` holds the `provider` and `model` that actually answered.
 
-**Catching up.** A device that reconnects while it was showing a running turn calls `chat.turn.get`. The snapshot has the turn's `status`, `user_text`, `text` so far, `tools`, `commentary`, `waiting_for_approval`, and `seq`, the last `seq` it covers. The device replaces what it showed with the snapshot and ignores any delta with `seq` at or below it. The bridge keeps the last 50 turns; an older `turn_id` gets `NOT_FOUND`, and the device reloads `chat.history` instead. `conversations.list` names a conversation's running turn as `active_turn_id`.
+**Approvals.** `chat.approve` answers the approval a running turn waits for, with one of the `choices` from its `approval` delta. Only a device can answer: a conversation started from Talaria has no other place to approve it, and an unanswered approval times out in Hermes as a denial. It fails with `CONFLICT` when nothing is waiting (already answered, or the turn ended) and `INVALID_PARAMS` for a choice Hermes didn't offer. The bridge passes the answer to Hermes's `POST /v1/runs/{run_id}/approval`.
+
+**Catching up.** A device that reconnects while it was showing a running turn calls `chat.turn.get`. The snapshot has the turn's `status`, `user_text`, `text` so far, `tools`, `commentary`, `waiting_for_approval` with the pending `approval`, and `seq`, the last `seq` it covers. The device replaces what it showed with the snapshot and ignores any delta with `seq` at or below it. The bridge keeps the last 50 turns; an older `turn_id` gets `NOT_FOUND`, and the device reloads `chat.history` instead. `conversations.list` names a conversation's running turn as `active_turn_id`.
 
 **One turn at a time.** A conversation runs one turn at a time; a `chat.send` while one runs is queued (§11). `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
 
@@ -134,7 +138,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
-Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.
 
 ## 10. Attachments (M2)
 
