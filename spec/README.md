@@ -284,3 +284,21 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 **Errors.** `AGENT_UNAVAILABLE` when the agent's jobs can't be reached; `NOT_FOUND` for an unknown automation; `INVALID_PARAMS` for a bad schedule, window or day; `CONFLICT` when changing the `when` of a `kind: other` job.
 
 Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`.
+
+## 15. Tools for the agent (M2)
+
+The bridge offers the agent a few tools over the Model Context Protocol (MCP), so the agent can work on what Talaria keeps, such as the to-do list (§13), from any chat, automation or other app it is used in. This is between the bridge and the agent only; devices see the results through the usual notifications.
+
+**Endpoint.** MCP's Streamable HTTP transport at `http://127.0.0.1:<port>/mcp` (port 8767 by default), on loopback only. The bridge answers each `POST` with one JSON-RPC response as `application/json` (or `202` for a notification) and offers no event stream, so `GET` gets `405`. It speaks protocol versions `2025-06-18`, `2025-03-26` and `2024-11-05`, and supports `initialize`, `ping`, `tools/list` and `tools/call`.
+
+**Who may call.** Each agent in `agents.json` with a `tools_key_file` gets the endpoint; the file holds a random token of at least 32 characters, readable only by the bridge, and the agent sends it as `Authorization: Bearer <token>`. A request without a known token gets `401`; a request with an `Origin` header that isn't a loopback address gets `403`, so a web page can't reach the endpoint through the browser.
+
+**Tools.**
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `todo_list` | `{include_done?}` | The open to-dos, oldest first, each `{id, text, due?}`; with `include_done: true` also the recently done ones. |
+| `todo_add` | `{text, due?}` | Adds a to-do (`text` 1 to 500 characters, `due` as `YYYY-MM-DD`) and returns it. |
+| `todo_update` | `{id, text?, due?, done?}` | Changes a to-do, ticks it off (`done: true`) or opens it again, and returns it. `due: null` clears the date. |
+
+A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos: it ticks them off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.

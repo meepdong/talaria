@@ -97,6 +97,31 @@ To show the calendar, give the bridge a command that prints a day's events. For 
 
 Test it with `sudo -u talaria /usr/bin/sudo -n -u hermes /usr/local/lib/talaria/calendar-day $(date +%F)`. The bridge never holds the Google token.
 
+## Tools for the agent
+
+The bridge can give Hermes tools to keep the to-do list on Home (`spec/README.md` §15): list, add, reword and tick off. To-dos it adds in any chat or automation show up on every device. The tools are an MCP server on `http://127.0.0.1:8767/mcp`, reachable only from the server itself, and each agent needs its own token. Make one in a file only the bridge can read and add it to the agent:
+
+```sh
+install -m 600 -o talaria /dev/null /etc/talaria/hermes-tools.key
+openssl rand -hex 32 > /etc/talaria/hermes-tools.key
+```
+
+```json
+"tools_key_file": "/etc/talaria/hermes-tools.key"
+```
+
+Then give Hermes the same token in `~/.hermes/.env` as `TALARIA_TOOLS_KEY=…` and add the server to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  talaria:
+    url: "http://127.0.0.1:8767/mcp"
+    headers:
+      Authorization: "Bearer ${TALARIA_TOOLS_KEY}"
+```
+
+Restart the bridge, then Hermes (or `/reload-mcp` in a Hermes chat). `--agent-tools-port` changes the port. There is no delete tool, so a prompt that tricks the agent can't wipe the list; deleting stays in the apps.
+
 ## Commands
 
 | Command | What it does |

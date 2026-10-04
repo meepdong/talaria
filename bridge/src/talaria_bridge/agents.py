@@ -35,6 +35,7 @@ class AgentConfig:
     openrouter_key_file: str | None = None  # an OpenRouter management key, for account.balance (§11)
     files: tuple[dict, ...] = ()  # shared folders (§12): {"id", "name", "path", "agent_path"?}
     calendar_command: tuple[str, ...] = ()  # calendar.day (§14): a command printing a day's events as JSON
+    tools_key_file: str | None = None  # tools for the agent (§15): the token it sends to the bridge's MCP endpoint
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -70,9 +71,12 @@ def load_agents(path: Path) -> list[AgentConfig]:
                 and (not calendar or Path(calendar[0]).is_absolute())):
             raise ValueError(f"{path}: an agent's calendar_command must be a list of arguments starting with an"
                              " absolute path")
+        tools_key = entry.get("tools_key_file")
+        if tools_key is not None and not (isinstance(tools_key, str) and Path(tools_key).is_absolute()):
+            raise ValueError(f"{path}: an agent's tools_key_file must be an absolute path")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
-                                  tuple(files), tuple(calendar)))
+                                  tuple(files), tuple(calendar), tools_key))
     return agents
 
 
