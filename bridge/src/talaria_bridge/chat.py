@@ -42,6 +42,7 @@ HISTORY_DEFAULT, HISTORY_MAX = 50, 100
 MAX_ATTACHMENTS = 10
 MAX_QUEUED = 5
 MAX_NOTE = 4000
+MAX_HIDE = 50
 ASIDE_TRANSCRIPT_CHARS = 20000
 MAX_INLINE_IMAGES = 7 * 1024 * 1024  # Hermes refuses requests over 10 MB, and base64 adds a third
 # the line the bridge adds to a message for each file it saved to the agent's inbox (§10)
@@ -104,11 +105,17 @@ CREATE TABLE IF NOT EXISTS conversations (
     last_role TEXT,
     last_text TEXT,
     model_provider TEXT,
-    model_name TEXT
+    model_name TEXT,
+    pinned INTEGER
+);
+CREATE TABLE IF NOT EXISTS hidden_messages (
+    conversation_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, message_id)
 );
 """
 COLUMNS = ("id", "agent_id", "hermes_session_id", "title", "created_at", "updated_at", "last_role", "last_text",
-           "model_provider", "model_name")
+           "model_provider", "model_name", "pinned")
 
 
 @dataclass
@@ -123,6 +130,7 @@ class Conversation:
     last_text: str | None = None
     model_provider: str | None = None  # the model the conversation is pinned to (§11)
     model_name: str | None = None
+    pinned: int | None = None  # pinned to the top of the list (§9)
 
     @property
     def model(self) -> dict | None:
@@ -140,6 +148,8 @@ class ChatStore:
         for column in ("model_provider", "model_name"):  # added in M2 §11
             if column not in have:
                 self.db.execute(f"ALTER TABLE conversations ADD COLUMN {column} TEXT")
+        if "pinned" not in have:
+            self.db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER")
 
     def close(self) -> None:
         self.db.close()
@@ -169,8 +179,20 @@ class ChatStore:
     def rename(self, conversation_id: str, title: str) -> None:
         self.db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
 
+    def pin(self, conversation_id: str, pinned: bool) -> None:
+        self.db.execute("UPDATE conversations SET pinned = ? WHERE id = ?", (1 if pinned else None, conversation_id))
+
+    def hide(self, conversation_id: str, message_ids: list[str]) -> None:
+        self.db.executemany("INSERT OR IGNORE INTO hidden_messages (conversation_id, message_id) VALUES (?, ?)",
+                            [(conversation_id, i) for i in message_ids])
+
+    def hidden(self, conversation_id: str) -> set[str]:
+        rows = self.db.execute("SELECT message_id FROM hidden_messages WHERE conversation_id = ?", (conversation_id,))
+        return {r["message_id"] for r in rows}
+
     def delete(self, conversation_id: str) -> None:
         self.db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        self.db.execute("DELETE FROM hidden_messages WHERE conversation_id = ?", (conversation_id,))
 
 
 # turns
@@ -779,7 +801,8 @@ class ChatService:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
         except HermesUnavailable as exc:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
-        return {"messages": history_messages(rows),
+        hidden = self.store.hidden(conv.id)
+        return {"messages": [x for x in history_messages(rows) if x["id"] not in hidden],
                 "next_before": str(offset + len(rows)) if len(rows) >= limit else None}
 
     def list(self) -> dict:
@@ -795,6 +818,8 @@ class ChatService:
                 item["queued_turn_ids"] = [t.turn_id for t in self._queues[c.id]]
             if c.model is not None:
                 item["model"] = c.model
+            if c.pinned:
+                item["pinned"] = True
             out.append(item)
         return {"conversations": out}
 
@@ -813,6 +838,33 @@ class ChatService:
                 log.warning("could not rename Hermes session %s: %s", conv.hermes_session_id, exc)
         self.store.rename(conv.id, title)
         return {"conversation_id": conv.id, "title": title}
+
+    async def pin(self, p: dict) -> dict:
+        conv = self._conversation(p)
+        pinned = p.get("pinned")
+        if not isinstance(pinned, bool):
+            raise RpcError(m.INVALID_PARAMS, "pinned must be true or false")
+        client = self.agents.get(conv.agent_id)
+        if client is not None:
+            try:
+                await client.pin_session(conv.hermes_session_id, pinned)
+            except (HermesError, HermesUnavailable) as exc:
+                log.warning("could not pin Hermes session %s: %s", conv.hermes_session_id, exc)
+        self.store.pin(conv.id, pinned)
+        return {"conversation_id": conv.id, "pinned": pinned}
+
+    async def hide(self, p: dict) -> dict:
+        """Hide messages from Talaria on every device. The agent's session keeps them."""
+        conv = self._conversation(p)
+        ids = p.get("message_ids")
+        if not (isinstance(ids, list) and 0 < len(ids) <= MAX_HIDE and all(isinstance(i, str) and 0 < len(i) <= 64
+                                                                          for i in ids)):
+            raise RpcError(m.INVALID_PARAMS, f"message_ids must list 1 to {MAX_HIDE} message ids")
+        ids = list(dict.fromkeys(ids))
+        self.store.hide(conv.id, ids)
+        result = {"conversation_id": conv.id, "message_ids": ids}
+        await self.broadcast(m.notification("chat.hidden", result))
+        return result
 
     async def delete(self, p: dict) -> dict:
         conv = self._conversation(p)
@@ -1036,6 +1088,10 @@ class ChatService:
             return await self.rename(p), None
         if method == "conversations.delete":
             return await self.delete(p), None
+        if method == "conversations.pin":
+            return await self.pin(p), None
+        if method == "chat.hide":
+            return await self.hide(p), None
         if method == "conversations.set_model":
             return await self.set_model(p), None
         if method == "agent.models":
@@ -1056,7 +1112,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "chat.steer", "chat.approve", "chat.aside", "chat.status",
-                          "automations.run_in_chat",
+                          "automations.run_in_chat", "conversations.pin", "chat.hide",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 

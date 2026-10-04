@@ -90,7 +90,7 @@ class FakeHermes:
         if session is None:
             return httpx.Response(404, json={"error": {"message": "Session not found", "code": "session_not_found"}})
         if method == "PATCH":
-            session["title"] = json.loads(req.content)["title"]
+            session.update(json.loads(req.content))
             return httpx.Response(200, json={"session": {"id": parts[3]}})
         if method == "DELETE":
             self.deleted.append(parts[3])
@@ -345,6 +345,35 @@ async def test_rename_and_delete(chat_bridge):
     assert hermes.sessions == {}
     assert (await call(ws, "l1", "conversations.list"))["result"] == {"conversations": []}
     await ws.close()
+
+
+async def test_pin_and_hide(chat_bridge):
+    bridge, hermes = chat_bridge
+    phone, laptop = await connected(bridge), await connected(bridge)
+    res = (await call(phone, "c1", "chat.send", {"text": "Keep this"}))["result"]
+    await until_done(phone, res["turn_id"])
+    conv = res["conversation_id"]
+    pinned = check("conversations.result", await call(phone, "p1", "conversations.pin",
+                                                      {"conversation_id": conv, "pinned": True}))
+    assert pinned["result"] == {"conversation_id": conv, "pinned": True}
+    assert hermes.sessions[f"talaria_{conv[2:]}"]["pinned"] is True
+    listed = check("conversations.list.result", await call(phone, "l1", "conversations.list"))["result"]
+    assert listed["conversations"][0]["pinned"] is True
+
+    before = (await call(phone, "h1", "chat.history", {"conversation_id": conv}))["result"]["messages"]
+    question = next(x for x in before if x["role"] == "user")
+    check("chat.hide", m.request("x", "chat.hide", {"conversation_id": conv, "message_ids": [question["id"]]}))
+    hid = check("chat.hide.result", await call(phone, "x1", "chat.hide",
+                                               {"conversation_id": conv, "message_ids": [question["id"]]}))
+    assert hid["result"] == {"conversation_id": conv, "message_ids": [question["id"]]}
+    while (msg := await recv(laptop)).get("method") != "chat.hidden":
+        pass
+    assert check("chat.hidden", msg)["params"] == {"conversation_id": conv, "message_ids": [question["id"]]}
+    after = (await call(laptop, "h2", "chat.history", {"conversation_id": conv}))["result"]["messages"]
+    assert [x["id"] for x in after] == [x["id"] for x in before if x["id"] != question["id"]]
+    assert len(hermes.sessions[f"talaria_{conv[2:]}"]["messages"]) >= 2, "Hermes keeps the hidden message"
+    await phone.close()
+    await laptop.close()
 
 
 async def test_chat_needs_ready(chat_bridge):

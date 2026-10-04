@@ -93,6 +93,9 @@ class HermesClient:
     async def rename_session(self, session_id: str, title: str) -> None:
         await self._call("PATCH", f"/api/sessions/{session_id}", json={"title": title})
 
+    async def pin_session(self, session_id: str, pinned: bool) -> None:
+        await self._call("PATCH", f"/api/sessions/{session_id}", json={"pinned": pinned})
+
     async def delete_session(self, session_id: str) -> None:
         try:
             await self._call("DELETE", f"/api/sessions/{session_id}")
