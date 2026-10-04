@@ -21,6 +21,7 @@ test = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4.22"]
 
 [project.scripts]
 talaria = "talaria_bridge.cli:main"
+talaria-ops = "talaria_bridge.ops.daemon:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/talaria_bridge"]

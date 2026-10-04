@@ -1,0 +1,384 @@
+"""The server operations talaria-ops offers (PROTOCOL §10.8, spec/README.md §16).
+
+Each operation is a fixed piece of code with typed parameters. Commands are argv lists built here,
+never a shell string, and parameters are checked against enums, bounds or live lists before anything runs.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+OUTPUT_LIMIT = 64 * 1024
+
+REPO = "/opt/talaria"
+BRIDGE_PYTHON = "/opt/talaria/.venv/bin/python"
+HERMES_LOG = "/home/hermes/.hermes/logs/agent.log"
+
+# name -> (kind, unit). "system" units are managed with systemctl; Hermes runs as a user unit of `hermes`.
+SERVICES: dict[str, tuple[str, str]] = {
+    "talaria-bridge": ("system", "talaria-bridge.service"),
+    "talaria-ops": ("system", "talaria-ops.service"),
+    "docker": ("system", "docker.service"),
+    "tailscaled": ("system", "tailscaled.service"),
+    "ssh": ("system", "ssh.service"),
+    "hermes-gateway": ("user:hermes", "hermes-gateway.service"),
+}
+# talaria-ops can't restart itself mid-request, and ssh is socket-activated (restarting it gains nothing).
+RESTARTABLE = ["talaria-bridge", "docker", "tailscaled", "hermes-gateway"]
+
+
+class OpError(Exception):
+    """A request talaria-ops refuses; the message is shown to the owner or the agent."""
+
+
+@dataclass
+class Run:
+    exit_code: int | None  # None: it timed out and was killed
+    output: str
+
+
+Runner = Callable[..., Awaitable[Run]]
+"""runner(argv, *, user=None, env=None, cwd=None, timeout=60) -> Run. Injectable for tests."""
+
+
+@dataclass
+class Outcome:
+    ok: bool
+    summary: str
+    output: str = ""
+    exit_code: int | None = 0
+    data: object = None
+
+    def as_dict(self, op: str, started_at: int, finished_at: int) -> dict:
+        out = {"op": op, "ok": self.ok, "exit_code": self.exit_code, "summary": self.summary[:500],
+               "output": self.output[-OUTPUT_LIMIT:], "started_at": started_at, "finished_at": finished_at}
+        if self.data is not None:
+            out["data"] = self.data
+        return out
+
+
+@dataclass
+class Param:
+    type: str  # "string" | "integer"
+    enum: list[str] | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    default: object = None
+    choices: Callable[["Context"], Awaitable[list[str]]] | None = None  # a live list, e.g. running containers
+
+    def describe(self, live: list[str] | None) -> dict:
+        out: dict = {"type": self.type}
+        values = live if live is not None else self.enum
+        if values is not None:
+            out["enum"] = values
+        if self.minimum is not None:
+            out["minimum"] = self.minimum
+        if self.maximum is not None:
+            out["maximum"] = self.maximum
+        if self.default is not None:
+            out["default"] = self.default
+        return out
+
+
+@dataclass
+class Context:
+    run: Runner
+    audit_tail: Callable[[int], list[dict]] = lambda n: []
+    proc: Path = Path("/proc")
+    hermes_log: Path = Path(HERMES_LOG)
+
+
+@dataclass
+class Op:
+    name: str
+    tier: int
+    title: str
+    do: Callable[[Context, dict], Awaitable[Outcome]]
+    params: dict[str, Param] = field(default_factory=dict)
+    summary: Callable[[dict], str] | None = None
+
+    def describe_summary(self, params: dict) -> str:
+        return self.summary(params) if self.summary else self.title
+
+
+# Validation
+
+async def check_params(op: Op, given: object, ctx: Context) -> dict:
+    """The parameters with defaults filled in; OpError for anything unknown, missing, mistyped or out of range."""
+    if given is None:
+        given = {}
+    if not isinstance(given, dict):
+        raise OpError("params must be an object")
+    unknown = set(given) - set(op.params)
+    if unknown:
+        raise OpError(f"{op.name} takes no parameter {sorted(unknown)[0]!r}")
+    out = {}
+    for name, spec in op.params.items():
+        value = given.get(name, spec.default)
+        if value is None:
+            raise OpError(f"{op.name} needs {name!r}")
+        if spec.type == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise OpError(f"{name} must be an integer")
+            if (spec.minimum is not None and value < spec.minimum) or (spec.maximum is not None and value > spec.maximum):
+                raise OpError(f"{name} must be between {spec.minimum} and {spec.maximum}")
+        else:
+            if not isinstance(value, str):
+                raise OpError(f"{name} must be a string")
+            allowed = await spec.choices(ctx) if spec.choices else spec.enum
+            if allowed is not None and value not in allowed:
+                raise OpError(f"{name} must be one of {', '.join(allowed) or '(none available)'}")
+        out[name] = value
+    return out
+
+
+def params_json(params: dict) -> str:
+    """The exact string devices sign (spec/README.md §16)."""
+    return json.dumps(params, sort_keys=True, separators=(",", ":"))
+
+
+# Helpers
+
+def _done(run: Run, summary: str, data: object = None) -> Outcome:
+    if run.exit_code is None:
+        return Outcome(False, f"{summary}: timed out", run.output, None, data)
+    ok = run.exit_code == 0
+    return Outcome(ok, summary if ok else f"{summary}: failed (exit {run.exit_code})", run.output, run.exit_code, data)
+
+
+def _systemctl(kind: str) -> list[str]:
+    return ["systemctl", "--user", "-M", "hermes@"] if kind == "user:hermes" else ["systemctl"]
+
+
+def _tail_file(path: Path, lines: int) -> str:
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 512 * 1024))
+            text = f.read().decode("utf-8", "replace")
+    except OSError as exc:
+        return f"(cannot read {path}: {exc.strerror})"
+    return "\n".join(text.splitlines()[-lines:])
+
+
+async def _containers(ctx: Context) -> list[str]:
+    run = await ctx.run(["docker", "ps", "--format", "{{.Names}}"], timeout=20)
+    return sorted(n for n in run.output.split() if n) if run.exit_code == 0 else []
+
+
+# Tier 0: read
+
+async def system_overview(ctx: Context, p: dict) -> Outcome:
+    def read(name: str) -> str:
+        try:
+            return (ctx.proc / name).read_text()
+        except OSError:
+            return ""
+    mem = {}
+    for line in read("meminfo").splitlines():
+        key, _, rest = line.partition(":")
+        if rest.strip().split():
+            mem[key] = int(rest.split()[0]) * 1024
+    disk = os.statvfs("/")
+    uptime = read("uptime").split()
+    updates = await ctx.run(["/usr/lib/update-notifier/apt-check"], timeout=60)
+    upd = updates.output.strip().splitlines()[-1].split(";") if updates.exit_code == 0 and updates.output.strip() else []
+    failed = await ctx.run(["systemctl", "--failed", "--plain", "--no-legend"], timeout=20)
+    data = {
+        "hostname": os.uname().nodename,
+        "kernel": os.uname().release,
+        "uptime_s": int(float(uptime[0])) if uptime else None,
+        "load": [float(x) for x in read("loadavg").split()[:3]] if read("loadavg") else [],
+        "cpus": os.cpu_count(),
+        "mem_total": mem.get("MemTotal"), "mem_available": mem.get("MemAvailable"),
+        "disk_total": disk.f_blocks * disk.f_frsize, "disk_free": disk.f_bavail * disk.f_frsize,
+        "updates": int(upd[0]) if len(upd) == 2 and upd[0].isdigit() else None,
+        "security_updates": int(upd[1]) if len(upd) == 2 and upd[1].isdigit() else None,
+        "reboot_required": Path("/var/run/reboot-required").exists(),
+        "failed_units": [line.split()[0] for line in failed.output.splitlines() if line.strip()],
+    }
+    used = 100 - round(100 * data["disk_free"] / data["disk_total"]) if data["disk_total"] else 0
+    summary = (f"up {data['uptime_s'] // 3600 if data['uptime_s'] else '?'} h, disk {used}% used, "
+               f"{data['updates'] if data['updates'] is not None else '?'} updates"
+               + (", reboot required" if data["reboot_required"] else "")
+               + (f", {len(data['failed_units'])} failed units" if data["failed_units"] else ""))
+    return Outcome(True, summary, json.dumps(data, indent=1), 0, data)
+
+
+async def services_list(ctx: Context, p: dict) -> Outcome:
+    data = []
+    for name, (kind, unit) in SERVICES.items():
+        run = await ctx.run([*_systemctl(kind), "is-active", unit], timeout=20)
+        data.append({"service": name, "state": (run.output.strip().splitlines() or ["unknown"])[-1]})
+    down = [d["service"] for d in data if d["state"] != "active"]
+    return Outcome(True, "all services active" if not down else f"not active: {', '.join(down)}",
+                   "\n".join(f"{d['service']}: {d['state']}" for d in data), 0, data)
+
+
+async def service_logs(ctx: Context, p: dict) -> Outcome:
+    kind, unit = SERVICES[p["service"]]
+    if kind == "user:hermes":  # Hermes writes its own log files, not the journal
+        return Outcome(True, f"last {p['lines']} lines of Hermes's agent.log", _tail_file(ctx.hermes_log, p["lines"]))
+    run = await ctx.run(["journalctl", "-u", unit, "-n", str(p["lines"]), "--no-pager", "-o", "short-iso"], timeout=30)
+    return _done(run, f"last {p['lines']} log lines of {p['service']}")
+
+
+async def docker_ps(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run(["docker", "ps", "--format", "{{json .}}"], timeout=20)
+    rows = []
+    for line in run.output.splitlines():
+        try:
+            c = json.loads(line)
+        except ValueError:
+            continue
+        rows.append({"name": c.get("Names"), "image": c.get("Image"), "status": c.get("Status")})
+    return _done(run, f"{len(rows)} containers running", rows)
+
+
+async def tailscale_status(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run(["tailscale", "status", "--json"], timeout=20)
+    if run.exit_code != 0:
+        return _done(run, "tailscale status")
+    try:
+        d = json.loads(run.output)
+    except ValueError:
+        return Outcome(False, "tailscale status: unreadable output", run.output[-2000:], run.exit_code)
+    peers = [{"name": x.get("HostName"), "os": x.get("OS"), "online": bool(x.get("Online")),
+              "last_seen": x.get("LastSeen")} for x in (d.get("Peer") or {}).values()]
+    online = sum(1 for x in peers if x["online"])
+    text = "\n".join(f"{x['name']} ({x['os']}): {'online' if x['online'] else 'offline'}" for x in peers)
+    return Outcome(True, f"{online} of {len(peers)} devices online", text, 0,
+                   {"self": (d.get("Self") or {}).get("HostName"), "peers": peers})
+
+
+async def bridge_version(ctx: Context, p: dict) -> Outcome:
+    git = ["git", "-C", REPO]
+    fetch = await ctx.run([*git, "fetch", "-q", "origin"], user="talaria", timeout=60)
+    head = await ctx.run([*git, "log", "-1", "--format=%h %s"], user="talaria", timeout=20)
+    behind = await ctx.run([*git, "rev-list", "--count", "HEAD..origin/main"], user="talaria", timeout=20)
+    n = int(behind.output.strip()) if behind.exit_code == 0 and behind.output.strip().isdigit() else None
+    note = "" if fetch.exit_code == 0 else " (couldn't reach GitHub)"
+    summary = (f"up to date{note}" if n == 0 else f"{n} commits behind GitHub{note}" if n else f"unknown{note}")
+    return Outcome(True, summary, head.output.strip(), 0, {"head": head.output.strip(), "behind": n})
+
+
+async def ssh_recent_logins(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run(["journalctl", "-u", "ssh", "--grep", "Accepted", "-n", str(p["lines"]),
+                         "--no-pager", "-o", "short-iso"], timeout=30)
+    if run.exit_code == 1 and "No entries" in run.output:
+        return Outcome(True, "no recent logins", "", 0)
+    return _done(run, f"last {p['lines']} SSH logins")
+
+
+async def ops_history(ctx: Context, p: dict) -> Outcome:
+    rows = ctx.audit_tail(p["lines"])
+    text = "\n".join(f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(r.get('ts', 0)))}  {r.get('op')}  "
+                     f"{r.get('outcome')}  by {r.get('requested_by')}" for r in rows)
+    return Outcome(True, f"last {len(rows)} operations", text, 0, rows)
+
+
+# Tier 1: change
+
+async def service_restart(ctx: Context, p: dict) -> Outcome:
+    kind, unit = SERVICES[p["service"]]
+    run = await ctx.run([*_systemctl(kind), "restart", "--no-block", unit], timeout=30)
+    return _done(run, f"restarting {p['service']}")
+
+
+async def docker_restart(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run(["docker", "restart", p["container"]], timeout=120)
+    return _done(run, f"restarted {p['container']}")
+
+
+async def bridge_update(ctx: Context, p: dict) -> Outcome:
+    git = ["git", "-C", REPO]
+    log: list[str] = []
+
+    async def step(argv: list[str], timeout: int, **kw) -> Run:
+        run = await ctx.run(argv, user="talaria", timeout=timeout, **kw)
+        log.append(f"$ {' '.join(argv)}\n{run.output.strip()}")
+        return run
+
+    old = (await step([*git, "rev-parse", "HEAD"], 20)).output.strip()
+    pulled = await step([*git, "pull", "--ff-only", "origin", "main"], 120)
+    if pulled.exit_code != 0:
+        return Outcome(False, "bridge update: git pull failed, nothing changed", "\n\n".join(log), pulled.exit_code)
+    new = (await step([*git, "rev-parse", "HEAD"], 20)).output.strip()
+    if new == old:
+        return Outcome(True, "bridge already up to date", "\n\n".join(log), 0)
+    installed = await step([BRIDGE_PYTHON, "-m", "pip", "install", "-q", "-e", f"{REPO}/bridge"], 300)
+    tested = await step([BRIDGE_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider"], 600, cwd=f"{REPO}/bridge") \
+        if installed.exit_code == 0 else installed
+    if tested.exit_code != 0:
+        await step([*git, "reset", "-q", "--hard", old], 30)
+        await step([BRIDGE_PYTHON, "-m", "pip", "install", "-q", "-e", f"{REPO}/bridge"], 300)
+        return Outcome(False, f"bridge update failed its tests; rolled back to {old[:7]}", "\n\n".join(log),
+                       tested.exit_code)
+    restart = await ctx.run(["systemctl", "restart", "--no-block", "talaria-bridge.service"], timeout=30)
+    log.append(f"$ systemctl restart --no-block talaria-bridge.service\n{restart.output.strip()}")
+    return Outcome(restart.exit_code == 0, f"bridge updated {old[:7]} → {new[:7]}, restarting",
+                   "\n\n".join(log), restart.exit_code)
+
+
+async def disk_cleanup(ctx: Context, p: dict) -> Outcome:
+    journal = await ctx.run(["journalctl", "--vacuum-size=200M"], timeout=120)
+    images = await ctx.run(["docker", "image", "prune", "-f"], timeout=300)
+    ok = journal.exit_code == 0 and images.exit_code == 0
+    return Outcome(ok, "cleaned the journal and unused Docker images" if ok else "disk cleanup: a step failed",
+                   f"{journal.output.strip()}\n\n{images.output.strip()}",
+                   0 if ok else (journal.exit_code or images.exit_code))
+
+
+async def apt_upgrade(ctx: Context, p: dict) -> Outcome:
+    env = {"DEBIAN_FRONTEND": "noninteractive"}
+    update = await ctx.run(["apt-get", "update", "-q"], env=env, timeout=300)
+    if update.exit_code != 0:
+        return _done(update, "apt-get update")
+    upgrade = await ctx.run(["apt-get", "-y", "-q", "-o", "Dpkg::Options::=--force-confold", "upgrade"],
+                            env=env, timeout=1800)
+    out = _done(upgrade, "packages upgraded")
+    out.output = f"{update.output.strip()}\n\n{upgrade.output.strip()}"
+    if out.ok and Path("/var/run/reboot-required").exists():
+        out.summary += "; a reboot is required"
+    return out
+
+
+# Tier 2: disruptive
+
+async def system_reboot(ctx: Context, p: dict) -> Outcome:
+    # in 10 s, so this result still reaches the devices
+    run = await ctx.run(["systemd-run", "--on-active=10", "--timer-property=AccuracySec=1s",
+                         "/bin/systemctl", "reboot"], timeout=30)
+    return _done(run, "rebooting in 10 seconds")
+
+
+SERVICE_PARAM = Param("string", enum=list(SERVICES))
+OPS: dict[str, Op] = {op.name: op for op in [
+    Op("system.overview", 0, "Server overview", system_overview),
+    Op("services.list", 0, "Services", services_list),
+    Op("service.logs", 0, "Service logs", service_logs,
+       {"service": SERVICE_PARAM, "lines": Param("integer", minimum=1, maximum=500, default=100)},
+       lambda p: f"Last {p['lines']} log lines of {p['service']}"),
+    Op("docker.ps", 0, "Docker containers", docker_ps),
+    Op("tailscale.status", 0, "Tailscale devices", tailscale_status),
+    Op("bridge.version", 0, "Bridge version", bridge_version),
+    Op("ssh.recent_logins", 0, "Recent SSH logins", ssh_recent_logins,
+       {"lines": Param("integer", minimum=1, maximum=100, default=20)}),
+    Op("ops.history", 0, "Operations history", ops_history,
+       {"lines": Param("integer", minimum=1, maximum=200, default=50)}),
+    Op("service.restart", 1, "Restart a service", service_restart,
+       {"service": Param("string", enum=RESTARTABLE)}, lambda p: f"Restart {p['service']}"),
+    Op("docker.restart", 1, "Restart a container", docker_restart,
+       {"container": Param("string", choices=_containers)}, lambda p: f"Restart container {p['container']}"),
+    Op("bridge.update", 1, "Update the bridge", bridge_update, {},
+       lambda p: "Update the bridge from GitHub (tests run first; rolls back on failure), then restart it"),
+    Op("disk.cleanup", 1, "Clean up disk", disk_cleanup, {},
+       lambda p: "Trim the system journal to 200 MB and delete unused Docker images"),
+    Op("apt.upgrade", 1, "Upgrade packages", apt_upgrade, {}, lambda p: "Install all pending package updates"),
+    Op("system.reboot", 2, "Reboot the server", system_reboot, {}, lambda p: "Reboot the server now"),
+]}
