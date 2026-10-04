@@ -242,36 +242,52 @@ private fun Field(label: String, value: String, tag: String, minLines: Int = 1, 
     )
 }
 
-/** Home's cards for the day: Your day, Next up and Automations on. */
+/**
+ * Home's cards for the day: Needs you (only when something waits for the owner), Your day, Next up and
+ * Automations on. Needs you holds server operations waiting for approval and runs Hermes couldn't finish
+ * without one, so Your day keeps only what was done.
+ */
 @Composable
 fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
-    if (!home.automationsAvailable) return
-    val your: @Composable (Modifier) -> Unit = { m ->
-        SectionCard("Your day", modifier = m.testTag("your-day")) {
-            if (home.day.isEmpty()) {
-                Text("Nothing yet today. Results from automations that report to Home show up here.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            home.day.forEachIndexed { i, d ->
-                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
+    val blocked = home.day.filter { it.blocked != null }
+    if (blocked.isNotEmpty() || home.approvals.isNotEmpty()) {
+        SectionCard("Needs you", modifier = Modifier.fillMaxWidth().widthIn(max = 1120.dp).testTag("needs-you")) {
+            home.approvals.forEach { a -> OpsApprovalCard(a, actions) }
+            blocked.forEachIndexed { i, d ->
+                if (i > 0 || home.approvals.isNotEmpty()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
                     Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                d.blocked?.let { b ->
-                    Text("Blocked: Hermes needed your approval for $b, and nobody was there to give it.",
-                        color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp).testTag("blocked-${d.id}"))
+                Text("Hermes needed your approval for ${d.blocked}, and nobody was there to give it.",
+                    color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp).testTag("blocked-${d.id}"))
+                Button(onClick = { actions.runAutomationInChat(d.id) }, modifier = Modifier.padding(top = 8.dp).testTag("run-in-chat-${d.id}")) {
+                    Text("Run in chat")
+                }
+            }
+        }
+    }
+    if (!home.automationsAvailable) return
+    val done = home.day.filter { it.blocked == null }
+    val your: @Composable (Modifier) -> Unit = { m ->
+        SectionCard("Your day", modifier = m.testTag("your-day")) {
+            if (done.isEmpty()) {
+                Text("Nothing yet today. Results from automations that report to Home show up here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            done.forEachIndexed { i, d ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (d.text.isNotBlank()) {
                     Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(top = 4.dp))
                 }
                 d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
-                if (d.blocked != null) {
-                    Button(onClick = { actions.runAutomationInChat(d.id) }, modifier = Modifier.padding(top = 8.dp).testTag("run-in-chat-${d.id}")) {
-                        Text("Run in chat")
-                    }
-                }
             }
         }
     }

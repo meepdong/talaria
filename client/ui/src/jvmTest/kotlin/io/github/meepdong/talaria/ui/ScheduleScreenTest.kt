@@ -8,6 +8,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -133,6 +136,9 @@ class ScheduleScreenTest {
             }
         }
         onNodeWithTag("blocked-0000000000cc").assertTextContains("recursive delete", substring = true)
+        // a blocked run waits in Needs you, not in Your day
+        onNode(hasTestTag("blocked-0000000000cc") and hasAnyAncestor(hasTestTag("needs-you"))).assertExists()
+        onNode(hasText("Nothing yet today", substring = true) and hasAnyAncestor(hasTestTag("your-day"))).assertExists()
         onNodeWithTag("run-in-chat-0000000000cc").performClick()
         onNodeWithTag("automation-chat-0000000000cc").performScrollTo().performClick()
         assertEquals(listOf("chat 0000000000cc", "chat 0000000000cc"), actions.calls)
@@ -171,4 +177,22 @@ class ScheduleScreenTest {
         setContent { TalariaTheme { ScheduleScreen(ScheduleView(available = false), Recorder()) } }
         onNodeWithTag("schedule-unavailable").assertExists()
     }
+
+    @Test
+    fun needsYouHoldsServerApprovalsEvenWithoutAutomations() = runComposeUiTest {
+        val actions = Recorder()
+        val home = HomeView(automationsAvailable = false,
+            approvals = listOf(OpsApprovalItem("op-1", "Restart docker", "service: docker", "Hermes", 1)))
+        setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(home, actions, wide = false) } } }
+        onNode(hasTestTag("ops-approval") and hasAnyAncestor(hasTestTag("needs-you"))).assertExists()
+        onNodeWithTag("your-day").assertDoesNotExist()
+    }
+
+    @Test
+    fun noNeedsYouWhenNothingWaits() = runComposeUiTest {
+        setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(HomeView(), Recorder(), wide = false) } } }
+        onNodeWithTag("needs-you").assertDoesNotExist()
+        onNodeWithTag("your-day").assertExists()
+    }
+
 }

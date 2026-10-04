@@ -62,6 +62,8 @@ data class HomeView(
     val doneEarlier: Int = 0,
     /** Today's results from automations that report to Home, newest first. */
     val day: List<DayResult> = emptyList(),
+    /** Server operations waiting for the owner (PROTOCOL §10.8), shown in "Needs you" with blocked runs. */
+    val approvals: List<OpsApprovalItem> = emptyList(),
     /** The next events and automation runs. */
     val nextUp: List<NextItem> = emptyList(),
     val automationsOn: List<AutomationItem> = emptyList(),

@@ -32,6 +32,7 @@ fun homeView(chat: ChatView, nowMs: Long, todos: TodosState? = null, zone: ZoneI
         moreTodos = open.size - open.take(HOME_TODOS).size,
         todosAvailable = todos?.available ?: true,
         doneEarlier = all.count { it.done } - shown.count { it.done },
+        approvals = chat.opsApprovals,
     )
 }
 
