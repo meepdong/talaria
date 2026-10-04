@@ -1,5 +1,8 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -52,10 +55,12 @@ class ServerScreenTest {
     @Test
     fun showsTheServerAndAsksBeforeChanging() = runComposeUiTest {
         val actions = Recorder()
-        val view = serverView(state, "D1")
+        val view = serverView(state.copy(pending = emptyList()), "D1")
         assertEquals(listOf("Memory" to "5.0 GB free of 8.0 GB", "Disk" to "87.0 GB free of 100.0 GB",
             "Load" to "0.10  0.20  0.30", "Kernel" to "6.8.0-146-generic"), view.overviewRows)
-        setContent { TalariaTheme { ServerScreen(view, actions) } }
+        var v by mutableStateOf(view)
+        setContent { TalariaTheme { ServerScreen(v, actions) } }
+        onNodeWithTag("ops-floating").assertDoesNotExist()
 
         onNodeWithTag("server-overview").assertTextContains("up 47 h", substring = true)
         onNodeWithTag("restart-docker").performScrollTo().performClick()
@@ -68,8 +73,10 @@ class ServerScreenTest {
         assertEquals(listOf("service.restart service=docker", "service.logs lines=100 service=ssh",
             "docker.restart container=hermes-abc", "apt.upgrade", "system.reboot"), actions.calls)
 
-        // a tier 2 approval asks again before it's allowed
+        // an approval floats above the page; a tier 2 one asks again before it's allowed
         actions.calls.clear()
+        v = serverView(state, "D1")
+        onNodeWithTag("ops-floating").assertExists()
         onNodeWithTag("ops-summary").assertTextContains("Reboot the server now")
         onNodeWithTag("ops-allow").performClick()
         assertEquals(emptyList(), actions.calls)

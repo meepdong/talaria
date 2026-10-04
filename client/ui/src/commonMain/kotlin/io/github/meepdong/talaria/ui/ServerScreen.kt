@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,6 +24,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,8 +45,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ServerScreen(view: ServerView, actions: TalariaActions) {
     var confirmReboot by remember { mutableStateOf(false) }
+    // Approvals and the newest result float above the page, so they show wherever it's scrolled to.
+    val floating = view.approvals.isNotEmpty() || view.results.isNotEmpty()
+    Box(Modifier.fillMaxSize()) {
     Column(
-        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)
+            .padding(bottom = if (floating) 220.dp else 0.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -67,8 +74,9 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
                 }
             }
         }
-        view.approvals.forEach { OpsApprovalCard(it, actions) }
-        view.results.forEach { OpsResultCard(it, actions) }
+        if (view.results.size > 1) {
+            Section("Earlier results") { view.results.drop(1).forEach { OpsResultCard(it, actions) } }
+        }
 
         Section("Overview") {
             Text(view.overview.ifEmpty { "…" }, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("server-overview"))
@@ -142,6 +150,17 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
             view.history?.let { OutputBox(it.ifEmpty { "(nothing yet)" }) }
         }
     }
+    if (floating) {
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
+                .heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("ops-floating"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            view.approvals.forEach { Floating { OpsApprovalCard(it, actions) } }
+            view.results.firstOrNull()?.let { Floating { OpsResultCard(it, actions) } }
+        }
+    }
+    }
     if (confirmReboot) {
         AlertDialog(
             onDismissRequest = { confirmReboot = false },
@@ -154,6 +173,12 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
             dismissButton = { TextButton(onClick = { confirmReboot = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** A card lifted above the page. */
+@Composable
+private fun Floating(content: @Composable () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.medium, shadowElevation = 8.dp, tonalElevation = 2.dp) { content() }
 }
 
 @Composable

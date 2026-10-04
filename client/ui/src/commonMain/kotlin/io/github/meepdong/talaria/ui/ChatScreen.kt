@@ -50,6 +50,9 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -343,14 +346,28 @@ private fun RenameDialog(current: String, onDone: (String?) -> Unit) {
 private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier) {
     val list = rememberLazyListState()
     val last = view.messages.lastOrNull()
-    // Follow the conversation as it grows, unless the user scrolled up to read.
-    LaunchedEffect(view.openId, view.messages.size) {
-        if (view.messages.isNotEmpty()) list.scrollToItem(view.messages.size)
+    // Follow the conversation's bottom as it grows, but only while the user is there: dragging up to
+    // read stops it, and scrolling back to the end (or sending) starts it again.
+    var follow by remember(view.openId) { mutableStateOf(true) }
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { i ->
+            if (i is DragInteraction.Start) follow = false
+            if (i is DragInteraction.Stop || i is DragInteraction.Cancel) follow = !list.canScrollForward
+        }
     }
-    LaunchedEffect(last?.text?.length, last?.tools?.size) {
-        val info = list.layoutInfo
-        val nearBottom = (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 2
-        if (view.messages.isNotEmpty() && nearBottom) list.scrollToItem(view.messages.size)
+    LaunchedEffect(list) {
+        // a fling that ends at the bottom follows again
+        snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (moving, more) -> if (!moving && !more) follow = true }
+    }
+    LaunchedEffect(view.openId, view.messages.size) {
+        if (last?.fromUser == true) follow = true  // the user just sent: show it
+    }
+    LaunchedEffect(view.openId, view.messages.size, last?.text?.length, last?.tools?.size, view.opsApprovals.size, follow) {
+        if (follow && view.messages.isNotEmpty()) {
+            // to the very end, not to the top of the last message: a long reply keeps its newest line in view
+            list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+            list.scrollBy(100_000f)
+        }
     }
     Box(modifier.fillMaxWidth()) {
         if (view.messages.isEmpty() && !view.loading) {

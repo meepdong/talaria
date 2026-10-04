@@ -106,6 +106,12 @@ class ConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_RECONNECT) controller.reconnectNow()
+        if (intent?.action == OpsNotifier.ACTION_ANSWER) {
+            // Allow or Deny from an approval notification; the notification closes on ops.approval.done
+            val request = intent.getStringExtra(OpsNotifier.EXTRA_REQUEST)
+            val choice = intent.getStringExtra(OpsNotifier.EXTRA_CHOICE)
+            if (request != null && (choice == "once" || choice == "deny")) controller.opsApprove(request, choice)
+        }
         if (intent?.action == ReplyNotifier.ACTION_REPLY) {
             val conv = intent.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)
             val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(ReplyNotifier.KEY_TEXT)?.toString()
@@ -136,13 +142,15 @@ class ConnectionService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val reconnect = PendingIntent.getService(this, 1,
             Intent(this, ConnectionService::class.java).setAction(ACTION_RECONNECT), PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL)
+        val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(health.color().toArgb())
             .setContentTitle("Talaria")
             .setContentText(summary)
             .setContentIntent(open)
-            .addAction(0, "Reconnect now", reconnect)
+        // Connected: just say so. Reconnect now only when there's something to reconnect.
+        if (health == Health.BAD || health == Health.UNKNOWN) builder.addAction(0, "Reconnect now", reconnect)
+        return builder
             .setOngoing(true)
             .setSilent(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)

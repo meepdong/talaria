@@ -9,6 +9,8 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -349,4 +351,35 @@ class ChatScreensTest {
         assertEquals(listOf("steer", "status", "stop"), Command.suggestions("/st").map { it.name })
         assertEquals(emptyList(), Command.suggestions("/steer x"))
     }
+
+    @Test
+    fun aGrowingReplyDoesNotPullTheReaderBack() = runComposeUiTest {
+        val actions = Recorder()
+        fun reply(lines: Int) = state().let { st ->
+            val t = st.threads.getValue("c-1")
+            st.copy(threads = mapOf("c-1" to t.copy(messages = t.messages + ChatMessage("reply:t-3", Role.ASSISTANT,
+                (1..lines).joinToString("\n") { "line $it" }, null, MessageState.STREAMING, turnId = "t-3"))))
+        }
+        var v by mutableStateOf(view(reply(80)))
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        // following: the newest line is in view, not the top of the reply
+        v = view(reply(120))
+        waitForIdle()
+        onNodeWithText("Plan a trip").assertDoesNotExist()
+        onNodeWithTag("messages").performTouchInput { swipeDown(startY = top + 50f, endY = bottom - 50f, durationMillis = 200) }
+        onNodeWithTag("messages").performTouchInput { swipeDown(startY = top + 50f, endY = bottom - 50f, durationMillis = 200) }
+        onNodeWithTag("messages").performTouchInput { swipeDown(startY = top + 50f, endY = bottom - 50f, durationMillis = 200) }
+        onNodeWithTag("messages").performTouchInput { swipeDown(startY = top + 50f, endY = bottom - 50f, durationMillis = 200) }
+        waitForIdle()
+        onNodeWithText("Plan a trip").assertIsDisplayed()
+        // the reply keeps growing while the user reads further up: they stay where they are
+        v = view(reply(160))
+        waitForIdle()
+        v = view(reply(200))
+        waitForIdle()
+        onNodeWithText("Plan a trip").assertIsDisplayed()
+    }
+
 }
