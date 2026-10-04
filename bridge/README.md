@@ -122,6 +122,21 @@ mcp_servers:
 
 Restart the bridge, then Hermes (or `/reload-mcp` in a Hermes chat). `--agent-tools-port` changes the port. There is no delete tool, so a prompt that tricks the agent can't wipe the list; deleting stays in the apps.
 
+## Server operations (talaria-ops)
+
+`talaria-ops` lets the owner, and the agent with the owner's approval, manage the server from the apps: overview, services, logs, Docker, Tailscale, restarts, bridge update, disk cleanup, package upgrades and reboot (spec README §16, PROTOCOL §10.8). It runs as **root**, so install it from a **root-owned copy**, never from the bridge's checkout. That way the bridge user can't change what root runs:
+
+```bash
+sudo python3 -m venv /opt/talaria-ops/venv
+sudo /opt/talaria-ops/venv/bin/pip install /path/to/talaria/bridge        # not -e
+sudo install -m 644 deploy/talaria-ops.service /etc/systemd/system/
+sudo install -d /etc/systemd/system/talaria-bridge.service.d
+sudo install -m 644 deploy/talaria-bridge-ops.conf /etc/systemd/system/talaria-bridge.service.d/20-ops.conf
+sudo systemctl daemon-reload && sudo systemctl enable --now talaria-ops && sudo systemctl restart talaria-bridge
+```
+
+The bridge offers `ops.*` to devices and `server_op` to the agent once it can reach `/run/talaria-ops/ops.sock` (`--ops-socket` changes it). To upgrade talaria-ops, repeat the `pip install` and `systemctl restart talaria-ops`. The `bridge.update` operation updates only the bridge. Every operation is logged to `/var/log/talaria-ops/audit.jsonl`.
+
 ## Commands
 
 | Command | What it does |

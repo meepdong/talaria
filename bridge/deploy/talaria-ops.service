@@ -1,0 +1,22 @@
+# talaria-ops: server operations for the Talaria bridge (spec/README.md §16).
+# Runs as root from a root-owned install (/opt/talaria-ops/venv), never from the bridge's own checkout,
+# so a compromised bridge can't change the code that root runs. See bridge/README.md "Server operations".
+[Unit]
+Description=Talaria server operations
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/talaria-ops/venv/bin/talaria-ops --socket /run/talaria-ops/ops.sock --registry /var/lib/talaria/bridge.db --audit /var/log/talaria-ops/audit.jsonl --allow-user talaria
+RuntimeDirectory=talaria-ops
+RuntimeDirectoryMode=0750
+# Keep the directory across restarts: the bridge bind-mounts it when it starts (talaria-bridge-ops.conf).
+RuntimeDirectoryPreserve=yes
+LogsDirectory=talaria-ops
+LogsDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
