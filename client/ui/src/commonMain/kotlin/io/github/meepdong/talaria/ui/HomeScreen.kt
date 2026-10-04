@@ -89,7 +89,13 @@ private fun TodoCard(home: HomeView, actions: TalariaActions, modifier: Modifier
         if (draft.isNotBlank()) actions.addTodo(draft)
         draft = ""
     }
-    SectionCard("To do", modifier = modifier.testTag("todos")) {
+    SectionCard(
+        "To do",
+        modifier = modifier.testTag("todos"),
+        trailing = {
+            TextButton(onClick = { actions.selectTab(Tab.TODOS) }, modifier = Modifier.testTag("all-todos")) { Text("All to-dos") }
+        },
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = draft,
@@ -109,6 +115,11 @@ private fun TodoCard(home: HomeView, actions: TalariaActions, modifier: Modifier
         home.todos.forEach { t ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(top = 4.dp))
             TodoRow(t, actions)
+        }
+        if (home.moreTodos > 0) {
+            TextButton(onClick = { actions.selectTab(Tab.TODOS) }, modifier = Modifier.testTag("more-todos")) {
+                Text(if (home.moreTodos == 1) "1 more to do" else "${home.moreTodos} more to do")
+            }
         }
         if (home.doneEarlier > 0) {
             Text("${home.doneEarlier} done earlier", style = MaterialTheme.typography.bodySmall,

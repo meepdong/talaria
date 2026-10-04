@@ -141,9 +141,9 @@ fun chatView(
     )
 }
 
-/** The model the open conversation uses: its own, the one picked for a new chat, or the agent's default. */
+/** The model the open conversation uses: its own, or for a new chat the one picked, else what new chats start on. */
 private val ChatState.effectiveModel: ModelChoice?
-    get() = openSummary?.model ?: (if (openId == null) draftModel else null) ?: models?.current
+    get() = openSummary?.model ?: if (openId == null) draftModel ?: models?.forNewChats else models?.current
 
 private fun statusLines(s: ConversationStatus, title: String?): ConversationStatusView {
     val lines = buildList {

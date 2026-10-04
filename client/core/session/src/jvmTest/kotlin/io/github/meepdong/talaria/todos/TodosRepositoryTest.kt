@@ -77,6 +77,54 @@ class TodosRepositoryTest {
     }
 
     @Test
+    fun commentsGroupsAndSortingAgain() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        api.answers["todos.list"] = {
+            json("""{"todos":[{"id":"td-1","text":"Book flights","done":false,"created_at":10,"group":"Travel",
+                "comments":[{"id":"tc-1","text":"Window seat","by":"you","at":11},{"id":"tc-2","text":"Found one","by":"agent","at":12}]}]}""")
+        }
+        val todos = TodosRepository(scope, api)
+        todos.refresh()
+        advanceUntilIdle()
+        val t = todos.state.value.todos.single()
+        assertEquals("Travel", t.group)
+        assertEquals(listOf(false, true), t.comments.map { it.byAgent })
+
+        api.answers["todos.comment"] = { json("""{"todo":{"id":"td-1","text":"Book flights","done":false,"created_at":10,"group":"Travel",
+            "comments":[{"id":"tc-3","text":"Before Friday","by":"you","at":13}]}}""") }
+        todos.comment("td-1", "  Before Friday ")
+        advanceUntilIdle()
+        assertEquals("Before Friday", api.calls.last().second["text"]!!.jsonPrimitive.content)
+        assertEquals(listOf("tc-3"), todos.state.value.todos.single().comments.map { it.id })
+
+        api.answers["todos.uncomment"] = { json("""{"todo":{"id":"td-1","text":"Book flights","done":false,"created_at":10}}""") }
+        todos.uncomment("td-1", "tc-3")
+        advanceUntilIdle()
+        assertEquals("tc-3", api.calls.last().second["comment_id"]!!.jsonPrimitive.content)
+        assertTrue(todos.state.value.todos.single().comments.isEmpty())
+
+        api.answers["todos.update"] = { json("""{"todo":{"id":"td-1","text":"Book flights","done":false,"created_at":10}}""") }
+        todos.setGroup("td-1", "  ")
+        advanceUntilIdle()
+        assertEquals(JsonNull, api.calls.last().second["group"])
+
+        api.answers["todos.regroup"] = { json("""{"todos":[{"id":"td-1","text":"Book flights","done":false,"created_at":10,"group":"Trips"}]}""") }
+        todos.regroup()
+        assertTrue(todos.state.value.regrouping)
+        advanceUntilIdle()
+        assertFalse(todos.state.value.regrouping)
+        assertEquals("Trips", todos.state.value.todos.single().group)
+
+        api.answers["todos.regroup"] = { throw RpcException(-32010, "Agent unavailable") }
+        todos.regroup()
+        advanceUntilIdle()
+        assertFalse(todos.state.value.regrouping)
+        assertEquals("Agent unavailable", todos.state.value.error)
+        scope.cancel()
+    }
+
+    @Test
     fun anOlderBridgeHasNoTodos() = runTest {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
         val api = FakeApi()

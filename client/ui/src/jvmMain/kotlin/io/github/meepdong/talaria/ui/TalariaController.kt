@@ -343,12 +343,14 @@ class TalariaController(
     override fun selectTab(tab: Tab) {
         page.update { it.copy(tab = tab, status = false, menuOpen = false) }
         if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
+        if (tab == Tab.TODOS) todos?.refresh()
         if (tab == Tab.FILES) files?.load()
         if (tab == Tab.HOME || tab == Tab.SCHEDULE) schedule?.refresh()
     }
 
     override fun setMenuOpen(open: Boolean) {
         if (open) chat?.loadBalance()
+        if (open) chat?.loadModels()  // the default model picker
         page.update { it.copy(menuOpen = open) }
     }
 
@@ -535,11 +537,41 @@ class TalariaController(
         todos?.delete(id)
     }
 
+    override fun editTodo(id: String, text: String) {
+        todos?.edit(id, text = text)
+    }
+
+    override fun setTodoDue(id: String, due: String?) {
+        val date = due?.let { dueFromChoice(it, java.time.LocalDate.now()) }
+        if (date == null) todos?.edit(id, clearDue = true) else todos?.edit(id, due = date)
+    }
+
+    override fun setTodoGroup(id: String, group: String?) {
+        todos?.setGroup(id, group)
+    }
+
+    override fun commentOnTodo(id: String, text: String) {
+        todos?.comment(id, text)
+    }
+
+    override fun deleteTodoComment(id: String, commentId: String) {
+        todos?.uncomment(id, commentId)
+    }
+
+    override fun regroupTodos() {
+        todos?.regroup()
+    }
+
+    override fun setDefaultModel(provider: String?, model: String?) {
+        chat?.setDefaultModel(if (provider != null && model != null) ModelChoice(provider, model) else null)
+    }
+
     override fun handTodoToAgent(id: String) {
         val c = chat ?: return
         val todo = todos?.state?.value?.todos?.firstOrNull { it.id == id } ?: return
         newConversation()
-        c.send(handOver(todo.text), conversationId = null, todoId = todo.id)
+        c.send(handOver(todo.text, todo.comments.map { (if (it.byAgent) "Hermes" else "Me") + ": " + it.text }),
+            conversationId = null, todoId = todo.id)
     }
 
     // Automations (§14)
@@ -835,10 +867,11 @@ class TalariaController(
                     tab = x.page.tab,
                     tabs = TABS,
                     home = homeView(view, now, l.todos).withSchedule(l.schedule, now),
-                    menu = menuView(view, withBalance),
+                    menu = menuView(view, withBalance, l.chat?.models),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
                     schedule = scheduleView(l.schedule, now),
+                    todos = todosView(l.todos, view, now),
                 )
             }
         }
@@ -858,10 +891,14 @@ class TalariaController(
         const val READ_ALOUD_KEY = "read-aloud"
 
         /** What a to-do handed to the agent says. */
-        fun handOver(todo: String) = "From my to-do list: $todo\n\nPlease take care of this, or tell me what you need from me."
+        fun handOver(todo: String, comments: List<String> = emptyList()) = buildString {
+            append("From my to-do list: ").append(todo)
+            if (comments.isNotEmpty()) append("\n\nComments on it:\n").append(comments.joinToString("\n") { "- $it" })
+            append("\n\nPlease take care of this, or tell me what you need from me.")
+        }
 
         /** The pages in the menu bar. */
-        val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.FILES, Tab.SCHEDULE)
+        val TABS = listOf(Tab.HOME, Tab.CHATS, Tab.TODOS, Tab.FILES, Tab.SCHEDULE)
 
         /** What people type for a short-code pairing: a host, host:port, or a wss:// URL. */
         fun bridgeUrl(address: String): String? {

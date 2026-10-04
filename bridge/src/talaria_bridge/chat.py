@@ -25,6 +25,7 @@ from pathlib import Path
 from .accounts import OpenRouterAccount
 from .automations import AUTOMATION_METHODS, AutomationError, Automations
 from .files import FILES_METHODS, FilesError, FilesService, Found
+from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .hermes import HermesClient, HermesError, HermesUnavailable
@@ -41,6 +42,7 @@ CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
 MAX_ATTACHMENTS = 10
 MAX_QUEUED = 5
+GROUP_DELAY_S = 3.0  # how long new to-dos wait for more before they are grouped (§13)
 MAX_NOTE = 4000
 MAX_HIDE = 50
 ASIDE_TRANSCRIPT_CHARS = 20000
@@ -150,6 +152,8 @@ class ChatStore:
                 self.db.execute(f"ALTER TABLE conversations ADD COLUMN {column} TEXT")
         if "pinned" not in have:
             self.db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER")
+        self.db.execute("CREATE TABLE IF NOT EXISTS default_models "
+                        "(agent_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL)")
 
     def close(self) -> None:
         self.db.close()
@@ -175,6 +179,18 @@ class ChatStore:
     def set_model(self, conversation_id: str, provider: str, model: str) -> None:
         self.db.execute("UPDATE conversations SET model_provider = ?, model_name = ? WHERE id = ?",
                         (provider, model, conversation_id))
+
+    def default_model(self, agent_id: str) -> tuple[str, str] | None:
+        """Talaria's default model for the agent's new chats (§11), if one is set."""
+        row = self.db.execute("SELECT provider, model FROM default_models WHERE agent_id = ?", (agent_id,)).fetchone()
+        return (row["provider"], row["model"]) if row else None
+
+    def set_default_model(self, agent_id: str, model: tuple[str, str] | None) -> None:
+        if model is None:
+            self.db.execute("DELETE FROM default_models WHERE agent_id = ?", (agent_id,))
+        else:
+            self.db.execute("INSERT OR REPLACE INTO default_models (agent_id, provider, model) VALUES (?, ?, ?)",
+                            (agent_id, *model))
 
     def rename(self, conversation_id: str, title: str) -> None:
         self.db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
@@ -362,6 +378,8 @@ class ChatService:
         self.accounts = accounts or []
         self._jobs: set[asyncio.Task] = set()
         self._client_msgs: dict[str, tuple[float, dict]] = {}
+        self._grouping: asyncio.Task | None = None
+        self._group_tried: set[str] = set()  # to-dos already handed to the agent to group
 
     def _automation_chat(self, agent_id: str, session_id: str, title: str, at: int, text: str) -> str:
         """An automation run whose result goes to a chat: the run's own Hermes session becomes a conversation."""
@@ -438,6 +456,44 @@ class ChatService:
 
     async def todos_changed(self) -> None:
         await self.broadcast(m.notification("todos.changed", {"todos": self.todos.list()}))
+        self._group_soon()
+
+    def _group_soon(self) -> None:
+        """New to-dos without a group: ask the agent to group them, once a few more have had time to come (§13)."""
+        if self.todos is None or self.default_agent not in self.agents:
+            return
+        if self._grouping is not None and not self._grouping.done():
+            return
+        if not any(t["id"] not in self._group_tried for t in self.todos.open_todos() if "group" not in t):
+            return
+        self._grouping = asyncio.create_task(self._group_later())
+        self._jobs.add(self._grouping)
+        self._grouping.add_done_callback(self._jobs.discard)
+
+    async def _group_later(self) -> None:
+        await asyncio.sleep(GROUP_DELAY_S)
+        self._group_tried.update(t["id"] for t in self.todos.open_todos() if "group" not in t)
+        try:
+            changed = await group_todos(self.todos, self.agents[self.default_agent], everything=False)
+        except GroupingError as exc:
+            log.warning("to-dos not grouped: %s", exc)
+            return
+        except Exception:
+            log.exception("grouping to-dos failed")
+            return
+        if changed:
+            await self.broadcast(m.notification("todos.changed", {"todos": self.todos.list()}))
+
+    async def regroup(self) -> dict:
+        if self.default_agent not in self.agents:
+            raise RpcError(m.AGENT_UNAVAILABLE, "No agent to sort the to-dos")
+        try:
+            await group_todos(self.todos, self.agents[self.default_agent], everything=True)
+        except GroupingError as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, str(exc)) from None
+        todos = self.todos.list()
+        await self.broadcast(m.notification("todos.changed", {"todos": todos}))
+        return {"todos": todos}
 
     def _server_files(self, p: dict, refs: list[dict]) -> list[Found]:
         """chat.send's `files` (§12): files already on the server, named to the agent where they are."""
@@ -474,6 +530,11 @@ class ChatService:
             conv = await self._new_conversation(agent_id, client,
                                                 text.strip() or (blobs[0].name if blobs else found[0].name))
             conv_id = conv.id
+            if model is None and (default := self.store.default_model(conv.agent_id)) is not None:
+                try:
+                    await self._pin(conv, client, *default)
+                except RpcError as exc:  # the chat still starts, on the agent's own default
+                    log.warning("default model %s/%s not pinned: %s", *default, exc.message)
 
         if model is not None and conv.model != {"provider": model[0], "model": model[1]}:
             await self._pin(conv, client, *model)
@@ -906,6 +967,21 @@ class ChatService:
         provider, model = data.get("provider"), data.get("model")
         if all(isinstance(x, str) and 0 < len(x) <= 200 for x in (provider, model)):
             result["current"] = {"provider": provider, "model": model}
+        if (default := self.store.default_model(agent_id)) is not None:
+            result["default"] = {"provider": default[0], "model": default[1]}
+        return result
+
+    async def set_default_model(self, p: dict) -> dict:
+        agent_id = p.get("agent_id", self.default_agent)
+        if agent_id is not None:
+            _id(agent_id, "agent_id")
+        self._client(agent_id)  # a known agent
+        model = _model(p["model"]) if p.get("model") is not None else None
+        self.store.set_default_model(agent_id, model)
+        result = {"agent_id": agent_id}
+        if model is not None:
+            result["default"] = {"provider": model[0], "model": model[1]}
+        await self.broadcast(m.notification("agent.default_model", result))
         return result
 
     async def set_model(self, p: dict) -> dict:
@@ -1067,6 +1143,8 @@ class ChatService:
         if method in TODO_METHODS:
             if self.todos is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            if method == "todos.regroup":
+                return await self.regroup(), None
             try:
                 result, changed = self.todos.handle(method, p)
             except TodoError as exc:
@@ -1096,6 +1174,8 @@ class ChatService:
             return await self.set_model(p), None
         if method == "agent.models":
             return await self.models(p), None
+        if method == "agent.set_default_model":
+            return await self.set_default_model(p), None
         if method == "chat.steer":
             return await self.steer(p), None
         if method == "chat.approve":
@@ -1111,7 +1191,7 @@ class ChatService:
 
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
-                          "conversations.set_model", "agent.models", "chat.steer", "chat.approve", "chat.aside", "chat.status",
+                          "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "chat.hide",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 

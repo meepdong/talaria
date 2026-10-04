@@ -23,8 +23,11 @@ data class ModelChoice(val provider: String, val model: String) {
     val shortName: String get() = model.substringAfterLast('/')
 }
 
-/** What `agent.models` offers. */
-data class ModelOptions(val current: ModelChoice?, val providers: List<Provider>) {
+/** What `agent.models` offers: the agent's own model ([current]), Talaria's default for new chats, and the rest. */
+data class ModelOptions(val current: ModelChoice?, val providers: List<Provider>, val default: ModelChoice? = null) {
+    /** What a new chat starts on. */
+    val forNewChats: ModelChoice? get() = default ?: current
+
     data class Provider(val id: String, val name: String, val models: List<String>)
 }
 

@@ -175,7 +175,9 @@ What Hermes offers as slash commands in its own chat apps (`/model`, `/queue`, `
 
 | Method | Direction | Params → result |
 |---|---|---|
-| `agent.models` | request | `{agent_id?}` → `{agent_id, current, providers}` |
+| `agent.models` | request | `{agent_id?}` → `{agent_id, current, default?, providers}` |
+| `agent.set_default_model` | request | `{agent_id?, model}` → `{agent_id, default?}` |
+| `agent.default_model` | notification | `{agent_id, default?}` |
 | `conversations.set_model` | request | `{conversation_id, model}` → `{conversation_id, model}` |
 | `chat.queued` | notification | `{conversation_id, turn_id, user_text, position, client_msg_id?, attachments?}` |
 | `chat.steer` | request | `{turn_id, text}` → `{turn_id, accepted}` |
@@ -185,6 +187,8 @@ What Hermes offers as slash commands in its own chat apps (`/model`, `/queue`, `
 | `account.balance` | request | `{}` → `{accounts}` |
 
 **Models.** A model is `{provider, model}`, both strings as Hermes names them (for example `{"provider": "anthropic", "model": "claude-sonnet-4"}`). `agent.models` lists the providers the agent has credentials for, each `{id, name, models}` with `models` a list of model names, and `current`, the agent's default. `conversations.set_model` pins a conversation to a model from then on, and `chat.send` with `model` does the same before its turn, which is how a new conversation starts on a chosen model. `conversations.list` gives each conversation's pinned `model`, if any. A model the agent can't route fails with `INVALID_PARAMS`.
+
+**Default model.** Talaria can keep its own default model for new chats, apart from the agent's (`current`), which its other apps share. `agent.set_default_model` sets it for every device (`model: null` goes back to the agent's), and every device gets `agent.default_model`; `agent.models` reports it as `default`. A new conversation whose first `chat.send` has no `model` is pinned to the default, so it shows in that conversation's `model` and can still be changed there. Conversations that already exist keep the model they have.
 
 **Queue.** `chat.send` to a conversation whose turn is running is accepted and queued: the result has `queued: true`, and every device gets `chat.queued` with the turn's place in the queue, starting at 1. The bridge starts queued turns in order as each one ends, each with its usual `chat.started`. `chat.cancel` on a queued turn removes it, and the turn ends with `chat.done` with `status: cancelled`, without a `chat.started`. A conversation holds at most 5 queued turns; one more fails with `CONFLICT`. The queue lives on the bridge, so it keeps going when the device drops off, but not across a bridge restart: queued turns are then lost. `conversations.list` names a conversation's queued turns as `queued_turn_ids`. Until it starts, a queued turn's `chat.turn.get` snapshot has `status: queued`.
 
@@ -196,7 +200,7 @@ What Hermes offers as slash commands in its own chat apps (`/model`, `/queue`, `
 
 **Balance.** `account.balance` lists the provider accounts the bridge can check, each `{provider, name, remaining, currency, top_up_url}`: today only OpenRouter, when the operator has given the bridge an OpenRouter management key. That key never leaves the bridge. `remaining` is the credit left (purchased minus used) as a number in `currency` (`USD`), and `top_up_url` is the provider's page for adding credit. The list is empty when nothing is configured; a provider that can't be reached is listed with `error` instead of `remaining`.
 
-Schemas: `agent.models`, `agent.models.result`, `conversations.set_model`, `conversations.set_model.result`, `chat.queued`, `chat.steer`, `chat.steer.result`, `chat.aside`, `chat.aside.result`, `chat.aside.done`, `chat.status`, `chat.status.result`, `account.balance`, `account.balance.result`; `chat.send`, `chat.send.result` and `conversations.list.result` gain `model`, `queued` and `queued_turn_ids`.
+Schemas: `agent.models`, `agent.models.result`, `agent.set_default_model`, `agent.set_default_model.result`, `agent.default_model`, `conversations.set_model`, `conversations.set_model.result`, `chat.queued`, `chat.steer`, `chat.steer.result`, `chat.aside`, `chat.aside.result`, `chat.aside.done`, `chat.status`, `chat.status.result`, `account.balance`, `account.balance.result`; `chat.send`, `chat.send.result` and `conversations.list.result` gain `model`, `queued` and `queued_turn_ids`.
 
 ## 12. Files on the server (M2)
 
@@ -222,21 +226,28 @@ Schemas: `files.roots`, `files.roots.result`, `files.list`, `files.list.result`,
 
 ## 13. To-dos (M2)
 
-A short to-do list kept on the bridge, so every device shows the same one. It is Talaria's own: the agent doesn't see it unless a to-do is handed to it.
+A to-do list kept on the bridge, so every device shows the same one. The agent works on it through its tools (§15) and sees a to-do in a chat when one is handed to it.
 
 | Method | Direction | Params → result |
 |---|---|---|
 | `todos.list` | request | `{}` → `{todos}` |
-| `todos.add` | request | `{text, due?}` → `{todo}` |
-| `todos.update` | request | `{id, text?, done?, due?}` → `{todo}` |
+| `todos.add` | request | `{text, due?, group?}` → `{todo}` |
+| `todos.update` | request | `{id, text?, done?, due?, group?}` → `{todo}` |
 | `todos.delete` | request | `{id}` → `{id, deleted}` |
+| `todos.comment` | request | `{id, text}` → `{todo}` |
+| `todos.uncomment` | request | `{id, comment_id}` → `{todo}` |
+| `todos.regroup` | request | `{}` → `{todos}` |
 | `todos.changed` | notification | `{todos}` |
 
-A to-do is `{id, text, done, created_at, done_at?, due?, conversation_id?}`. `text` is 1 to 500 characters; `due` is a date, `YYYY-MM-DD`, or `null` to clear it; times are Unix seconds. `todos.list` returns open to-dos first, oldest first, then the 50 most recently done. After any change every device gets `todos.changed` with the whole list. At most 500 open to-dos; one more fails with `CONFLICT`.
+A to-do is `{id, text, done, created_at, done_at?, due?, conversation_id?, group?, comments?}`. `text` is 1 to 500 characters; `due` is a date, `YYYY-MM-DD`, or `null` to clear it; times are Unix seconds. `todos.list` returns open to-dos first, oldest first, then the 50 most recently done. After any change every device gets `todos.changed` with the whole list. At most 500 open to-dos; one more fails with `CONFLICT`.
 
-**Handing a to-do to the agent** is an ordinary `chat.send` with `todo_id`: the bridge records the new turn's conversation in the to-do's `conversation_id`, so devices can show "With Hermes" while that conversation's turn runs and open it from the to-do.
+**Comments.** `comments` lists notes on a to-do, oldest first, each `{id, text, by, at}`: `text` is 1 to 2000 characters, `by` is `you` (a device) or `agent` (§15), `at` is when. `todos.comment` adds one and `todos.uncomment` removes one; at most 50 per to-do, one more fails with `CONFLICT`. `comments` is left out when there are none.
 
-Schemas: `todos.list`, `todos.list.result`, `todos.add`, `todos.update`, `todos.result`, `todos.delete`, `todos.delete.result`, `todos.changed`; `chat.send` gains `todo_id`.
+**Groups.** `group` is a short name such as "Home" or "Work", 1 to 40 characters; `null` in `todos.update` clears it. When open to-dos without a group appear, the bridge waits a few seconds for more, then asks the agent to put each one in one of the groups already used or a new one, and every device gets `todos.changed`. It asks in a throwaway request, like an aside (§11), so no chat gains anything; if the agent can't be reached, the to-dos stay ungrouped until the next try. Grouping never moves a to-do that already has a group, so a group set by hand or by the agent stays. `todos.regroup` asks the agent to sort every open to-do again, groups included, and answers with the new list once it's done; it fails with `AGENT_UNAVAILABLE` if the agent can't be reached.
+
+**Handing a to-do to the agent** is an ordinary `chat.send` with `todo_id`: the bridge records the new turn's conversation in the to-do's `conversation_id`, so devices can show "With Hermes" while that conversation's turn runs and open it from the to-do. Devices include the to-do's comments in the message.
+
+Schemas: `todos.list`, `todos.list.result`, `todos.add`, `todos.update`, `todos.result`, `todos.delete`, `todos.delete.result`, `todos.comment`, `todos.uncomment`, `todos.regroup`, `todos.regroup.result`, `todos.changed`; `chat.send` gains `todo_id`.
 
 ## 14. Automations, calendar and Home (M2)
 
@@ -297,8 +308,9 @@ The bridge offers the agent a few tools over the Model Context Protocol (MCP), s
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `todo_list` | `{include_done?}` | The open to-dos, oldest first, each `{id, text, due?}`; with `include_done: true` also the recently done ones. |
-| `todo_add` | `{text, due?}` | Adds a to-do (`text` 1 to 500 characters, `due` as `YYYY-MM-DD`) and returns it. |
-| `todo_update` | `{id, text?, due?, done?}` | Changes a to-do, ticks it off (`done: true`) or opens it again, and returns it. `due: null` clears the date. |
+| `todo_list` | `{include_done?}` | The open to-dos, oldest first, each `{id, text, due?, group?, comments?}` with comments as `{text, by}`; with `include_done: true` also the recently done ones. |
+| `todo_add` | `{text, due?, group?}` | Adds a to-do (`text` 1 to 500 characters, `due` as `YYYY-MM-DD`, `group` 1 to 40 characters) and returns it. |
+| `todo_update` | `{id, text?, due?, done?, group?}` | Changes a to-do, ticks it off (`done: true`) or opens it again, and returns it. `due: null` and `group: null` clear them. |
+| `todo_comment` | `{id, text}` | Adds a comment to a to-do, marked as the agent's, and returns the to-do. |
 
-A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos: it ticks them off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.
+A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos or comments: it ticks to-dos off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.

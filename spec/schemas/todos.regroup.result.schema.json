@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/todos.list.result.schema.json",
-  "title": "todos.list.result",
-  "description": "Result of todos.list.",
+  "$id": "https://talaria.invalid/tnp/v0/todos.regroup.result.schema.json",
+  "title": "todos.regroup.result",
+  "description": "Result of todos.regroup: the list after sorting.",
   "type": "object",
   "properties": {
     "jsonrpc": {

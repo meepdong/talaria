@@ -136,3 +136,11 @@ async def paired_device(bridge: Bridge) -> Device:
     await decide
     assert reply["method"] == "pair.accepted", reply
     return device
+
+
+@pytest.fixture(autouse=True)
+def no_grouping_unless_asked(monkeypatch):
+    """New to-dos are grouped by the agent a few seconds later (§13); tests that want it set a short delay."""
+    import talaria_bridge.chat
+
+    monkeypatch.setattr(talaria_bridge.chat, "GROUP_DELAY_S", 3600)

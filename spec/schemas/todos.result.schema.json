@@ -52,6 +52,46 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
+            },
+            "group": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "comments": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "by": {
+                    "enum": [
+                      "you",
+                      "agent"
+                    ]
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "by",
+                  "at"
+                ]
+              }
             }
           },
           "required": [

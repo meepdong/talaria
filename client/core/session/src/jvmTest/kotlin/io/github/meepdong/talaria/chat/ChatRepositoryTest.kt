@@ -248,6 +248,17 @@ class ChatRepositoryTest {
         assertEquals(ModelChoice("openrouter", "x/y"), repo.state.value.conversations.single().model)
         assertNull(repo.state.value.draftModel)
 
+        // Talaria's default for new chats, set here or on another device
+        api.answers["agent.set_default_model"] = { json("""{"agent_id":"hermes","default":{"provider":"openrouter","model":"x/y"}}""") }
+        repo.setDefaultModel(ModelChoice("openrouter", "x/y"))
+        advanceUntilIdle()
+        assertEquals("""{"provider":"openrouter","model":"x/y"}""", api.calls.last { it.first == "agent.set_default_model" }.second["model"].toString())
+        assertEquals("x/y", repo.state.value.models!!.forNewChats!!.model)
+        api.push("agent.default_model", """{"agent_id":"hermes"}""")
+        advanceUntilIdle()
+        assertNull(repo.state.value.models!!.default)
+        assertEquals("anthropic/claude-sonnet-4", repo.state.value.models!!.forNewChats!!.model)
+
         repo.aside("what did I ask?")
         advanceUntilIdle()
         assertEquals(listOf(Aside("a-1", "what did I ask?")), repo.state.value.asides["c-1"])

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/todos.add.schema.json",
-  "title": "todos.add",
-  "description": "Device to bridge (request): add a to-do (§13).",
+  "$id": "https://talaria.invalid/tnp/v0/todos.uncomment.schema.json",
+  "title": "todos.uncomment",
+  "description": "Device to bridge (request): remove a comment from a to-do (§13). Result: todos.result.",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -12,7 +12,7 @@
       "const": 0
     },
     "method": {
-      "const": "todos.add"
+      "const": "todos.uncomment"
     },
     "id": {
       "type": [
@@ -23,30 +23,20 @@
     "params": {
       "type": "object",
       "properties": {
-        "text": {
+        "id": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 500
+          "maxLength": 64
         },
-        "due": {
-          "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "group": {
+        "comment_id": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 40
+          "maxLength": 64
         }
       },
       "required": [
-        "text"
+        "id",
+        "comment_id"
       ]
     }
   },

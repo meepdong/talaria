@@ -36,11 +36,12 @@ sealed interface Screen {
         val menuOpen: Boolean = false,
         val files: FilesView = FilesView(),
         val schedule: ScheduleView = ScheduleView(),
+        val todos: TodosView = TodosView(),
     ) : Screen
 }
 
 /** The pages in the menu bar. */
-enum class Tab(val label: String) { HOME("Home"), CHATS("Chats"), FILES("Files"), SCHEDULE("Schedule") }
+enum class Tab(val label: String) { HOME("Home"), CHATS("Chats"), TODOS("To-dos"), FILES("Files"), SCHEDULE("Schedule") }
 
 /** The Home page: today at a glance. */
 data class HomeView(
@@ -48,8 +49,10 @@ data class HomeView(
     val date: String = "",
     /** The latest chats, newest first. */
     val recent: List<ConversationItem> = emptyList(),
-    /** Open to-dos, then the ones done today. */
+    /** The first few open to-dos, then the ones done today. */
     val todos: List<TodoItem> = emptyList(),
+    /** Open to-dos not shown on Home; the To-dos page has them all. */
+    val moreTodos: Int = 0,
     /** False when the bridge keeps no to-dos, which hides the card. */
     val todosAvailable: Boolean = true,
     /** Ticked off earlier and not shown. */
@@ -75,7 +78,30 @@ data class TodoItem(
     val conversationId: String? = null,
     /** That conversation's reply is running. */
     val withAgent: Boolean = false,
+    val group: String? = null,
+    val comments: List<CommentItem> = emptyList(),
 )
+
+/** A comment on a to-do. [time] is "14:05" today, else "3 Oct". */
+data class CommentItem(val id: String, val text: String, val byAgent: Boolean, val time: String)
+
+/** The To-dos page: every open to-do by group, then the done ones. */
+data class TodosView(
+    /** Groups in order, ungrouped last (name null). */
+    val groups: List<TodoGroupView> = emptyList(),
+    val done: List<TodoItem> = emptyList(),
+    val openCount: Int = 0,
+    /** Every group in use, for "Move to group". */
+    val groupNames: List<String> = emptyList(),
+    /** Hermes is sorting the list again. */
+    val regrouping: Boolean = false,
+    val error: String? = null,
+    /** False when the bridge keeps no to-dos. */
+    val available: Boolean = true,
+)
+
+/** One group on the To-dos page. A null [name] holds the to-dos Hermes hasn't sorted yet. */
+data class TodoGroupView(val name: String?, val items: List<TodoItem>)
 
 /** The ☰ panel. */
 data class MenuView(
@@ -84,6 +110,12 @@ data class MenuView(
     val balances: List<BalanceItem> = emptyList(),
     /** Network, Bridge and agents, as on the connection page. */
     val connection: List<StatusRow> = emptyList(),
+    /** What new chats start on: "claude-sonnet-4", or null while models are loading. */
+    val defaultModel: String? = null,
+    /** True when it's Hermes's own default rather than one picked in Talaria. */
+    val defaultIsAgents: Boolean = true,
+    /** The models to pick from, selected by the default. */
+    val defaultModelGroups: List<ModelGroup> = emptyList(),
 )
 
 /** Something at work: a reply being written. [conversationId] opens it. */
@@ -157,6 +189,10 @@ interface TalariaActions {
     fun setAutoSend(on: Boolean) {}
 
     fun pickModel(provider: String, model: String) {}
+
+    /** The model new chats start on, on every device; a chat can still change it. Null: Hermes's own default. */
+    fun setDefaultModel(provider: String?, model: String?) {}
+
     /** Open the model picker, filtered by [query]. */
     fun openModelPicker(query: String = "") {}
     fun closeModelPicker() {}
@@ -210,6 +246,15 @@ interface TalariaActions {
     fun addTodo(text: String) {}
     fun setTodoDone(id: String, done: Boolean) {}
     fun deleteTodo(id: String) {}
+    fun editTodo(id: String, text: String) {}
+    /** [due] is "today", "tomorrow", "next week", or null to clear it. */
+    fun setTodoDue(id: String, due: String?) {}
+    /** Null takes it out of its group. */
+    fun setTodoGroup(id: String, group: String?) {}
+    fun commentOnTodo(id: String, text: String) {}
+    fun deleteTodoComment(id: String, commentId: String) {}
+    /** Ask Hermes to sort every open to-do into groups again. */
+    fun regroupTodos() {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 
