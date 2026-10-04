@@ -1,6 +1,7 @@
 package io.github.meepdong.talaria.session
 
 import io.github.meepdong.talaria.protocol.Tnp
+import io.github.meepdong.talaria.protocol.signB64u
 import io.github.meepdong.talaria.security.DeviceKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -69,6 +70,10 @@ class TnpClient(
 
     /** Notifications from the bridge other than `ping` and `status`, such as chat.delta. */
     val notifications: SharedFlow<JsonObject> = _notifications.asSharedFlow()
+
+    /** This device's signature for an ops.approve answer (PROTOCOL §10.8), made with its paired key. */
+    fun signOpsApproval(requestId: String, op: String, paramsJson: String, choice: String): String =
+        key.signB64u(Tnp.opsApproveSignedData(requestId, bridge.deviceId, op, paramsJson, choice))
 
     /**
      * Call [method] on the bridge and return its result. Throws [RpcException] for an

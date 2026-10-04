@@ -182,26 +182,3 @@ data class FinishedReply(
     /** The question was sent from this device, so this device may read the answer aloud. */
     val fromThisDevice: Boolean = false,
 )
-
-/** A VPS command approval request from the bridge. */
-data class VpsApprovalRequest(
-    val approvalId: String,
-    val command: String,
-    val args: List<String>,
-    val cwd: String,
-    val timeout: Int,
-    val agentId: String,
-    /** Unix seconds after which the bridge stops waiting; 0 when the bridge didn't say (§10.8). */
-    val expiresAt: Long = 0,
-)
-
-/** A VPS command result (completed/failed). */
-data class VpsCommandResult(
-    val approvalId: String,
-    val choice: String,
-    val exitCode: Int,
-    val output: List<String>,
-    val command: String? = null,
-    val args: List<String>? = null,
-    val cwd: String? = null,
-)

@@ -129,6 +129,7 @@ class MainActivity : ComponentActivity() {
                 controller.closeConversation()
             }
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
+            BackHandler(enabled = current is Screen.Server) { controller.showChats() }
             BackHandler(enabled = current is Screen.Chat && current.menuOpen) { controller.setMenuOpen(false) }
 
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -203,6 +204,12 @@ class MainActivity : ComponentActivity() {
     private fun handleLink(intent: Intent?) {
         if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
             receiveShare(intent)
+            return
+        }
+        if (intent?.getBooleanExtra(OpsNotifier.EXTRA_SERVER, false) == true) {
+            // opened from a server approval
+            intent.removeExtra(OpsNotifier.EXTRA_SERVER)
+            app.controller.showServer()
             return
         }
         if (intent?.getBooleanExtra(AutomationNotifier.EXTRA_HOME, false) == true) {

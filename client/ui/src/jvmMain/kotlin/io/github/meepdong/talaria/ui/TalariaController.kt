@@ -9,8 +9,8 @@ import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ServerFile
-import io.github.meepdong.talaria.chat.VpsApprovalRequest
-import io.github.meepdong.talaria.chat.VpsCommandResult
+import io.github.meepdong.talaria.ops.OpsRepository
+import io.github.meepdong.talaria.ops.OpsState
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
 import io.github.meepdong.talaria.schedule.AutomationRan
@@ -56,9 +56,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -103,13 +103,15 @@ class TalariaController(
         data class Confirm(val sas: Sas, val deadlineMs: Long) : Mode
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
-            val todos: TodosRepository, val schedule: ScheduleRepository,
+            val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
         ) : Mode
     }
 
     /** Which page shows while paired. */
     private data class Page(
         val status: Boolean = false,
+        /** The Server page, from the ☰ menu. */
+        val server: Boolean = false,
         val conversationOpen: Boolean = false,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
@@ -160,15 +162,16 @@ class TalariaController(
 
     private data class Live(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
-        val todos: TodosState? = null, val schedule: ScheduleState? = null,
+        val todos: TodosState? = null, val schedule: ScheduleState? = null, val ops: OpsState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val live = mode.flatMapLatest { m ->
         if (m is Mode.Connected) {
-            combine(m.client.state, m.chat.state, m.files.state, m.todos.state, m.schedule.state) { st, c, f, t, sc ->
-                Live(m, st, c, f, t, sc)
-            }
+            combine(
+                combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Triple(st, c, f) },
+                m.todos.state, m.schedule.state, m.ops.state,
+            ) { (st, c, f), t, sc, o -> Live(m, st, c, f, t, sc, o) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -178,47 +181,14 @@ class TalariaController(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
         val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
         val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(), val canShare: Boolean = false,
-        val vpsApprovals: List<VpsApprovalItem> = emptyList(),
-        val vpsResults: List<VpsResultItem> = emptyList(),
     )
-
-    /** VPS command approval requests still waiting for an answer (§10.8). */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsApprovals: Flow<List<VpsApprovalItem>> = mode.flatMapLatest { m ->
-        if (m is Mode.Connected) m.chat.vpsApprovals.map { list ->
-            list.map { req -> VpsApprovalItem(req.approvalId, req.command, req.args, req.cwd, req.timeout) }
-        } else flowOf(emptyList())
-    }
-
-    /** VPS command results (completed/failed). */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsResults: Flow<VpsResultItem?> = mode.flatMapLatest { m ->
-        // onStart: combine() below waits for every input, so this must emit before the first result arrives
-        if (m is Mode.Connected) m.chat.vpsResults.map<VpsCommandResult, VpsResultItem?> { res ->
-            VpsResultItem(
-                res.approvalId, 
-                res.command ?: "", 
-                res.args ?: emptyList(), 
-                res.cwd ?: "/opt/talaria", 
-                res.exitCode, 
-                res.output
-            )
-        }.onStart { emit(null) } else flowOf(null)
-    }
 
     private val extras = combine(
         combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
-        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) },
-        combine(picker, voice, speechInput, vpsApprovals, vpsResults) { p, v, s, va, vr ->
-            Triple(p, v, s) to Pair(va, vr)
-        },
-    ) { q, files, pickVoiceVps ->
-        val (pick, v, input) = pickVoiceVps.first
-        val (vpsApproval, vpsResult) = pickVoiceVps.second
+        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) }, picker, voice, speechInput,
+    ) { q, files, pick, v, input ->
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
-            files.second, files.third, canShare = textSharer != null,
-            vpsApprovals = vpsApproval,
-            vpsResults = vpsResult?.let { listOf(it) } ?: emptyList())
+            files.second, files.third, canShare = textSharer != null)
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -235,6 +205,14 @@ class TalariaController(
     private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
     private val todos: TodosRepository? get() = (mode.value as? Mode.Connected)?.todos
     private val schedule: ScheduleRepository? get() = (mode.value as? Mode.Connected)?.schedule
+    private val ops: OpsRepository? get() = (mode.value as? Mode.Connected)?.ops
+
+    /** Server operations waiting for approval, for a notification each (PROTOCOL §10.8). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val opsPending: Flow<List<OpsApprovalItem>> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) m.ops.state.map { opsApprovals(it, m.bridge.deviceId) }.distinctUntilChanged()
+        else flowOf(emptyList())
+    }
 
     /** Automation runs that report to Home or were blocked, for a notification; a run for a chat refreshes the list. */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -295,6 +273,7 @@ class TalariaController(
             it.chat.stop()
             it.todos.stop()
             it.schedule.stop()
+            it.ops.stop()
             it.client.stop()
         }
     }
@@ -771,12 +750,31 @@ class TalariaController(
         chat?.approve(turnId, choice)
     }
 
-    override fun vpsApprove(approvalId: String, choice: String) {
-        chat?.vpsApprove(approvalId, choice)
+    override fun opsApprove(requestId: String, choice: String) {
+        ops?.approve(requestId, choice)
     }
 
-    override fun vpsDismiss(approvalId: String) {
-        // No-op for now, the result is auto-dismissed or shown as a card
+    override fun opsDismiss(requestId: String) {
+        ops?.dismissResult(requestId)
+    }
+
+    override fun showServer() {
+        page.update { it.copy(server = true, status = false, menuOpen = false) }
+        ops?.refresh()
+    }
+
+    override fun refreshServer() {
+        ops?.refresh()
+    }
+
+    override fun serverRun(op: String, params: Map<String, String>) {
+        val o = ops ?: return
+        val types = o.state.value.catalogue.firstOrNull { it.op == op }?.params.orEmpty()
+        o.run(op, params.mapValues { (k, v) -> if (types[k]?.type == "integer") v.toIntOrNull() ?: v else v })
+    }
+
+    override fun dismissServerError() {
+        ops?.dismissError()
     }
 
     override fun loadOlder() {
@@ -836,7 +834,7 @@ class TalariaController(
     }
 
     override fun showChats() {
-        page.value = page.value.copy(status = false)
+        page.value = page.value.copy(status = false, server = false)
     }
 
     override fun checkForUpdates() {
@@ -890,7 +888,8 @@ class TalariaController(
         chat.start()
         val todos = TodosRepository(scope, client.asChatApi()).also { it.start() }
         val schedule = ScheduleRepository(scope, client.asChatApi()).also { it.start() }
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule)
+        val ops = OpsRepository(scope, client.asChatApi()).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops)
         client.start()
     }
 
@@ -905,13 +904,16 @@ class TalariaController(
         is Mode.Connected -> {
             val state = l.state ?: ConnectionState()
             val status = statusView(state, m.bridge, x.net, keyStore.protection, x.entries, x.test, now)
+            val opsState = l.ops ?: OpsState()
             if (x.page.status) {
                 Screen.Status(status.copy(canGoBack = true, balances = balanceItems(l.chat?.balances.orEmpty())))
+            } else if (x.page.server) {
+                Screen.Server(serverView(opsState, m.bridge.deviceId), status)
             } else {
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
-                    x.serverPending, x.vpsApprovals, x.vpsResults).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
+                    x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,

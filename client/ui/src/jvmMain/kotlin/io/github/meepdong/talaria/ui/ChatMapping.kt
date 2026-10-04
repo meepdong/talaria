@@ -85,8 +85,8 @@ fun chatView(
     state: ChatState, conversationOpen: Boolean, connected: Boolean, status: StatusView, nowMs: Long,
     pending: List<OutgoingFile> = emptyList(), canAttach: Boolean = false, images: ImageCache = NO_IMAGES,
     serverPending: List<ServerFile> = emptyList(),
-    vpsApprovals: List<VpsApprovalItem> = emptyList(),
-    vpsResults: List<VpsResultItem> = emptyList(),
+    opsApprovals: List<OpsApprovalItem> = emptyList(),
+    opsResults: List<OpsResultItem> = emptyList(),
 ): ChatView {
     val thread = state.openThread
     val running = state.openMessages.lastOrNull { it.state == MessageState.STREAMING }?.turnId
@@ -140,8 +140,8 @@ fun chatView(
         },
         asides = state.openId?.let { state.asides[it] }.orEmpty().map { AsideItem(it.id, it.question, it.answer, it.error) },
         status = state.status?.takeIf { it.conversationId == state.openId }?.let { statusLines(it, state.openSummary?.title) },
-        vpsApprovals = vpsApprovals,
-        vpsResults = vpsResults,
+        opsApprovals = opsApprovals,
+        opsResults = opsResults,
     )
 }
 

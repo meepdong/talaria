@@ -375,40 +375,13 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                         Text(view.historyError, color = MaterialTheme.colorScheme.error)
                 }
             }
-            // VPS Approvals
-            items(view.vpsApprovals, key = { it.approvalId }) { approval ->
-                VpsApprovalCard(
-                    payload = VpsApprovalPayload(
-                        command = approval.command,
-                        args = approval.args,
-                        cwd = approval.cwd,
-                        timeout = approval.timeout,
-                        turnId = approval.approvalId,
-                    ),
-                    onAllowOnce = { actions.vpsApprove(approval.approvalId, "once") },
-                    onAllowSession = { actions.vpsApprove(approval.approvalId, "session") },
-                    onDeny = { actions.vpsApprove(approval.approvalId, "deny") },
-                )
-            }
-            // VPS Results
-            items(view.vpsResults, key = { it.approvalId }) { result ->
-                VpsResultCard(
-                    payload = VpsApprovalPayload(
-                        command = result.command,
-                        args = result.args,
-                        cwd = result.cwd,
-                        timeout = 0,
-                        turnId = result.approvalId,
-                    ),
-                    exitCode = result.exitCode,
-                    output = result.output,
-                    onDismiss = { actions.vpsDismiss(result.approvalId) },
-                )
-            }
             items(view.messages, key = { it.key }) { m ->
                 WithMessageMenu(m, view, actions) { MessageBubble(m, view.voice, actions) }
             }
             items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
+            // server operations (PROTOCOL §10.8): where the owner is looking, below the newest message
+            items(view.opsApprovals, key = { "ops:" + it.requestId }) { a -> OpsApprovalCard(a, actions) }
+            items(view.opsResults, key = { "opsresult:" + it.requestId }) { r -> OpsResultCard(r, actions) }
         }
     }
 }

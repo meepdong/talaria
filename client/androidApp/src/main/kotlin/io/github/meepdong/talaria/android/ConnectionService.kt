@@ -51,6 +51,7 @@ class ConnectionService : Service() {
         createChannel()
         ReplyNotifier.createChannel(this)
         AutomationNotifier.createChannel(this)
+        OpsNotifier.createChannel(this)
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(Health.UNKNOWN, "Starting"), type)
 
@@ -88,6 +89,11 @@ class ConnectionService : Service() {
                 val home = (controller.screen.value as? Screen.Chat)?.tab == Tab.HOME
                 if (!(app.visible && home)) AutomationNotifier.show(this@ConnectionService, ran)
             }
+        }
+
+        // Server operations waiting for approval: a notification each until answered (PROTOCOL §10.8).
+        scope.launch {
+            controller.opsPending.collect { pending -> OpsNotifier.update(this@ConnectionService, pending) }
         }
 
         // A network coming back (Wi-Fi, mobile data, Tailscale) is worth a retry now

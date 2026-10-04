@@ -297,6 +297,13 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                 }
             }
 
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MenuSection("Server") {
+                TextButton(onClick = actions::showServer, modifier = Modifier.testTag("server")) {
+                    Text("Manage the server")
+                }
+            }
+
             // App version and update
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             MenuSection("About") {

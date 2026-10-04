@@ -43,24 +43,6 @@ data class MessageItem(
 /** An approval card: [choices] are (choice, button label), in Hermes's order. */
 data class ApprovalItem(val command: String?, val description: String?, val choices: List<Pair<String, String>>)
 
-/** A VPS command approval request pending user action. */
-data class VpsApprovalItem(
-    val approvalId: String,
-    val command: String,
-    val args: List<String>,
-    val cwd: String,
-    val timeout: Int,
-)
-
-/** A VPS command result to show. */
-data class VpsResultItem(
-    val approvalId: String,
-    val command: String,
-    val args: List<String>,
-    val cwd: String,
-    val exitCode: Int,
-    val output: List<String>,
-)
 
 data class ChatView(
     val conversations: List<ConversationItem>,
@@ -100,10 +82,10 @@ data class ChatView(
     val status: ConversationStatusView? = null,
     /** Whether this app can hand text to other apps (Share in a message's menu). */
     val canShare: Boolean = false,
-    /** Pending VPS command approval requests. */
-    val vpsApprovals: List<VpsApprovalItem> = emptyList(),
-    /** VPS command results to show. */
-    val vpsResults: List<VpsResultItem> = emptyList(),
+    /** Server operations waiting for approval (PROTOCOL §10.8). */
+    val opsApprovals: List<OpsApprovalItem> = emptyList(),
+    /** Approved server operations that finished, until dismissed. */
+    val opsResults: List<OpsResultItem> = emptyList(),
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

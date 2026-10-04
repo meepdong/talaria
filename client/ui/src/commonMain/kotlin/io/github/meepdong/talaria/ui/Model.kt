@@ -22,6 +22,9 @@ sealed interface Screen {
 
     data class Status(val view: StatusView) : Screen
 
+    /** The Server page, from the ☰ menu (PROTOCOL §10.8). [status] keeps the tray icon right. */
+    data class Server(val view: ServerView, val status: StatusView) : Screen
+
     /**
      * Paired: the main app, with its menu bar. [tab] picks the page; [menu] is the ☰ panel
      * (running work, balance, connection), shown while [menuOpen].
@@ -209,11 +212,11 @@ interface TalariaActions {
     /** Answer the approval a running reply waits for: once, session, always or deny. */
     fun approve(turnId: String, choice: String) {}
     
-    /** Answer a VPS command approval request from the bridge. */
-    fun vpsApprove(approvalId: String, choice: String) {}
-    
-    /** Dismiss a completed VPS command result card. */
-    fun vpsDismiss(approvalId: String) {}
+    /** Answer a server operation's approval: once or deny, signed by this device (PROTOCOL §10.8). */
+    fun opsApprove(requestId: String, choice: String) {}
+
+    /** Dismiss a finished server operation's card. */
+    fun opsDismiss(requestId: String) {}
     fun loadOlder() {}
     fun renameConversation(id: String, title: String) {}
     fun deleteConversation(id: String) {}
@@ -229,6 +232,14 @@ interface TalariaActions {
     fun shareText(text: String) {}
     fun dismissNotice() {}
     fun showStatus() {}
+
+    /** The Server page, from the ☰ menu. [showChats] goes back. */
+    fun showServer() {}
+    fun refreshServer() {}
+
+    /** Run a server operation; parameters as text, integers converted by their type in the catalogue. */
+    fun serverRun(op: String, params: Map<String, String> = emptyMap()) {}
+    fun dismissServerError() {}
     fun showChats() {}
 
     // the menu bar and Home
@@ -291,6 +302,7 @@ interface TalariaActions {
 val Screen.overall: Health
     get() = when (this) {
         is Screen.Status -> view.overall
+        is Screen.Server -> status.overall
         is Screen.Chat -> status.overall
         else -> Health.UNKNOWN
     }
@@ -301,9 +313,10 @@ val Screen.summary: String
         is Screen.Connect -> "Not paired"
         is Screen.Confirm -> "Pairing"
         is Screen.Status -> view.summary
+        is Screen.Server -> status.summary
         is Screen.Chat -> status.summary
     }
 
 /** Paired with a server, whichever page is showing. */
 val Screen.paired: Boolean
-    get() = this is Screen.Status || this is Screen.Chat
+    get() = this is Screen.Status || this is Screen.Server || this is Screen.Chat
