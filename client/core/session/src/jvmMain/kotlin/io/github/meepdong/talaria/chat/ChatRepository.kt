@@ -78,9 +78,12 @@ class ChatRepository(
     /** Every reply that finishes, from any device's message, for notifications. */
     val replies: SharedFlow<FinishedReply> = _replies.asSharedFlow()
 
-    /** VPS command approval requests from the bridge. */
-    private val _vpsApprovals = MutableSharedFlow<VpsApprovalRequest>(extraBufferCapacity = 8)
-    val vpsApprovals: SharedFlow<VpsApprovalRequest> = _vpsApprovals.asSharedFlow()
+    /**
+     * VPS command approval requests still waiting for an answer, oldest first (§10.8). Kept until the bridge
+     * says `vps.approval.done`, so a request that arrived while no screen was open is shown when one opens.
+     */
+    private val _vpsApprovals = MutableStateFlow<List<VpsApprovalRequest>>(emptyList())
+    val vpsApprovals: StateFlow<List<VpsApprovalRequest>> = _vpsApprovals.asStateFlow()
 
     /** VPS command results (completed/failed). */
     private val _vpsResults = MutableSharedFlow<VpsCommandResult>(extraBufferCapacity = 8)
@@ -682,9 +685,14 @@ class ChatRepository(
         val cwd = p.str("cwd") ?: "/opt/talaria"
         val timeout = (p["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 300
         val agentId = p.str("agent_id") ?: ""
-        val request = VpsApprovalRequest(approvalId, command, args, cwd, timeout, agentId)
+        val expiresAt = (p["expires_at"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0
+        val request = VpsApprovalRequest(approvalId, command, args, cwd, timeout, agentId, expiresAt)
         pendingVpsApprovals[approvalId] = request
-        _vpsApprovals.tryEmit(request)
+        val nowS = System.currentTimeMillis() / 1000
+        // the bridge re-sends pending requests on every reconnect: replace, don't duplicate
+        _vpsApprovals.update { list ->
+            list.filter { it.approvalId != approvalId && (it.expiresAt == 0L || it.expiresAt > nowS) } + request
+        }
     }
 
     private fun onVpsApprovalDone(p: JsonObject) {
@@ -693,6 +701,7 @@ class ChatRepository(
         val exitCode = (p["exit_code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: -1
         val output = (p["output"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
         val request = pendingVpsApprovals.remove(approvalId)
+        _vpsApprovals.update { list -> list.filter { it.approvalId != approvalId } }
         val result = VpsCommandResult(approvalId, choice, exitCode, output, 
             command = request?.command, args = request?.args, cwd = request?.cwd)
         _vpsResults.tryEmit(result)

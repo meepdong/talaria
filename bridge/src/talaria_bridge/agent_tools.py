@@ -17,6 +17,8 @@ import shlex
 from collections.abc import AsyncIterator, Awaitable, Callable
 from urllib.parse import urlsplit
 
+from .protocol import messages as m
+from .protocol.encoding import now
 from .todos import TodoError, TodoStore
 from .vps_config import VPSAllowlist, load_allowlist
 
@@ -141,6 +143,8 @@ class AgentTools:
         self.vps_enabled = vps_enabled and allowlist is not None
         self._rate_limits: dict[str, list[float]] = {}
         self._vps_approvals: dict[str, asyncio.Future[dict]] = {}
+        self._vps_requests: dict[str, dict] = {}  # approval_id -> vps.approval.request params, while pending
+        self.broadcast: Callable[[dict], Awaitable[None]] | None = None
 
     def agent_for(self, authorization: str | None) -> str | None:
         if not authorization or not authorization.startswith("Bearer "):
@@ -170,32 +174,31 @@ class AgentTools:
         approval_id = "vps-" + secrets.token_hex(8)
         future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._vps_approvals[approval_id] = future
-
-        # Broadcast approval request to all devices
-        if hasattr(self, 'broadcast') and self.broadcast:
-            await self.broadcast({
-                "method": "vps.approval.request",
-                "params": {
-                    "approval_id": approval_id,
-                    "command": request["command"],
-                    "args": request["args"],
-                    "cwd": request["cwd"],
-                    "timeout": request["timeout"],
-                    "agent_id": agent_id,
-                }
-            })
-
+        params = {"approval_id": approval_id, "command": request["command"], "args": request["args"],
+                  "cwd": request["cwd"], "timeout": request["timeout"], "agent_id": agent_id,
+                  "expires_at": now() + int(VPS_APPROVAL_TIMEOUT)}
+        self._vps_requests[approval_id] = params
         try:
-            result = await asyncio.wait_for(future, timeout=VPS_APPROVAL_TIMEOUT)
-            return result
+            if self.broadcast:
+                await self.broadcast(m.notification("vps.approval.request", params))
+            return await asyncio.wait_for(future, timeout=VPS_APPROVAL_TIMEOUT)
         except asyncio.TimeoutError:
+            if self.broadcast:
+                await self.broadcast(m.notification("vps.approval.done",
+                                                    {"approval_id": approval_id, "choice": "expired"}))
             raise VPSCommandError("Approval request timed out")
         finally:
             self._vps_approvals.pop(approval_id, None)
+            self._vps_requests.pop(approval_id, None)
+
+    def pending_vps_requests(self) -> list[dict]:
+        """The vps.approval.request notifications still waiting for an answer, for a device that just got ready."""
+        return [m.notification("vps.approval.request", p) for p in self._vps_requests.values()]
 
     def resolve_vps_approval(self, approval_id: str, choice: str) -> bool:
         """Resolve a pending VPS approval from chat.approve."""
         future = self._vps_approvals.pop(approval_id, None)
+        self._vps_requests.pop(approval_id, None)
         if future is None or future.done():
             return False
         future.set_result({"choice": choice})
@@ -362,6 +365,7 @@ class AgentTools:
                 os.killpg(os.getpgid(proc.pid), 9)
             except Exception:
                 pass
+            await proc.wait()  # reap it, so no zombie is left behind
             raise VPSCommandError(f"Command timed out after {timeout}s", exit_code=-1, output="\n".join(stdout_lines + stderr_lines))
 
         output = "\n".join(stdout_lines + stderr_lines)

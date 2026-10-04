@@ -1042,10 +1042,7 @@ class ChatService:
         if not resolved:
             raise RpcError(m.CONFLICT, "Approval request not found or already resolved")
         # Broadcast the resolution so all devices update their UI
-        await self.broadcast({
-            "method": "vps.approval.done",
-            "params": {"approval_id": approval_id, "choice": choice}
-        })
+        await self.broadcast(m.notification("vps.approval.done", {"approval_id": approval_id, "choice": choice}))
         return {"approval_id": approval_id, "choice": choice}
 
     def aside(self, p: dict) -> tuple[dict, Job]:

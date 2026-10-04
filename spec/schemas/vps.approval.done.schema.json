@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/vps.approval.done.schema.json",
+  "title": "vps.approval.done",
+  "description": "Bridge to every device (notification): a VPS approval request is settled and its card should close. 'expired' means nobody answered in time.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "vps.approval.done"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "pattern": "^vps-[0-9a-f]{16}$"
+        },
+        "choice": {
+          "enum": [
+            "once",
+            "session",
+            "deny",
+            "expired"
+          ]
+        }
+      },
+      "required": [
+        "approval_id",
+        "choice"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

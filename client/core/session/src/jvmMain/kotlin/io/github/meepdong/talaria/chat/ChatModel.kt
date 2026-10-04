@@ -191,6 +191,8 @@ data class VpsApprovalRequest(
     val cwd: String,
     val timeout: Int,
     val agentId: String,
+    /** Unix seconds after which the bridge stops waiting; 0 when the bridge didn't say (§10.8). */
+    val expiresAt: Long = 0,
 )
 
 /** A VPS command result (completed/failed). */

@@ -399,6 +399,18 @@ Server schedule entries include `runs_on: "server"`, `next_run_at`, `last_run` (
 
 A server job that needs phone data at run time calls the normal device tools (`device_location`, `device_events_query`, …). If the device is unreachable, the bridge answers from its **last known** event data and labels it stale (e.g. `"as_of": "2026-10-03T07:41:00+05:30"`).
 
+### 10.8 VPS command approvals
+
+When the agent calls the bridge's `vps_run` tool, the bridge asks the owner's devices before running anything. Every pending request must reach the owner, even if no app was open when it was made.
+
+| Method | Direction | Purpose |
+|---|---|---|
+| `vps.approval.request` | bridge → every device (notification) | `{approval_id, command, args, cwd, timeout, agent_id, expires_at}`. Re-sent to each device whose session becomes ready while the request is still pending. |
+| `vps.approve` | device → bridge (request) | `{approval_id, choice: once \| session \| deny}`. The first answer wins; later ones get `CONFLICT`. |
+| `vps.approval.done` | bridge → every device (notification) | `{approval_id, choice: once \| session \| deny \| expired}`. Close the card. `expired` means nobody answered before `expires_at`. |
+
+A client keeps every pending request until it sees `vps.approval.done` for it or its `expires_at` passes, so a request that arrives while the screen is closed is still shown when it opens.
+
 ## 11. Relayed devices (watch, glasses)
 
 A node MAY relay sub-devices it is connected to, e.g. a Wear OS watch over the Data Layer API, or glasses through the vendor SDK.

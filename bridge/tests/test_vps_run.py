@@ -1,11 +1,16 @@
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+import talaria_bridge.agent_tools as agent_tools_module
 from talaria_bridge.agent_tools import AgentTools
 from talaria_bridge.todos import TodoStore
 from talaria_bridge.vps_config import VPSAllowlist
+
+from conftest import check
+from test_chat import call, chat_bridge, connected, recv  # noqa: F401 (chat_bridge is a fixture)
 
 ALLOWLIST = """
 version: 1
@@ -108,3 +113,47 @@ async def test_rate_limit(tools: AgentTools):
         assert not result(await tools.call("vps_run", {"command": "echo", "args": ["hello"], "cwd": "/"}, "hermes"))[1]
     out, err = result(await tools.call("vps_run", {"command": "echo", "args": ["hello"], "cwd": "/"}, "hermes"))
     assert err and "Rate limit" in out
+
+
+async def test_requests_follow_the_spec_and_expire(tools: AgentTools, monkeypatch):
+    monkeypatch.setattr(agent_tools_module, "VPS_APPROVAL_TIMEOUT", 0.2)
+    sent: list[dict] = []
+
+    async def broadcast(msg: dict) -> None:
+        sent.append(msg)
+
+    tools.set_broadcast(broadcast)
+    out, err = result(await tools.call("vps_run", {"command": "echo", "args": ["hello"], "cwd": "/"}, "hermes"))
+    assert err and "timed out" in out
+    request, done = sent
+    check("vps.approval.request", request)
+    assert check("vps.approval.done", done)["params"] == {"approval_id": request["params"]["approval_id"],
+                                                           "choice": "expired"}
+    assert tools.pending_vps_requests() == []
+
+
+async def test_a_device_that_connects_later_still_gets_the_request(chat_bridge, tmp_path: Path):  # noqa: F811
+    bridge, _ = chat_bridge
+    chat = bridge.server.chat
+    (tmp_path / "allow.yaml").write_text(ALLOWLIST)
+    tools = AgentTools(chat.todos, {}, chat.todos_changed, allowlist=VPSAllowlist.load(str(tmp_path / "allow.yaml")))
+    chat.agent_tools = tools
+    tools.set_broadcast(bridge.server.broadcast)
+
+    running = asyncio.create_task(tools.call("vps_run", {"command": "echo", "args": ["hello"], "cwd": "/"}, "hermes"))
+    while not tools.pending_vps_requests():
+        await asyncio.sleep(0.01)
+
+    phone = await connected(bridge)  # opened after the agent asked
+    while (msg := await recv(phone))["method"] != "vps.approval.request":
+        pass
+    approval_id = check("vps.approval.request", msg)["params"]["approval_id"]
+    answer = check("vps.approve.result", await call(phone, "v1", "vps.approve",
+                                                    {"approval_id": approval_id, "choice": "once"}))
+    assert answer["result"] == {"approval_id": approval_id, "choice": "once"}
+    out, err = result(await running)
+    assert not err and out["output"] == "hello"
+    assert tools.pending_vps_requests() == []
+    again = await call(phone, "v2", "vps.approve", {"approval_id": approval_id, "choice": "once"})
+    assert "error" in again
+

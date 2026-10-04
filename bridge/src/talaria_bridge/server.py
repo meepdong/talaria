@@ -378,6 +378,9 @@ class BridgeServer:
             self.registry.set_capabilities(device_id, json.dumps(msg.get("params") or {}))
             await self._send(ws, m.notification("ready"))
             session.ready = True
+            tools = self.chat.agent_tools if self.chat is not None else None
+            for request in tools.pending_vps_requests() if tools is not None else []:
+                await self._send(ws, request)  # approvals asked while this device was away (§10.8)
         elif method == "status.get":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, self.status_report(session)))

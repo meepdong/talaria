@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -181,18 +182,19 @@ class TalariaController(
         val vpsResults: List<VpsResultItem> = emptyList(),
     )
 
-    /** VPS command approval requests from the bridge. */
+    /** VPS command approval requests still waiting for an answer (§10.8). */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsApprovals: Flow<VpsApprovalItem?> = mode.flatMapLatest { m ->
-        if (m is Mode.Connected) m.chat.vpsApprovals.map { req ->
-            VpsApprovalItem(req.approvalId, req.command, req.args, req.cwd, req.timeout)
-        } else flowOf(null)
+    val vpsApprovals: Flow<List<VpsApprovalItem>> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) m.chat.vpsApprovals.map { list ->
+            list.map { req -> VpsApprovalItem(req.approvalId, req.command, req.args, req.cwd, req.timeout) }
+        } else flowOf(emptyList())
     }
 
     /** VPS command results (completed/failed). */
     @OptIn(ExperimentalCoroutinesApi::class)
     val vpsResults: Flow<VpsResultItem?> = mode.flatMapLatest { m ->
-        if (m is Mode.Connected) m.chat.vpsResults.map { res ->
+        // onStart: combine() below waits for every input, so this must emit before the first result arrives
+        if (m is Mode.Connected) m.chat.vpsResults.map<VpsCommandResult, VpsResultItem?> { res ->
             VpsResultItem(
                 res.approvalId, 
                 res.command ?: "", 
@@ -201,7 +203,7 @@ class TalariaController(
                 res.exitCode, 
                 res.output
             )
-        } else flowOf(null)
+        }.onStart { emit(null) } else flowOf(null)
     }
 
     private val extras = combine(
@@ -215,7 +217,7 @@ class TalariaController(
         val (vpsApproval, vpsResult) = pickVoiceVps.second
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
             files.second, files.third, canShare = textSharer != null,
-            vpsApprovals = vpsApproval?.let { listOf(it) } ?: emptyList(),
+            vpsApprovals = vpsApproval,
             vpsResults = vpsResult?.let { listOf(it) } ?: emptyList())
     }
 
@@ -865,7 +867,7 @@ class TalariaController(
             try {
                 val key = withContext(io) { keyStore.loadOrCreate() }
                 val paired = pairer.pair(target, key, name) { sas ->
-                    mode.value = Mode.Confirm(sas, nowMs() + DECISION_TIMEOUT_MS)
+                    mode.value = Mode.Confirm(sas, nowMs() + APPROVAL_WINDOW_MS)
                 }
                 withContext(io) { pairingStore.save(paired) }
                 log.add(nowMs(), "Paired", "${paired.deviceName} with ${paired.url}")
@@ -926,8 +928,11 @@ class TalariaController(
     }
 
     companion object {
-/** App version, keep in sync with build.gradle.kts. */
-    const val VERSION = "0.1.0"
+        /** The countdown on Confirm code: the bridge gives its operator 120 s to approve. */
+        const val APPROVAL_WINDOW_MS = 120_000L
+
+        /** App version, keep in sync with build.gradle.kts. */
+        const val VERSION = "0.1.0"
 
         /** How long to wait for the decision, a little past the bridge's own limit. */
         const val DECISION_TIMEOUT_MS = 150_000L
