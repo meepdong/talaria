@@ -49,6 +49,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 ### M2 — Chat
 - One agent via the bridge chat proxy (Hermes API server Sessions API, one session per conversation).
 - Streaming replies, tool-progress indicators, cancel, history.
+- **Message and chat actions:** long press a message to copy, select, share, move or delete it (deleting hides it in Talaria; the agent still remembers it); long press a chat to rename, pin or delete it.
 - **Approvals:** when the agent wants to run a command it flags as dangerous, the chat shows what and why, with Allow once / Allow for this chat / Always / Deny, answered from any paired device.
 - **Blocked automations:** a scheduled run that Hermes stopped because it needed an approval shows on Home with a notification and a **Run in chat** button, which runs the task in a new chat where the approval card appears; Always allow there covers future runs.
 - **Voice:** on-device speech-to-text (Android `SpeechRecognizer`; on desktop, a local engine such as Vosk or whisper.cpp), edit before send, optional auto-send; spoken replies via TTS.

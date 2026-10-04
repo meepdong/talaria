@@ -7,6 +7,7 @@ import io.github.meepdong.talaria.chat.FinishedReply
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
+import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
@@ -130,6 +131,7 @@ class TalariaController(
 
     /** Opens fetched file bytes with the device's own app; set by the platform. */
     private var fileOpener: ((name: String, mime: String, bytes: ByteArray) -> Unit)? = null
+    private var textSharer: ((String) -> Unit)? = null
 
     /**
      * Opens the platform's file picker, which hands its choice to [addAttachments]. Null while
@@ -171,7 +173,7 @@ class TalariaController(
     private data class Extras(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
         val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
-        val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(),
+        val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(), val canShare: Boolean = false,
     )
 
     private val extras = combine(
@@ -179,7 +181,7 @@ class TalariaController(
         combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) }, picker, voice, speechInput,
     ) { q, files, pick, v, input ->
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
-            files.second, files.third)
+            files.second, files.third, canShare = textSharer != null)
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -709,6 +711,39 @@ class TalariaController(
         if (title.isNotBlank()) chat?.rename(id, title)
     }
 
+    override fun pinConversation(id: String, pinned: Boolean) {
+        chat?.pin(id, pinned)
+    }
+
+    override fun deleteMessages(keys: List<String>) {
+        val c = chat ?: return
+        c.hide(c.state.value.openId ?: return, keys)
+    }
+
+    override fun moveMessages(keys: List<String>, to: String?) {
+        val c = chat ?: return
+        val s = c.state.value
+        val from = s.openId ?: return
+        val moving = s.openMessages.filter { it.key in keys && it.text.isNotBlank() }
+        if (moving.isEmpty()) return
+        val quote = moving.joinToString("\n\n") { m ->
+            (if (m.role == Role.USER) "I wrote" else "Hermes wrote") + " in \"${s.openSummary?.title ?: "another chat"}\":\n" +
+                m.text.trim().lines().joinToString("\n") { "> $it" }
+        }
+        c.hide(from, keys)
+        if (to == null) newConversation() else openConversation(to)
+        voice.update { it.copy(dictation = Dictation(++dictations, quote.take(32000), send = false)) }
+    }
+
+    /** The platform's share sheet for text: set while the app can show it, null otherwise. */
+    fun setTextSharer(share: ((String) -> Unit)?) {
+        textSharer = share
+    }
+
+    override fun shareText(text: String) {
+        textSharer?.invoke(text)
+    }
+
     override fun deleteConversation(id: String) {
         chat?.delete(id)
         if (chat?.state?.value?.openId == id) page.value = Page(tab = Tab.CHATS)
@@ -794,7 +829,7 @@ class TalariaController(
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
-                    x.serverPending).copy(voice = x.voice, modelPicker = x.page.modelQuery)
+                    x.serverPending).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,

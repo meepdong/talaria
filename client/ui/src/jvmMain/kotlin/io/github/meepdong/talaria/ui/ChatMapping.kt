@@ -102,13 +102,15 @@ fun chatView(
         else -> null
     }
     return ChatView(
-        conversations = state.conversations.map { c ->
+        // pinned chats first, each part newest first as the list comes
+        conversations = state.conversations.sortedByDescending { it.pinned }.map { c ->
             ConversationItem(
                 id = c.id,
                 title = c.title,
                 preview = c.lastText?.let { (if (c.lastRole == Role.USER) "You: " else "") + it.replace('\n', ' ') }.orEmpty(),
                 time = shortTime(c.updatedAt * 1000, nowMs).orEmpty(),
                 running = c.activeTurnId != null,
+                pinned = c.pinned,
             )
         },
         listMessage = listMessage,

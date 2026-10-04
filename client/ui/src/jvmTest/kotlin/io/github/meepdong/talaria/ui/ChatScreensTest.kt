@@ -12,7 +12,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
 import io.github.meepdong.talaria.chat.Attachment
@@ -58,6 +60,12 @@ class ChatScreensTest {
         override fun openModelPicker(query: String) { calls += "picker $query" }
         override fun dismissAside(id: String) { calls += "dismiss $id" }
         override fun closeStatus() { calls += "close status" }
+        override fun renameConversation(id: String, title: String) { calls += "rename $id $title" }
+        override fun pinConversation(id: String, pinned: Boolean) { calls += "pin $id $pinned" }
+        override fun deleteConversation(id: String) { calls += "delete $id" }
+        override fun deleteMessages(keys: List<String>) { calls += "delete messages $keys" }
+        override fun moveMessages(keys: List<String>, to: String?) { calls += "move $keys $to" }
+        override fun shareText(text: String) { calls += "share $text" }
     }
 
     private val status = StatusView(
@@ -98,6 +106,45 @@ class ChatScreensTest {
         assertNull(v.listMessage)
         assertEquals("No conversations yet. Start one with New chat.", view(ChatState(listLoaded = true)).listMessage)
         assertEquals("Chat is off on the bridge: none", view(ChatState(unavailable = "none")).listMessage)
+    }
+
+    @Test
+    fun pinnedChatsComeFirst() {
+        val s = state()
+        val pinned = s.copy(conversations = s.conversations.map { if (it.id == "c-2") it.copy(pinned = true) else it })
+        assertEquals(listOf("Groceries" to true, "Trip plans" to false), view(pinned).conversations.map { it.title to it.pinned })
+    }
+
+    @Test
+    fun longPressAMessageOrAChat() = runComposeUiTest {
+        val actions = Recorder()
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) {
+                ChatHome(view(state()).copy(canShare = true), actions)
+            }
+        }
+        onNodeWithTag("hold-h:2").performTouchInput { longClick() }
+        onNodeWithTag("copy").assertExists()
+        onNodeWithTag("share").performClick()
+        onNodeWithTag("hold-h:2").performTouchInput { longClick() }
+        onNodeWithTag("select").performClick()
+        onNodeWithTag("select-text").assertExists()
+        onNodeWithText("Done").performClick()
+        onNodeWithTag("hold-h:1").performTouchInput { longClick() }
+        onNodeWithTag("delete-message").performClick()
+        onNodeWithTag("confirm-delete-message").performClick()
+        onNodeWithTag("hold-h:1").performTouchInput { longClick() }
+        onNodeWithTag("move").performClick()
+        onNodeWithTag("move-to-c-2").performClick()
+
+        onNodeWithTag("conversation-c-2").performTouchInput { longClick() }
+        onNodeWithTag("chat-pin").performClick()
+        onNodeWithTag("conversation-c-2").performTouchInput { longClick() }
+        onNodeWithTag("chat-rename").performClick()
+        onNodeWithTag("rename-field").performTextReplacement("Food")
+        onNodeWithText("Save").performClick()
+        assertEquals(listOf("share **Goa** it is", "delete messages [h:1]", "move [h:1] c-2", "pin c-2 true", "rename c-2 Food"),
+            actions.calls)
     }
 
     @Test

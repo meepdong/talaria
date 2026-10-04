@@ -1,8 +1,10 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,7 +28,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -128,23 +129,57 @@ private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Com
     }
 }
 
+/** A chat in the list; long press (or right click) to rename, pin or delete it. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(c: ConversationItem, selected: Boolean, actions: TalariaActions) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
-    Column(
-        Modifier.fillMaxWidth().background(bg).clickable { actions.openConversation(c.id) }
-            .padding(horizontal = 16.dp, vertical = 10.dp).testTag("conversation-${c.id}"),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(c.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f))
-            Text(if (c.running) "⏳" else c.time, style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    Box {
+        Column(
+            Modifier.fillMaxWidth().background(bg)
+                .combinedClickable(onLongClick = { menu = true }) { actions.openConversation(c.id) }
+                .onSecondaryClick { menu = true }
+                .padding(horizontal = 16.dp, vertical = 10.dp).testTag("conversation-${c.id}"),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text((if (c.pinned) "📌 " else "") + c.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(if (c.running) "⏳" else c.time, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (c.preview.isNotEmpty()) {
+                Text(c.preview, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        if (c.preview.isNotEmpty()) {
-            Text(c.preview, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false; confirmDelete = false }) {
+            DropdownMenuItem(text = { Text("Rename") }, modifier = Modifier.testTag("chat-rename"),
+                onClick = { menu = false; renaming = true })
+            DropdownMenuItem(text = { Text(if (c.pinned) "Unpin" else "Pin to top") }, modifier = Modifier.testTag("chat-pin"),
+                onClick = { menu = false; actions.pinConversation(c.id, !c.pinned) })
+            DropdownMenuItem(
+                text = { Text(if (confirmDelete) "Tap again to delete" else "Delete", color = MaterialTheme.colorScheme.error) },
+                modifier = Modifier.testTag("chat-delete"),
+                onClick = {
+                    if (confirmDelete) {
+                        menu = false
+                        confirmDelete = false
+                        actions.deleteConversation(c.id)
+                    } else {
+                        confirmDelete = true
+                    }
+                },
+            )
         }
+    }
+    if (renaming) {
+        RenameDialog(c.title, onDone = { title ->
+            renaming = false
+            if (title != null) actions.renameConversation(c.id, title)
+        })
     }
 }
 
@@ -325,25 +360,25 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        SelectionContainer {
-            LazyColumn(Modifier.fillMaxSize().testTag("messages"), state = list,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item(key = "top") {
-                    when {
-                        view.loading -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                        }
-                        view.hasOlder -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            TextButton(onClick = actions::loadOlder, modifier = Modifier.testTag("older")) { Text("Load older messages") }
-                        }
-                        view.historyError != null && view.messages.isNotEmpty() ->
-                            Text(view.historyError, color = MaterialTheme.colorScheme.error)
+        LazyColumn(Modifier.fillMaxSize().testTag("messages"), state = list,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item(key = "top") {
+                when {
+                    view.loading -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
+                    view.hasOlder -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = actions::loadOlder, modifier = Modifier.testTag("older")) { Text("Load older messages") }
+                    }
+                    view.historyError != null && view.messages.isNotEmpty() ->
+                        Text(view.historyError, color = MaterialTheme.colorScheme.error)
                 }
-                items(view.messages, key = { it.key }) { m -> MessageBubble(m, view.voice, actions) }
-                items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
             }
+            items(view.messages, key = { it.key }) { m ->
+                WithMessageMenu(m, view, actions) { MessageBubble(m, view.voice, actions) }
+            }
+            items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
         }
     }
 }

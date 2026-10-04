@@ -93,6 +93,9 @@
                   "minLength": 1,
                   "maxLength": 64
                 }
+              },
+              "pinned": {
+                "type": "boolean"
               }
             },
             "required": [

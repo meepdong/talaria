@@ -13,6 +13,8 @@ data class ConversationSummary(
     /** The model this conversation is pinned to, if any (spec/README.md §11). */
     val model: ModelChoice? = null,
     val queuedTurnIds: List<String> = emptyList(),
+    /** Listed first (spec/README.md §9). */
+    val pinned: Boolean = false,
 )
 
 /** A model as Hermes names it, e.g. openrouter / anthropic/claude-sonnet-4. */

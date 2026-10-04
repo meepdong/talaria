@@ -92,6 +92,8 @@ The folders the bridge shares (spec/README.md §12): what was sent from Talaria,
 └──────────────────────────────┘
 ```
 
+**Long press a chat** (right click on desktop): **Rename**, **Pin to top** (pinned chats come first, marked 📌) and **Delete** (tap twice).
+
 ## 4. One-to-one chat
 
 ```
@@ -112,6 +114,7 @@ The folders the bridge shares (spec/README.md §12): what was sent from Talaria,
 **Voice:** hold 🎤 to talk (or tap to toggle). Live transcript fills the box; edit, then send. Optional auto-send.
 **Attach:** camera, photo, PDF, file. Images are downscaled and location data removed.
 **Composer:** one rounded field with 📎 on the left and 🎤 on the right inside it, and a round ➤ beside it, so the text gets the width on a phone.
+**Long press a message** (right click on desktop): **Copy**, **Select text** (opens the text so any part can be picked), **Share** (Android's share sheet), **Move to…** and **Delete**. Delete removes the message from Talaria on all devices, after a confirmation that says Hermes still remembers it in that chat. Move to… puts the message in another chat (or a new one) as a quote in the composer, ready to send, and deletes it here.
 **Approvals:** when Hermes wants to run something it flags as risky, the reply shows a card with the command, why it was flagged, and Allow once / Allow for this chat / Always allow / Deny (only the answers Hermes offers). Any paired device can answer; the card goes away on all of them.
 **Blocked automations:** a scheduled run has nobody to approve anything, so Hermes refuses risky commands in it. Such a run shows in Your day on Home, whatever its result setting, as "Blocked: Hermes needed your approval for …" with a **Run in chat** button, and notifies once. Run in chat opens a new chat that runs the automation's task; its approval card appears there, and Always allow lets future scheduled runs do the same.
 **Model:** the chip in the header opens a dropdown of the models Hermes has keys for, grouped by provider, with a search box at the top. `/model name` picks a model directly when one matches, and opens the dropdown filtered to the matches when several do.

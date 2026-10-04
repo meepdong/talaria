@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/conversations.result.schema.json",
-  "title": "conversations.result",
-  "description": "Result of conversations.rename, conversations.delete and conversations.pin.",
+  "$id": "https://talaria.invalid/tnp/v0/conversations.pin.schema.json",
+  "title": "conversations.pin",
+  "description": "Device to bridge (request): pin a conversation to the top of the list, or unpin it (\u00a79).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,13 +11,16 @@
     "tnp": {
       "const": 0
     },
+    "method": {
+      "const": "conversations.pin"
+    },
     "id": {
       "type": [
         "string",
         "integer"
       ]
     },
-    "result": {
+    "params": {
       "type": "object",
       "properties": {
         "conversation_id": {
@@ -25,25 +28,21 @@
           "minLength": 1,
           "maxLength": 64
         },
-        "title": {
-          "type": "string"
-        },
-        "deleted": {
-          "type": "boolean"
-        },
         "pinned": {
           "type": "boolean"
         }
       },
       "required": [
-        "conversation_id"
+        "conversation_id",
+        "pinned"
       ]
     }
   },
   "required": [
     "jsonrpc",
     "tnp",
+    "method",
     "id",
-    "result"
+    "params"
   ]
 }

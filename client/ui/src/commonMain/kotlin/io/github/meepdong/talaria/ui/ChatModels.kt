@@ -7,6 +7,8 @@ data class ConversationItem(
     val preview: String,
     val time: String,
     val running: Boolean,
+    /** Pinned to the top of the list. */
+    val pinned: Boolean = false,
 )
 
 enum class ItemState { SENDING, NOT_SENT, QUEUED, STREAMING, DONE, FAILED, CANCELLED }
@@ -77,6 +79,8 @@ data class ChatView(
     val asides: List<AsideItem> = emptyList(),
     /** /status, while it's showing. */
     val status: ConversationStatusView? = null,
+    /** Whether this app can hand text to other apps (Share in a message's menu). */
+    val canShare: Boolean = false,
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

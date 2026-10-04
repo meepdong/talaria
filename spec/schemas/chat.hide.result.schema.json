@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/conversations.result.schema.json",
-  "title": "conversations.result",
-  "description": "Result of conversations.rename, conversations.delete and conversations.pin.",
+  "$id": "https://talaria.invalid/tnp/v0/chat.hide.result.schema.json",
+  "title": "chat.hide.result",
+  "description": "Result of chat.hide.",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -25,18 +25,21 @@
           "minLength": 1,
           "maxLength": 64
         },
-        "title": {
-          "type": "string"
-        },
-        "deleted": {
-          "type": "boolean"
-        },
-        "pinned": {
-          "type": "boolean"
+        "message_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
         }
       },
       "required": [
-        "conversation_id"
+        "conversation_id",
+        "message_ids"
       ]
     }
   },

@@ -114,6 +114,9 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.list` | request | `{}` → `{conversations}` |
 | `conversations.rename` | request | `{conversation_id, title}` → `{conversation_id, title}` |
 | `conversations.delete` | request | `{conversation_id}` → `{conversation_id, deleted}` |
+| `conversations.pin` | request | `{conversation_id, pinned}` → `{conversation_id, pinned}` |
+| `chat.hide` | request | `{conversation_id, message_ids}` → `{conversation_id, message_ids}` |
+| `chat.hidden` | notification | `{conversation_id, message_ids}` |
 
 **Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` lists photos and files uploaded first (§10); `text` may then be empty.
 
@@ -136,9 +139,13 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?, attachments?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
 
+**Hiding messages.** `chat.hide` hides up to 50 messages, by their `chat.history` `id`, from Talaria on every device: `chat.history` leaves them out from then on, and every device gets `chat.hidden` and drops them. The agent keeps them: they stay in its session and it still remembers them in that conversation. Hiding can't be undone from Talaria. Unknown ids are accepted and change nothing, so a device can hide a message another device hid already.
+
+**Pinning.** `conversations.pin` pins a conversation, or unpins it with `pinned: false`; `conversations.list` marks pinned ones `pinned: true`, and devices list them first. The bridge also pins the agent's session where the agent supports it.
+
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
-Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.result`.
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.result`, `chat.hide`, `chat.hide.result`, `chat.hidden`.
 
 ## 10. Attachments (M2)
 
