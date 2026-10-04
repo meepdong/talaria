@@ -997,6 +997,14 @@ class ChatService:
                 return await asyncio.to_thread(self.files.handle, method, p), None
             except FilesError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method == "automations.run_in_chat":
+            if self.automations is None:
+                raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            try:
+                agent_id, text = await self.automations.chat_task(p)
+            except AutomationError as exc:
+                raise RpcError(exc.code, exc.message) from None
+            return await self.send({"agent_id": agent_id, "text": text})
         if method in AUTOMATION_METHODS:
             if self.automations is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
@@ -1048,6 +1056,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "chat.steer", "chat.approve", "chat.aside", "chat.status",
+                          "automations.run_in_chat",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 

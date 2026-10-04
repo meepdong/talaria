@@ -242,6 +242,7 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 | `automations.describe` | request | `{text, agent_id?}` → `{reply, automations}` |
 | `automations.update` | request | `{id, name?, when?, task?, result_to?, paused?}` → `{automation}` |
 | `automations.run` | request | `{id}` → `{automation}` |
+| `automations.run_in_chat` | request | `{id}` → `{conversation_id, turn_id, title}` |
 | `automations.delete` | request | `{id}` → `{id, deleted}` |
 | `automations.runs` | request | `{id, limit?}` → `{runs}` |
 | `automations.ran` | notification | `{id, name, run}` |
@@ -257,18 +258,22 @@ An automation is work the agent does on its own: **when**, **what to do** and **
   - `{kind: "other"}`: a job the agent made some other way, described by `schedule_text`; it can be run, paused and deleted, but `when` can't be changed from Talaria.
 - `task` is what the agent should do, in words, up to 4000 characters.
 - `result_to` is `home` (Home and a notification on every device), `chat` (a new conversation per run) or `log` (only `automations.runs`). Jobs made outside Talaria count as `log` unless changed.
-- `made_in` is `talaria` or `agent`; `state` is `scheduled`, `paused`, `running`, `completed` (a single run that has happened) or `error`; times are Unix seconds; `last_status` is `ok`, `error` or `nothing` (an `arrives` or `after_event` check that found nothing to do).
+- `made_in` is `talaria` or `agent`; `state` is `scheduled`, `paused`, `running`, `completed` (a single run that has happened) or `error`; times are Unix seconds; `last_status` is `ok`, `error`, `nothing` (an `arrives` or `after_event` check that found nothing to do) or `blocked` (see **Blocked runs**).
 
 **How the bridge does it for Hermes.** `time` is a Hermes job with that schedule. `arrives` and `after_event` are a Hermes job every 10 minutes in the window whose prompt tells the agent to check first and to answer `[SILENT]` when there is nothing to do yet or it already ran that day; the bridge keeps the structured `when` alongside the job id. All jobs Talaria makes deliver locally; the bridge reads each run's result and passes it on.
 
 **Asking in words.** `automations.describe` sends `text` (such as "every weekday at 8, summarise my unread email") to the agent, which creates the job with its own scheduling tool and answers in `reply` (what it set up, or a question). `automations` is the list afterwards. Jobs the agent makes this way, or in any chat, show up with `made_in: agent` and `when.kind: other`.
 
-**Runs.** A run is `{at, status, text?, error?, conversation_id?}`. When a run of a job finishes with something to say, every device gets `automations.ran`; a device shows a notification when `result_to` is `home`. `automations.runs` returns the newest first, at most `limit` (default 10, at most 50). `automations.changed` goes to every device when the list changes (added, edited, paused, run, deleted, or a change the bridge noticed in the agent's jobs).
+**Runs.** A run is `{at, status, text?, error?, blocked?, conversation_id?}`. When a run of a job finishes with something to say, every device gets `automations.ran`; a device shows a notification when `result_to` is `home`, or when `status` is `blocked`. `automations.runs` returns the newest first, at most `limit` (default 10, at most 50). `automations.changed` goes to every device when the list changes (added, edited, paused, run, deleted, or a change the bridge noticed in the agent's jobs).
+
+**Blocked runs.** A scheduled run has nobody to answer an approval (§9), so the agent refuses anything that needs one. For Hermes, `approvals.cron_mode` (default `deny`) blocks a dangerous command in a cron job unless it was approved permanently. When the bridge finds such a refusal in a run's session, the run's `status` is `blocked` and `blocked` says what was refused (Hermes's description, such as `recursive delete`), up to 500 characters; `text` is kept when the agent answered anyway. Only the first of consecutive blocked runs of a job sends `automations.ran`, so a window job blocked every 10 minutes notifies once.
+
+`automations.run_in_chat` runs the automation's task now in a new conversation, as if the owner had sent it from this device (it returns what `chat.send` returns, and the turn streams as in §9). There the approval card appears, and answering `always` approves the command for the agent's future runs too, scheduled ones included. It works for any automation, not only blocked ones. Nothing about the job changes: the bridge never sets `approvals.cron_mode` or approves anything on the owner's behalf.
 
 **Calendar.** `calendar.day` lists the events of `date` (`YYYY-MM-DD`, default today in the bridge's time zone), each `{title, start, end, all_day, location?}`, with `start` and `end` as ISO 8601 times (dates for all-day events), sorted by start. The bridge reads the calendar the agent can read, so devices never hold calendar credentials. Without a calendar set up, `events` is empty and `error` says why.
 
-**Home.** `home.get` returns today's `results`: the latest run today of each automation with `result_to: home`, each `{id, name, run}`, newest first, so a device that was off sees the morning summary when it opens.
+**Home.** `home.get` returns today's `results`: the latest run today of each automation with `result_to: home`, and of any other automation whose latest run today is `blocked`, each `{id, name, run}`, newest first, so a device that was off sees the morning summary, or that it was blocked, when it opens.
 
 **Errors.** `AGENT_UNAVAILABLE` when the agent's jobs can't be reached; `NOT_FOUND` for an unknown automation; `INVALID_PARAMS` for a bad schedule, window or day; `CONFLICT` when changing the `when` of a `kind: other` job.
 
-Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`.
+Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`.

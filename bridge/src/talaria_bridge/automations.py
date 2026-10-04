@@ -38,6 +38,10 @@ MAX_RUN_TEXT = 20000
 RUNS_KEPT = 50
 CALENDAR_TIMEOUT_S = 30
 SILENT = "[SILENT]"
+MAX_BLOCKED = 500
+# Hermes's refusal when a cron job hits an approval (tools/approval.py, approvals.cron_mode: deny)
+BLOCKED_IN_CRON = re.compile(r"BLOCKED: (.{1,600}?) but cron jobs run without a user present to approve it")
+FLAGGED = re.compile(r"^Command flagged as dangerous \((.+)\)$")
 
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 CRON_DOW = {"mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6, "sun": 0}
@@ -63,6 +67,7 @@ CREATE TABLE IF NOT EXISTS automation_runs (
     text TEXT,
     error TEXT,
     conversation_id TEXT,
+    blocked TEXT,
     PRIMARY KEY (job_id, at)
 );
 CREATE TABLE IF NOT EXISTS automation_seen (
@@ -105,6 +110,11 @@ DESCRIBE_PROMPT = """The owner wants an automation, a scheduled job you run on y
 What they asked for: {text}
 
 Give the job a short name. If the request is unclear or can't be scheduled, don't create anything and ask one short question instead. Reply in one or two sentences: what you set up and when it runs, or your question."""
+
+
+RUN_IN_CHAT_PROMPT = """Run my automation "{name}" now, here in our chat, so I can approve anything it needs.
+
+{task}"""
 
 
 class AutomationError(Exception):
@@ -251,6 +261,8 @@ class AutomationStore:
         self.db = sqlite3.connect(str(path), isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        if "blocked" not in {r["name"] for r in self.db.execute("PRAGMA table_info(automation_runs)")}:
+            self.db.execute("ALTER TABLE automation_runs ADD COLUMN blocked TEXT")  # a chat.db from before blocked runs
 
     def close(self) -> None:
         self.db.close()
@@ -288,9 +300,10 @@ class AutomationStore:
 
     def add_run(self, job_id: str, run: dict) -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO automation_runs (job_id, at, status, text, error, conversation_id)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, run["at"], run["status"], run.get("text"), run.get("error"), run.get("conversation_id")))
+            "INSERT OR REPLACE INTO automation_runs (job_id, at, status, text, error, conversation_id, blocked)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (job_id, run["at"], run["status"], run.get("text"), run.get("error"), run.get("conversation_id"),
+             run.get("blocked")))
         self.db.execute("DELETE FROM automation_runs WHERE job_id = ? AND at NOT IN (SELECT at FROM automation_runs"
                         " WHERE job_id = ? ORDER BY at DESC LIMIT ?)", (job_id, job_id, RUNS_KEPT))
 
@@ -306,10 +319,23 @@ class AutomationStore:
 
 def _run(r: sqlite3.Row) -> dict:
     run = {"at": r["at"], "status": r["status"]}
-    for key in ("text", "error", "conversation_id"):
+    for key in ("text", "error", "blocked", "conversation_id"):
         if r[key]:
             run[key] = r[key]
     return run
+
+
+def blocked_reason(rows: list[dict]) -> str | None:
+    """What Hermes refused to do in a cron run because nobody was there to approve it, if anything."""
+    for row in rows:
+        content = row.get("content")
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        found = BLOCKED_IN_CRON.search(text.replace('\\"', '"'))
+        if found:
+            subject = found.group(1).strip()
+            flagged = FLAGGED.match(subject)
+            return (flagged.group(1) if flagged else subject)[:MAX_BLOCKED]
+    return None
 
 
 def calendar_event(e: dict) -> dict | None:
@@ -515,6 +541,15 @@ class Automations:
         await self._call(self.jobs[agent_id].action(job["id"], "run"))
         return {"automation": await self._after_change(agent_id, job["id"])}
 
+    async def chat_task(self, p: dict) -> tuple[str, str]:
+        """automations.run_in_chat: the agent and the message that runs the automation's task in a chat."""
+        agent_id, job = await self._find(p.get("id"))
+        item = self.automation(agent_id, job)
+        task = item["task"].strip()
+        if not task:
+            raise AutomationError(m.CONFLICT, "This automation has no task to run in a chat")
+        return agent_id, RUN_IN_CHAT_PROMPT.format(name=item["name"], task=task)
+
     async def delete(self, p: dict) -> dict:
         agent_id, job = await self._find(p.get("id"))
         await self._call(self.jobs[agent_id].delete(job["id"]))
@@ -614,9 +649,11 @@ class Automations:
         names = {str(j.get("id")): str(j.get("name") or "Untitled") for jobs in self._jobs.values() for j in jobs}
         results, done = [], set()
         for job_id, run in self.store.runs_since(start):
-            if job_id in home and job_id not in done and run["status"] != "nothing":
-                done.add(job_id)
+            if job_id in done or run["status"] == "nothing":
+                continue
+            if job_id in home or run["status"] == "blocked":
                 results.append({"id": job_id, "name": names.get(job_id, "Automation")[:MAX_NAME], "run": run})
+            done.add(job_id)  # only the latest run counts
         return {"date": today.isoformat(), "results": results}
 
     # watching Hermes
@@ -660,9 +697,11 @@ class Automations:
             run["error"] = str(job.get("last_error") or "The run failed")[:2000]
         session_id = None
         if run["status"] != "error":
-            session_id, text = await self._run_text(agent_id, jobs_api, job_id)
+            session_id, text, blocked = await self._run_text(agent_id, jobs_api, job_id)
             if text and SILENT not in text:
                 run.update(status="ok", text=text[:MAX_RUN_TEXT])
+            if blocked:
+                run.update(status="blocked", blocked=blocked)
         self.store.mark_seen(job_id, last, run["status"])
         if run["status"] == "nothing":
             return True  # a check that found nothing to do: last_status only
@@ -673,25 +712,26 @@ class Automations:
             day = dt.datetime.fromtimestamp(last)
             run["conversation_id"] = self.on_chat(agent_id, session_id, f"{name} · {day.day} {day:%b}", last, run.get("text", ""))
         self.store.add_run(job_id, run)
-        if self.notify is not None and last >= self._started - POLL_S:
+        again = run["status"] == "blocked" and seen is not None and seen[1] == "blocked"
+        if self.notify is not None and last >= self._started - POLL_S and not again:
             await self.notify(m.notification("automations.ran",
                                              {"id": job_id, "name": name, "result_to": result_to, "run": run}))
         return True
 
-    async def _run_text(self, agent_id: str, jobs_api: HermesJobs, job_id: str) -> tuple[str | None, str]:
-        """The latest run's answer, from the session Hermes saved it as."""
+    async def _run_text(self, agent_id: str, jobs_api: HermesJobs, job_id: str) -> tuple[str | None, str, str | None]:
+        """The latest run's answer, from the session Hermes saved it as, and what it was blocked from doing."""
         from .chat import history_messages  # chat imports this module
 
         try:
             sessions = await jobs_api.run_sessions(job_id, 1)
             if not sessions:
-                return None, ""
+                return None, "", None
             rows = await self.clients[agent_id].messages(sessions[0], limit=20, offset=0)
         except (HermesError, HermesUnavailable) as exc:
             log.warning("couldn't read the run of %s: %s", job_id, exc)
-            return None, ""
+            return None, "", None
         replies = [x["text"] for x in history_messages(rows) if x["role"] == "assistant"]
-        return sessions[0], (replies[-1].strip() if replies else "")
+        return sessions[0], (replies[-1].strip() if replies else ""), blocked_reason(rows)
 
     async def handle(self, method: str, p: dict) -> dict:
         if method == "automations.list":

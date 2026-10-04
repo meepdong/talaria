@@ -50,7 +50,8 @@
                     "enum": [
                       "ok",
                       "error",
-                      "nothing"
+                      "nothing",
+                      "blocked"
                     ]
                   },
                   "text": {
@@ -58,6 +59,10 @@
                   },
                   "error": {
                     "type": "string"
+                  },
+                  "blocked": {
+                    "type": "string",
+                    "maxLength": 500
                   },
                   "conversation_id": {
                     "type": "string",

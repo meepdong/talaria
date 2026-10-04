@@ -193,7 +193,8 @@
               "enum": [
                 "ok",
                 "error",
-                "nothing"
+                "nothing",
+                "blocked"
               ]
             },
             "last_error": {
