@@ -183,15 +183,15 @@ class TalariaController(
 
     /** VPS command approval requests from the bridge. */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsApprovals: Flow<VpsApprovalItem> = mode.flatMapLatest { m ->
+    val vpsApprovals: Flow<VpsApprovalItem?> = mode.flatMapLatest { m ->
         if (m is Mode.Connected) m.chat.vpsApprovals.map { req ->
             VpsApprovalItem(req.approvalId, req.command, req.args, req.cwd, req.timeout)
-        } else emptyFlow()
+        } else flowOf(null)
     }
 
     /** VPS command results (completed/failed). */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsResults: Flow<VpsResultItem> = mode.flatMapLatest { m ->
+    val vpsResults: Flow<VpsResultItem?> = mode.flatMapLatest { m ->
         if (m is Mode.Connected) m.chat.vpsResults.map { res ->
             VpsResultItem(
                 res.approvalId, 
@@ -201,7 +201,7 @@ class TalariaController(
                 res.exitCode, 
                 res.output
             )
-        } else emptyFlow()
+        } else flowOf(null)
     }
 
     private val extras = combine(
@@ -215,8 +215,8 @@ class TalariaController(
         val (vpsApproval, vpsResult) = pickVoiceVps.second
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
             files.second, files.third, canShare = textSharer != null,
-            vpsApprovals = if (vpsApproval != null) listOf(vpsApproval) else emptyList(),
-            vpsResults = if (vpsResult != null) listOf(vpsResult) else emptyList())
+            vpsApprovals = vpsApproval?.let { listOf(it) } ?: emptyList(),
+            vpsResults = vpsResult?.let { listOf(it) } ?: emptyList())
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
