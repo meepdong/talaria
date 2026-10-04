@@ -9,6 +9,8 @@ import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ServerFile
+import io.github.meepdong.talaria.chat.VpsApprovalRequest
+import io.github.meepdong.talaria.chat.VpsCommandResult
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
 import io.github.meepdong.talaria.schedule.AutomationRan
@@ -54,6 +56,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -178,16 +181,42 @@ class TalariaController(
         val vpsResults: List<VpsResultItem> = emptyList(),
     )
 
+    /** VPS command approval requests from the bridge. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val vpsApprovals: Flow<VpsApprovalItem> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) m.chat.vpsApprovals.map { req ->
+            VpsApprovalItem(req.approvalId, req.command, req.args, req.cwd, req.timeout)
+        } else emptyFlow()
+    }
+
+    /** VPS command results (completed/failed). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val vpsResults: Flow<VpsResultItem> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) m.chat.vpsResults.map { res ->
+            VpsResultItem(
+                res.approvalId, 
+                res.command ?: "", 
+                res.args ?: emptyList(), 
+                res.cwd ?: "/opt/talaria", 
+                res.exitCode, 
+                res.output
+            )
+        } else emptyFlow()
+    }
+
     private val extras = combine(
         combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
         combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) },
-        picker, voice, speechInput,
-        mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsApprovals else emptyFlow() },
-        mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsResults else emptyFlow() },
-    ) { q, files, pick, v, input, vpsApprovalsFlow, vpsResultsFlow ->
+        combine(picker, voice, speechInput, vpsApprovals, vpsResults) { p, v, s, va, vr ->
+            Triple(p, v, s) to Pair(va, vr)
+        },
+    ) { q, files, pickVoiceVps ->
+        val (pick, v, input) = pickVoiceVps.first
+        val (vpsApproval, vpsResult) = pickVoiceVps.second
         Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
             files.second, files.third, canShare = textSharer != null,
-            vpsApprovals = vpsApprovalsFlow, vpsResults = vpsResultsFlow)
+            vpsApprovals = if (vpsApproval != null) listOf(vpsApproval) else emptyList(),
+            vpsResults = if (vpsResult != null) listOf(vpsResult) else emptyList())
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -199,14 +228,6 @@ class TalariaController(
     /** Every reply that finishes, for notifications. The apps decide whether one is needed. */
     @OptIn(ExperimentalCoroutinesApi::class)
     val replies: Flow<FinishedReply> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.replies else emptyFlow() }
-
-    /** VPS command approval requests from the bridge. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsApprovals: Flow<VpsApprovalRequest> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsApprovals else emptyFlow() }
-
-    /** VPS command results (completed/failed). */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val vpsResults: Flow<VpsCommandResult> = mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.vpsResults else emptyFlow() }
 
     private val chat: ChatRepository? get() = (mode.value as? Mode.Connected)?.chat
     private val files: FilesRepository? get() = (mode.value as? Mode.Connected)?.files
@@ -844,7 +865,7 @@ class TalariaController(
             try {
                 val key = withContext(io) { keyStore.loadOrCreate() }
                 val paired = pairer.pair(target, key, name) { sas ->
-                    mode.value = Mode.Confirm(sas, nowMs() + APPROVAL_WINDOW_MS)
+                    mode.value = Mode.Confirm(sas, nowMs() + DECISION_TIMEOUT_MS)
                 }
                 withContext(io) { pairingStore.save(paired) }
                 log.add(nowMs(), "Paired", "${paired.deviceName} with ${paired.url}")

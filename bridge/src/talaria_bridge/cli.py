@@ -25,6 +25,7 @@ from .automations import AutomationStore, Automations
 from .files import INBOX, FileRoot, FilesService
 from .agent_tools import DEFAULT_PORT as AGENT_TOOLS_PORT
 from .agent_tools import MIN_TOKEN, AgentTools
+from .vps_config import VPSAllowlist, load_allowlist
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
@@ -76,7 +77,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
     return b64u_encode(hashlib.sha256(spki).digest())
 
 
-def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
+def make_chat(home: Path, agents: list[AgentConfig], agent_tools: object | None = None) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
     clients, inboxes, accounts, roots, calendars = {}, {}, [], {}, {}
     for agent in agents:
@@ -107,13 +108,21 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
                        files=FilesService(roots), todos=TodoStore(home / "chat.db"),
-                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars))
+                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars),
+                       agent_tools=agent_tools)
 
 
-def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> AgentTools | None:
+def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, home: Path) -> AgentTools | None:
     """The MCP endpoint for every agent with a tools_key_file (§15). An unreadable or short key leaves it out."""
-    if chat is None or chat.todos is None:
+    if chat is None:
+        # Create TodoStore directly if chat not available yet
+        todos = TodoStore(home / "chat.db")
+        todos_changed = lambda: None  # placeholder, will be replaced after chat is created
+    elif chat.todos is None:
         return None
+    else:
+        todos = chat.todos
+        todos_changed = chat.todos_changed
     tokens = {}
     for agent in agents:
         if agent.tools_key_file is None:
@@ -128,7 +137,22 @@ def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> Age
                   file=sys.stderr)
             continue
         tokens[token] = agent.id
-    return AgentTools(chat.todos, tokens, chat.todos_changed) if tokens else None
+    if not tokens:
+        return None
+
+    # Load VPS allowlist
+    allowlist = None
+    try:
+        allowlist = load_allowlist()
+        print(f"  vps tools: enabled ({', '.join(allowlist.list_commands())})")
+    except Exception as exc:
+        print(f"WARNING: VPS allowlist not loaded: {exc}", file=sys.stderr)
+
+    vps_enabled = os.environ.get("VPS_COMMANDS_ENABLED", "true").lower() != "false"
+    if not vps_enabled:
+        print("  vps tools: disabled (VPS_COMMANDS_ENABLED=false)")
+
+    return AgentTools(todos, tokens, todos_changed, allowlist=allowlist, vps_enabled=vps_enabled)
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:
@@ -193,9 +217,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
         registry.db.execute("DELETE FROM meta WHERE key = 'tls_spki_sha256'")
 
     agents = load_agents(args.home / "agents.json")
-    chat = make_chat(args.home, agents)
+    # Create agent_tools first so we can pass it to chat
+    # Use a placeholder todos_changed that will be replaced after chat is created
+    tools = make_agent_tools(agents, None, args.home)
+    chat = make_chat(args.home, agents, tools)
+    # Update the todos_changed callback now that chat exists
+    if tools and chat:
+        tools.changed = chat.todos_changed
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat)
-    tools = make_agent_tools(agents, chat)
+    # Set broadcast on tools so vps_run can send approval requests
+    if tools:
+        tools.set_broadcast(bridge.broadcast)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
     if args.behind_proxy:

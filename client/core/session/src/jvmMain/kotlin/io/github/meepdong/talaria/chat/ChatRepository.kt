@@ -78,6 +78,17 @@ class ChatRepository(
     /** Every reply that finishes, from any device's message, for notifications. */
     val replies: SharedFlow<FinishedReply> = _replies.asSharedFlow()
 
+    /** VPS command approval requests from the bridge. */
+    private val _vpsApprovals = MutableSharedFlow<VpsApprovalRequest>(extraBufferCapacity = 8)
+    val vpsApprovals: SharedFlow<VpsApprovalRequest> = _vpsApprovals.asSharedFlow()
+
+    /** VPS command results (completed/failed). */
+    private val _vpsResults = MutableSharedFlow<VpsCommandResult>(extraBufferCapacity = 8)
+    val vpsResults: SharedFlow<VpsCommandResult> = _vpsResults.asSharedFlow()
+
+    /** Pending VPS approval requests, keyed by approvalId, so results can include command details. */
+    private val pendingVpsApprovals = java.util.concurrent.ConcurrentHashMap<String, VpsApprovalRequest>()
+
     /** Last applied `seq` of each turn we follow. Guarded by [lock]. */
     private val lastSeq = HashMap<String, Int>()
     private val syncing = HashSet<String>()
@@ -334,6 +345,22 @@ class ChatRepository(
                 throw e
             } catch (e: Exception) {
                 notice("Couldn't answer the approval: ${e.message}")
+            }
+        }
+    }
+
+    /** Answer a VPS command approval request. */
+    fun vpsApprove(approvalId: String, choice: String) {
+        scope.launch {
+            try {
+                api.request("vps.approve", buildJsonObject {
+                    put("approval_id", approvalId)
+                    put("choice", choice)
+                })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't answer VPS approval: ${e.message}")
             }
         }
     }
@@ -641,9 +668,34 @@ class ChatRepository(
                 "chat.queued" -> onQueued(p)
                 "chat.aside.done" -> onAside(p)
                 "chat.hidden" -> onHidden(p)
+                "vps.approval.request" -> onVpsApprovalRequest(p)
+                "vps.approval.done" -> onVpsApprovalDone(p)
                 "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
             }
         }
+    }
+
+    private fun onVpsApprovalRequest(p: JsonObject) {
+        val approvalId = p.str("approval_id") ?: return
+        val command = p.str("command") ?: return
+        val args = (p["args"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+        val cwd = p.str("cwd") ?: "/opt/talaria"
+        val timeout = (p["timeout"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 300
+        val agentId = p.str("agent_id") ?: ""
+        val request = VpsApprovalRequest(approvalId, command, args, cwd, timeout, agentId)
+        pendingVpsApprovals[approvalId] = request
+        _vpsApprovals.tryEmit(request)
+    }
+
+    private fun onVpsApprovalDone(p: JsonObject) {
+        val approvalId = p.str("approval_id") ?: return
+        val choice = p.str("choice") ?: return
+        val exitCode = (p["exit_code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: -1
+        val output = (p["output"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+        val request = pendingVpsApprovals.remove(approvalId)
+        val result = VpsCommandResult(approvalId, choice, exitCode, output, 
+            command = request?.command, args = request?.args, cwd = request?.cwd)
+        _vpsResults.tryEmit(result)
     }
 
     private fun onHidden(p: JsonObject) {

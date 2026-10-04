@@ -123,6 +123,8 @@ class BridgeServer:
 
     async def broadcast(self, msg: dict) -> None:
         """Send one notification to every session that is past `ready` (chat, §9)."""
+        ready_sessions = sum(1 for s in self._sessions.values() if s.ready)
+        log.info("Broadcast %s to %d ready sessions (of %d total)", msg.get("method"), ready_sessions, len(self._sessions))
         for ws, session in list(self._sessions.items()):
             if session.ready:
                 with contextlib.suppress(ConnectionClosed):
@@ -372,6 +374,7 @@ class BridgeServer:
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, {"ts": now()}))
         elif method == "capabilities.announce":
+            log.info("Device %s announced capabilities, session ready", device_id)
             self.registry.set_capabilities(device_id, json.dumps(msg.get("params") or {}))
             await self._send(ws, m.notification("ready"))
             session.ready = True

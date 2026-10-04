@@ -359,7 +359,7 @@ class ChatService:
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
                  inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None,
                  files: FilesService | None = None, todos: TodoStore | None = None,
-                 automations: Automations | None = None):
+                 automations: Automations | None = None, agent_tools: object | None = None):
         self.store = store
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         if automations is not None:
@@ -380,6 +380,7 @@ class ChatService:
         self._client_msgs: dict[str, tuple[float, dict]] = {}
         self._grouping: asyncio.Task | None = None
         self._group_tried: set[str] = set()  # to-dos already handed to the agent to group
+        self.agent_tools = agent_tools
 
     def _automation_chat(self, agent_id: str, session_id: str, title: str, at: int, text: str) -> str:
         """An automation run whose result goes to a chat: the run's own Hermes session becomes a conversation."""
@@ -1027,6 +1028,26 @@ class ChatService:
         await self._delta(turn, "approval_done", choice=choice)
         return {"turn_id": turn.turn_id, "choice": choice}
 
+    async def vps_approve(self, p: dict) -> dict:
+        """Resolve a VPS command approval from a device."""
+        approval_id = p.get("approval_id")
+        choice = p.get("choice")
+        if not isinstance(approval_id, str) or not isinstance(choice, str):
+            raise RpcError(m.INVALID_PARAMS, "approval_id and choice are required")
+        if choice not in ("once", "session", "deny"):
+            raise RpcError(m.INVALID_PARAMS, "choice must be once, session, or deny")
+        if self.agent_tools is None or not hasattr(self.agent_tools, 'resolve_vps_approval'):
+            raise RpcError(m.CONFLICT, "VPS approval not available")
+        resolved = self.agent_tools.resolve_vps_approval(approval_id, choice)
+        if not resolved:
+            raise RpcError(m.CONFLICT, "Approval request not found or already resolved")
+        # Broadcast the resolution so all devices update their UI
+        await self.broadcast({
+            "method": "vps.approval.done",
+            "params": {"approval_id": approval_id, "choice": choice}
+        })
+        return {"approval_id": approval_id, "choice": choice}
+
     def aside(self, p: dict) -> tuple[dict, Job]:
         conv = self._conversation(p)
         question = _note(p.get("text"), "text")
@@ -1180,6 +1201,8 @@ class ChatService:
             return await self.steer(p), None
         if method == "chat.approve":
             return await self.approve(p), None
+        if method == "vps.approve":
+            return await self.vps_approve(p), None
         if method == "chat.aside":
             return self.aside(p)
         if method == "chat.status":
@@ -1192,6 +1215,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
+                          "vps.approve",
                           "automations.run_in_chat", "conversations.pin", "chat.hide",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
