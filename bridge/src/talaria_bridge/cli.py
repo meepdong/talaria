@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import ipaddress
 import logging
@@ -22,6 +23,8 @@ from .chat import ChatService, ChatStore
 from .todos import TodoStore
 from .automations import AutomationStore, Automations
 from .files import INBOX, FileRoot, FilesService
+from .agent_tools import DEFAULT_PORT as AGENT_TOOLS_PORT
+from .agent_tools import MIN_TOKEN, AgentTools
 from .hermes import HermesClient, read_api_key
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
@@ -107,6 +110,27 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
                        automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars))
 
 
+def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None) -> AgentTools | None:
+    """The MCP endpoint for every agent with a tools_key_file (§15). An unreadable or short key leaves it out."""
+    if chat is None or chat.todos is None:
+        return None
+    tokens = {}
+    for agent in agents:
+        if agent.tools_key_file is None:
+            continue
+        try:
+            token = read_api_key(Path(agent.tools_key_file))
+        except (OSError, ValueError) as exc:
+            print(f"WARNING: no tools for agent {agent.id}: cannot read {agent.tools_key_file} ({exc})", file=sys.stderr)
+            continue
+        if len(token) < MIN_TOKEN:
+            print(f"WARNING: no tools for agent {agent.id}: its tools key needs {MIN_TOKEN}+ characters",
+                  file=sys.stderr)
+            continue
+        tokens[token] = agent.id
+    return AgentTools(chat.todos, tokens, chat.todos_changed) if tokens else None
+
+
 def file_roots(agent: AgentConfig) -> list[FileRoot]:
     """The folders devices can browse (§12): the inbox, then what agents.json shares."""
     roots = []
@@ -171,6 +195,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     agents = load_agents(args.home / "agents.json")
     chat = make_chat(args.home, agents)
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat)
+    tools = make_agent_tools(agents, chat)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
     if args.behind_proxy:
@@ -179,11 +204,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"  listening: {url}  (data in {args.home})")
     print(f"  agents:    {', '.join(a.id for a in agents) or 'none configured (agents.json)'}")
     print(f"  chat:      {', '.join(chat.agents) if chat else 'off (no agent has api_url in agents.json)'}")
+    if tools:
+        print(f"  tools:     http://127.0.0.1:{args.agent_tools_port}/mcp for {', '.join(sorted(set(tools.tokens.values())))}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
     sys.stdout.flush()  # under systemd stdout is a pipe, so these lines would wait in a buffer
 
     async def run() -> None:
-        async with bridge.serve():
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(bridge.serve())
+            if tools:
+                await stack.enter_async_context(tools.serve(args.agent_tools_port))
             await asyncio.get_running_loop().create_future()
 
     try:
@@ -279,6 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="run the TNP endpoint")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--agent-tools-port", type=int, default=AGENT_TOOLS_PORT,
+                       help="loopback port of the agents' MCP tools (§15)")
     serve.add_argument("--url", help="address devices use, e.g. wss://meep-vps.tailnet.ts.net/tnp")
     serve.add_argument("--dev", action="store_true", help="plain ws:// on loopback, for local testing")
     serve.add_argument("--behind-proxy", action="store_true",

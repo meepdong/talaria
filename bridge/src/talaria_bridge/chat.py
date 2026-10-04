@@ -433,10 +433,10 @@ class ChatService:
             raise
         if todo_id is not None:
             self.todos.link(todo_id, result["conversation_id"])
-            await self._todos_changed()
+            await self.todos_changed()
         return result, turn
 
-    async def _todos_changed(self) -> None:
+    async def todos_changed(self) -> None:
         await self.broadcast(m.notification("todos.changed", {"todos": self.todos.list()}))
 
     def _server_files(self, p: dict, refs: list[dict]) -> list[Found]:
@@ -1072,7 +1072,7 @@ class ChatService:
             except TodoError as exc:
                 raise RpcError(exc.code, exc.message) from None
             if changed:
-                await self._todos_changed()
+                await self.todos_changed()
             return result, None
         if method == "chat.send":
             return await self.send(p)
