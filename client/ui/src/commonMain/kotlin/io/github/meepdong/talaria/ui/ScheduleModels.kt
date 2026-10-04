@@ -34,17 +34,22 @@ data class AutomationItem(
     /** "in 25 min", "Tomorrow 08:00", or null when paused or unknown. */
     val next: String? = null,
     val paused: Boolean = false,
-    /** "Ran 11:42", "Checked 12:10, nothing yet", "Failed 09:00: …". */
+    /** "Ran 11:42", "Checked 12:10, nothing yet", "Failed 09:00: …", "Blocked 09:00: …". */
     val last: String? = null,
     val failed: Boolean = false,
+    /** Its last run was refused something that needs approval: Run in chat can answer it. */
+    val blocked: Boolean = false,
     /** Made by asking the agent, in Talaria or elsewhere. */
     val byAgent: Boolean = false,
     /** "Home", "A new chat" or "Log only". */
     val resultTo: String = "",
 )
 
-/** What "Your day" shows: a result from today. */
-data class DayResult(val name: String, val text: String, val time: String, val failed: Boolean = false, val conversationId: String? = null)
+/** What "Your day" shows: a result from today. [blocked] is what the agent wasn't allowed to do on its own. */
+data class DayResult(
+    val name: String, val text: String, val time: String, val failed: Boolean = false, val conversationId: String? = null,
+    val id: String = "", val blocked: String? = null,
+)
 
 /** A line in "Next up": a calendar event or an automation about to run. */
 data class NextItem(

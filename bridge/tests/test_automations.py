@@ -8,8 +8,9 @@ import httpx
 import pytest
 
 from talaria_bridge.automations import (
-    AutomationError, AutomationStore, Automations, calendar_event, check_when, job_spec, when_text,
+    AutomationError, AutomationStore, Automations, blocked_reason, calendar_event, check_when, job_spec, when_text,
 )
+from talaria_bridge.chat import ChatService, ChatStore
 from talaria_bridge.hermes import HermesClient
 from talaria_bridge.protocol import messages as m
 
@@ -66,11 +67,13 @@ class FakeJobs(FakeHermes):
             job.update(enabled=True, state="scheduled")
         return httpx.Response(200, json={"job": job})
 
-    def ran(self, job_id: str, at: int, answer: str, status: str = "ok") -> None:
+    def ran(self, job_id: str, at: int, answer: str, status: str = "ok", tool: str | None = None) -> None:
         self.jobs[job_id].update(last_run_at=at, last_status=status)
+        tools = [{"id": 3, "role": "tool", "content": tool, "timestamp": at + 2}] if tool else []
         self.sessions[f"cron_{job_id}_{time.strftime('%Y%m%d_%H%M%S', time.localtime(at))}"] = {
             "title": None, "messages": [
                 {"id": 1, "role": "user", "content": "the prompt", "timestamp": at},
+                *tools,
                 {"id": 2, "role": "assistant", "content": answer, "timestamp": at + 5}]}
 
 
@@ -191,6 +194,69 @@ async def test_runs_reach_home_and_chats(tmp_path: Path):
     sent.clear()
     await autos.poll_once()
     assert not [x for x in sent if x["method"] == "automations.ran"], "each run is announced once"
+
+
+REFUSED = json.dumps({"output": "", "exit_code": -1, "error": (
+    "BLOCKED: Command flagged as dangerous (recursive delete) but cron jobs run without a user present to approve "
+    "it. Find an alternative approach that avoids this command. To allow dangerous commands in cron jobs, set "
+    "approvals.cron_mode: approve in config.yaml."), "status": "blocked"})
+
+
+def test_blocked_reason():
+    assert blocked_reason([{"role": "tool", "content": REFUSED}]) == "recursive delete"
+    plugin = ("BLOCKED: Tool 'send_email' requires approval (sends mail) but cron jobs run without a user present to "
+              "approve it. Find an alternative approach.")
+    assert blocked_reason([{"role": "tool", "content": [{"type": "text", "text": plugin}]}]) == \
+        "Tool 'send_email' requires approval (sends mail)"
+    assert blocked_reason([{"role": "tool", "content": "BLOCKED: User denied this command."}]) is None
+    assert blocked_reason([{"role": "assistant", "content": "All done."}]) is None
+
+
+async def test_blocked_runs_reach_home_once_and_run_in_chat(tmp_path: Path):
+    autos, hermes, sent = setup(tmp_path)
+    tidy = (await autos.add({"name": "Tidy downloads", "when": {"kind": "time", "schedule": "*/10 * * * *"},
+                             "task": "Delete files older than a week in ~/Downloads.", "result_to": "log"}))["automation"]
+    await autos.poll_once()
+    sent.clear()
+
+    now = int(time.time())
+    hermes.ran(tidy["id"], now - 50, "I couldn't delete them: the command needs approval.", tool=REFUSED)
+    await autos.poll_once()
+    ran = [check("automations.ran", x)["params"] for x in sent if x["method"] == "automations.ran"]
+    assert [(r["result_to"], r["run"]["status"], r["run"]["blocked"]) for r in ran] == [
+        ("log", "blocked", "recursive delete")]
+    assert ran[0]["run"]["text"].startswith("I couldn't delete them")
+    listed = check("automations.list.result", m.result("1", await autos.list({})))["result"]["automations"]
+    assert next(a for a in listed if a["id"] == tidy["id"])["last_status"] == "blocked"
+    home = result("home.get.result", autos.home({}))
+    assert [(r["name"], r["run"]["status"]) for r in home["results"]] == [("Tidy downloads", "blocked")]
+
+    sent.clear()
+    hermes.ran(tidy["id"], now - 30, "Still blocked.", tool=REFUSED)
+    await autos.poll_once()
+    assert not [x for x in sent if x["method"] == "automations.ran"], "blocked again: no second notification"
+    runs = result("automations.runs.result", autos.runs({"id": tidy["id"]}))["runs"]
+    assert [r["status"] for r in runs] == ["blocked", "blocked"]
+
+    hermes.ran(tidy["id"], now - 10, "Deleted 12 files.")
+    await autos.poll_once()
+    assert result("home.get.result", autos.home({}))["results"] == [], "a log job leaves Home once it runs"
+
+    async def unused(msg: dict) -> None:
+        pass
+
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), dict(autos.clients), unused, automations=autos)
+    res, turn = await chat.handle("automations.run_in_chat", {"id": tidy["id"]})
+    check("chat.send.result", m.result("1", res))
+    assert turn.conversation_id == res["conversation_id"] and turn.agent_id == "hermes"
+    assert turn.user_text.startswith('Run my automation "Tidy downloads" now')
+    assert turn.user_text.endswith("Delete files older than a week in ~/Downloads.")
+    assert hermes.actions == [], "the job itself isn't run or changed"
+    check("automations.run_in_chat", m.request("2", "automations.run_in_chat", {"id": tidy["id"]}))
+    with pytest.raises(Exception) as err:
+        await chat.handle("automations.run_in_chat", {"id": "000000000fff"})
+    assert err.value.code == m.NOT_FOUND
+    chat.store.close()
 
 
 async def test_describe_asks_hermes_and_lists_what_it_made(tmp_path: Path):

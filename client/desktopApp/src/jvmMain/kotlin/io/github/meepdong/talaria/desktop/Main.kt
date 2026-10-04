@@ -26,6 +26,7 @@ import io.github.meepdong.talaria.ui.Tab
 import io.github.meepdong.talaria.ui.TalariaApp
 import io.github.meepdong.talaria.ui.TalariaController
 import io.github.meepdong.talaria.ui.color
+import io.github.meepdong.talaria.ui.notificationText
 import io.github.meepdong.talaria.ui.overall
 import io.github.meepdong.talaria.ui.summary
 import kotlinx.coroutines.CoroutineScope
@@ -98,7 +99,7 @@ fun main(args: Array<String>) {
             controller.automationResults.collect { ran ->
                 val home = (controller.screen.value as? Screen.Chat)?.tab == Tab.HOME
                 if (!(visible && focused && home) && tray) {
-                    val text = if (ran.run.status == "error") "It failed: ${ran.run.error ?: "unknown error"}" else ran.run.text.orEmpty()
+                    val text = ran.notificationText()
                     trayState.sendNotification(Notification(ran.name, text.take(240)))
                 }
             }

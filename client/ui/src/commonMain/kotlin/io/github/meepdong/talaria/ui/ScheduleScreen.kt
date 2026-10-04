@@ -128,6 +128,11 @@ private fun AutomationRow(a: AutomationItem, actions: TalariaActions) {
             color = if (a.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         Row {
             TextButton(onClick = { actions.runAutomation(a.id) }, modifier = Modifier.testTag("automation-run-${a.id}")) { Text("Run now") }
+            if (a.blocked) {
+                TextButton(onClick = { actions.runAutomationInChat(a.id) }, modifier = Modifier.testTag("automation-chat-${a.id}")) {
+                    Text("Run in chat")
+                }
+            }
             TextButton(onClick = { actions.deleteAutomation(a.id) }, modifier = Modifier.testTag("automation-delete-${a.id}")) {
                 Text("Delete", color = MaterialTheme.colorScheme.error)
             }
@@ -253,9 +258,20 @@ fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
                     Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
                     Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 4.dp))
+                d.blocked?.let { b ->
+                    Text("Blocked: Hermes needed your approval for $b, and nobody was there to give it.",
+                        color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp).testTag("blocked-${d.id}"))
+                }
+                if (d.text.isNotBlank()) {
+                    Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 4.dp))
+                }
                 d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
+                if (d.blocked != null) {
+                    Button(onClick = { actions.runAutomationInChat(d.id) }, modifier = Modifier.padding(top = 8.dp).testTag("run-in-chat-${d.id}")) {
+                        Text("Run in chat")
+                    }
+                }
             }
         }
     }

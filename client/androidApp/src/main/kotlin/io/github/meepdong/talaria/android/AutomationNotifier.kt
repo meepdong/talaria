@@ -10,8 +10,9 @@ import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.github.meepdong.talaria.schedule.AutomationRan
+import io.github.meepdong.talaria.ui.notificationText
 
-/** Results of automations that report to Home, such as the morning summary (spec/README.md §14). */
+/** Results of automations that report to Home, such as the morning summary, and blocked runs (spec/README.md §14). */
 object AutomationNotifier {
     private const val CHANNEL = "automations"
     const val EXTRA_HOME = "open_home"
@@ -28,7 +29,7 @@ object AutomationNotifier {
 
     fun show(context: Context, ran: AutomationRan) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val text = if (ran.run.status == "error") "It failed: ${ran.run.error ?: "unknown error"}" else ran.run.text.orEmpty()
+        val text = ran.notificationText()
         val code = id(ran.id)
         val open = PendingIntent.getActivity(context, code,
             Intent(context, MainActivity::class.java).putExtra(EXTRA_HOME, true),

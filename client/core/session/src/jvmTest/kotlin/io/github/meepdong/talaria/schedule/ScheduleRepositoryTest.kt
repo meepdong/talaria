@@ -78,6 +78,29 @@ class ScheduleRepositoryTest {
     }
 
     @Test
+    fun aBlockedRunReachesHomeAndRunsInAChat() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        api.answers["automations.run_in_chat"] = { json("""{"conversation_id":"c-9","turn_id":"t-1","title":"Run my automation"}""") }
+        val repo = ScheduleRepository(scope, api)
+        repo.start()
+        advanceUntilIdle()
+        api.notifications.emit(json("""{"method":"automations.ran","params":{"id":"0000000000ff","name":"Tidy downloads",
+            "result_to":"log","run":{"at":1600,"status":"blocked","blocked":"recursive delete"}}}"""))
+        advanceUntilIdle()
+        val blocked = repo.state.value.today.single()
+        assertTrue(blocked.forHome, "a blocked run shows on Home whatever its result_to")
+        assertEquals("recursive delete", blocked.run.blocked)
+
+        var opened: String? = null
+        repo.runInChat("0000000000ff") { opened = it }
+        advanceUntilIdle()
+        assertEquals("c-9", opened)
+        assertEquals("automations.run_in_chat" to "0000000000ff", api.calls.last().let { it.first to it.second["id"]!!.jsonPrimitive.content })
+        scope.cancel()
+    }
+
+    @Test
     fun addDescribePauseAndDelete() = runTest {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
         val api = FakeApi()

@@ -197,11 +197,11 @@ class TalariaController(
     private val todos: TodosRepository? get() = (mode.value as? Mode.Connected)?.todos
     private val schedule: ScheduleRepository? get() = (mode.value as? Mode.Connected)?.schedule
 
-    /** Automation runs that report to Home, for a notification; a run for a chat refreshes the list. */
+    /** Automation runs that report to Home or were blocked, for a notification; a run for a chat refreshes the list. */
     @OptIn(ExperimentalCoroutinesApi::class)
     val automationResults: Flow<AutomationRan> = mode.flatMapLatest { m ->
         if (m is Mode.Connected) {
-            m.schedule.ran.onEach { if (it.run.conversationId != null) m.chat.refresh() }.filter { it.resultTo == "home" }
+            m.schedule.ran.onEach { if (it.run.conversationId != null) m.chat.refresh() }.filter { it.forHome }
         } else {
             emptyFlow()
         }
@@ -567,6 +567,14 @@ class TalariaController(
 
     override fun runAutomation(id: String) {
         schedule?.runNow(id)
+    }
+
+    override fun runAutomationInChat(id: String) {
+        val s = schedule ?: return
+        s.runInChat(id) { conversation ->
+            chat?.refresh()
+            openConversation(conversation)
+        }
     }
 
     override fun deleteAutomation(id: String) {
