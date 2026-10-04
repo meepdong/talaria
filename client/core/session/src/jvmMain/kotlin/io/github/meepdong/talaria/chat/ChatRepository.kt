@@ -29,6 +29,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
@@ -198,6 +199,62 @@ class ChatRepository(
                 throw e
             } catch (e: Exception) {
                 notice("Couldn't delete: ${e.message}")
+            }
+        }
+    }
+
+    fun pin(conversationId: String, pinned: Boolean) {
+        fun set(on: Boolean) = _state.update { s -> s.copy(conversations = s.conversations.map { if (it.id == conversationId) it.copy(pinned = on) else it }) }
+        set(pinned)
+        scope.launch {
+            try {
+                api.request("conversations.pin", buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("pinned", pinned)
+                })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                set(!pinned)
+                notice("Couldn't ${if (pinned) "pin" else "unpin"}: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Delete messages from Talaria on every device (spec/README.md §9 chat.hide). Hermes keeps
+     * them. A message shown live, before history named it, is found in the newest page first.
+     */
+    fun hide(conversationId: String, keys: Collection<String>) {
+        val chosen = _state.value.threads[conversationId]?.messages.orEmpty().filter { it.key in keys }
+        if (chosen.isEmpty()) return
+        _state.update { s -> s.withMessages(conversationId) { list -> list.filterNot { it.key in keys } } }
+        val known = chosen.filter { it.key.startsWith(HISTORY_KEY) }.map { it.key.removePrefix(HISTORY_KEY) }
+        val live = chosen.filter { !it.key.startsWith(HISTORY_KEY) && it.state !in LOCAL_STATES }
+        scope.launch {
+            try {
+                var ids = known
+                if (live.isNotEmpty()) {
+                    val r = api.request("chat.history", buildJsonObject {
+                        put("conversation_id", conversationId)
+                        put("limit", PAGE)
+                    }, HISTORY_TIMEOUT_MS)
+                    val page = (r["messages"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::parseHistory) }
+                    ids = ids + live.mapNotNull { l ->
+                        page.lastOrNull { it.role == l.role && it.text.trim() == l.text.trim() }?.key?.removePrefix(HISTORY_KEY)
+                    }
+                }
+                ids.distinct().chunked(MAX_HIDE).forEach { chunk ->
+                    api.request("chat.hide", buildJsonObject {
+                        put("conversation_id", conversationId)
+                        putJsonArray("message_ids") { chunk.forEach { add(JsonPrimitive(it)) } }
+                    })
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't delete: ${e.message}")
+                loadPage(conversationId, null)
             }
         }
     }
@@ -565,7 +622,18 @@ class ChatRepository(
                 "chat.done" -> onDone(p)
                 "chat.queued" -> onQueued(p)
                 "chat.aside.done" -> onAside(p)
+                "chat.hidden" -> onHidden(p)
             }
+        }
+    }
+
+    private fun onHidden(p: JsonObject) {
+        val conv = p.str("conversation_id") ?: return
+        val keys = (p["message_ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.let { id -> HISTORY_KEY + id } }.toSet()
+        _state.update { s -> s.withMessages(conv, onlyLoaded = true) { list -> list.filterNot { it.key in keys } } }
+        // a message this device shows live has no history id yet: the newest page settles it
+        if (_state.value.threads[conv]?.messages.orEmpty().any { !it.key.startsWith(HISTORY_KEY) && it.state == MessageState.DONE }) {
+            scope.launch { loadPage(conv, null) }
         }
     }
 
@@ -826,6 +894,7 @@ class ChatRepository(
             lastText = last?.str("text"), activeTurnId = c.str("active_turn_id"),
             model = parseModel(c.obj("model")),
             queuedTurnIds = (c["queued_turn_ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
+            pinned = (c["pinned"] as? JsonPrimitive)?.content == "true",
         )
     }
 
@@ -837,7 +906,7 @@ class ChatRepository(
     private fun parseHistory(m: JsonObject): ChatMessage? {
         val role = when (m.str("role")) { "user" -> Role.USER; "assistant" -> Role.ASSISTANT; else -> return null }
         return ChatMessage(
-            key = "h:${m.str("id")}", role = role, text = m.str("text").orEmpty(),
+            key = HISTORY_KEY + m.str("id"), role = role, text = m.str("text").orEmpty(),
             atMs = m.long("ts")?.times(1000),
             toolNames = (m["tools"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
             attachments = parseAttachments(m),
@@ -858,6 +927,8 @@ class ChatRepository(
         const val CHUNK_BYTES = 512 * 1024
         private const val STALE_RETRIES = 3
         private const val MAX_ASIDES = 5
+        private const val MAX_HIDE = 50
+        private const val HISTORY_KEY = "h:"
         private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.QUEUED, MessageState.STREAMING)
     }
 }

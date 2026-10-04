@@ -169,6 +169,16 @@ interface TalariaActions {
     fun loadOlder() {}
     fun renameConversation(id: String, title: String) {}
     fun deleteConversation(id: String) {}
+    fun pinConversation(id: String, pinned: Boolean) {}
+
+    /** Delete messages of the open chat from Talaria on every device; Hermes keeps them (spec/README.md §9). */
+    fun deleteMessages(keys: List<String>) {}
+
+    /** Quote messages in another chat's composer ([to], or a new chat when null) and delete them here. */
+    fun moveMessages(keys: List<String>, to: String?) {}
+
+    /** Hand text to another app (the platform's share sheet). */
+    fun shareText(text: String) {}
     fun dismissNotice() {}
     fun showStatus() {}
     fun showChats() {}

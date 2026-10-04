@@ -79,6 +79,60 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun hidingMessagesAndPinning() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }
+        api.answers["chat.history"] = { json("""{"messages":[{"id":"1","role":"user","text":"Plan a trip","ts":1},
+            {"id":"2","role":"assistant","text":"Goa","ts":2},{"id":"3","role":"user","text":"Hi","ts":3},
+            {"id":"4","role":"assistant","text":"Hello!","ts":4}],"next_before":null}""") }
+        api.answers["chat.hide"] = { p -> json("""{"conversation_id":"c-1","message_ids":${p["message_ids"]}}""") }
+        api.answers["conversations.pin"] = { json("""{"conversation_id":"c-1","pinned":false}""") }
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Trip"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        assertTrue(repo.state.value.conversations.single().pinned)
+        repo.pin("c-1", false)
+        assertTrue(!repo.state.value.conversations.single().pinned)
+        advanceUntilIdle()
+        assertEquals("false", api.calls.last { it.first == "conversations.pin" }.second["pinned"].toString())
+
+        repo.open("c-1")
+        advanceUntilIdle()
+        repo.hide("c-1", listOf("h:1", "h:2"))
+        assertEquals(listOf("Hi", "Hello!"), repo.state.value.openMessages.map { it.text })
+        advanceUntilIdle()
+        assertEquals("""["1","2"]""", api.calls.last { it.first == "chat.hide" }.second["message_ids"].toString())
+
+        // another device hid one: it goes here too
+        api.push("chat.hidden", """{"conversation_id":"c-1","message_ids":["3"]}""")
+        advanceUntilIdle()
+        assertEquals(listOf("Hello!"), repo.state.value.openMessages.map { it.text })
+    }
+
+    @Test
+    fun aLiveMessageIsHiddenByItsHistoryId() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }
+        api.answers["chat.history"] = { json("""{"messages":[{"id":"7","role":"user","text":"Hi","ts":1},
+            {"id":"8","role":"assistant","text":"Hello!","ts":2}],"next_before":null}""") }
+        api.answers["chat.hide"] = { p -> json("""{"conversation_id":"c-1","message_ids":${p["message_ids"]}}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        repo.send("Hi")
+        advanceUntilIdle()
+        api.push("chat.started", started)
+        api.push("chat.done", """{"conversation_id":"c-1","turn_id":"t-1","seq":1,"status":"completed","text":"Hello!"}""")
+        advanceUntilIdle()
+        val reply = repo.state.value.openMessages.last()
+        repo.hide("c-1", listOf(reply.key))
+        advanceUntilIdle()
+        assertEquals("""["8"]""", api.calls.last { it.first == "chat.hide" }.second["message_ids"].toString())
+        assertEquals(listOf("Hi"), repo.state.value.openMessages.map { it.text })
+    }
+
+    @Test
     fun newConversationStreamsIntoTheDraft() = chatTest { scope ->
         val api = FakeApi()
         api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }

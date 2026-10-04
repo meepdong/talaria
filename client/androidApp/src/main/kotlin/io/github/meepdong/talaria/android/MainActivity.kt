@@ -90,6 +90,15 @@ class MainActivity : ComponentActivity() {
                 onDispose { controller.setFilePicker(null) }
             }
 
+            // Share in a message's menu: the system share sheet
+            DisposableEffect(controller) {
+                controller.setTextSharer { text ->
+                    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                    startActivity(Intent.createChooser(send, null))
+                }
+                onDispose { controller.setTextSharer(null) }
+            }
+
             // Open on the Files page: a copy lent to the app that opens it
             DisposableEffect(controller) {
                 controller.setFileOpener { name, mime, bytes -> OpenedFiles.open(this@MainActivity, name, mime, bytes) }
