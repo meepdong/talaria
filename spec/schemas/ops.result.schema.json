@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/ops.result.schema.json",
+  "title": "ops.result",
+  "description": "Bridge to every device (notification): an approved operation finished.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "ops.result"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^op-[0-9a-f]{16}$"
+        },
+        "requested_by": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "agent:<id> or device:<device_id>"
+        },
+        "approved_by": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "result": {
+          "type": "object",
+          "description": "What an operation did.",
+          "properties": {
+            "op": {
+              "type": "string",
+              "pattern": "^[a-z]+(\\.[a-z_]+)+$",
+              "maxLength": 64
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "output": {
+              "type": "string",
+              "maxLength": 65536,
+              "description": "stdout+stderr, last 64 KiB"
+            },
+            "data": {
+              "description": "Structured result for read operations (e.g. system.overview)."
+            },
+            "started_at": {
+              "type": "integer"
+            },
+            "finished_at": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "op",
+            "ok",
+            "summary",
+            "output"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "requested_by",
+        "result"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

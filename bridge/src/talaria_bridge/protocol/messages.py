@@ -14,6 +14,7 @@ TS_WINDOW_S = 120
 HELLO_LABEL = "tnp0-hello"
 AUTH_LABEL = "tnp0-auth"
 PAIR_LABEL = "tnp0-pair"
+OPS_APPROVE_LABEL = "tnp0-ops-approve"
 
 # WebSocket close codes (PROTOCOL §3.3, spec/README.md §6)
 CLOSE_BAD_SIGNATURE = 4401
@@ -110,3 +111,8 @@ def pair_signed_data(
 ) -> bytes:
     """Proof that the pairing device holds the private key for device_pk."""
     return frame(PAIR_LABEL, bridge_id, nonce_b, device_pk, pairing_secret, name, platform, str(ts))
+
+
+def ops_approve_signed_data(request_id: str, device_id: str, op: str, params_json: str, choice: str) -> bytes:
+    """A device's answer to a server operation (§10.8). [params_json] is the exact string the bridge sent."""
+    return frame(OPS_APPROVE_LABEL, request_id, device_id, op, params_json, choice)

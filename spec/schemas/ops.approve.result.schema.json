@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/vps.approve.result.schema.json",
-  "title": "vps.approve.result",
-  "description": "Bridge to device (result of vps.approve).",
+  "$id": "https://talaria.invalid/tnp/v0/ops.approve.result.schema.json",
+  "title": "ops.approve.result",
+  "description": "Bridge to device (result of ops.approve).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -20,20 +20,19 @@
     "result": {
       "type": "object",
       "properties": {
-        "approval_id": {
+        "request_id": {
           "type": "string",
-          "pattern": "^vps-[0-9a-f]{16}$"
+          "pattern": "^op-[0-9a-f]{16}$"
         },
         "choice": {
           "enum": [
             "once",
-            "session",
             "deny"
           ]
         }
       },
       "required": [
-        "approval_id",
+        "request_id",
         "choice"
       ]
     }

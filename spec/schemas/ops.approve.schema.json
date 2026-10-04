@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/vps.approve.schema.json",
-  "title": "vps.approve",
-  "description": "Device to bridge (request): answer a pending VPS approval request (\u00a715).",
+  "$id": "https://talaria.invalid/tnp/v0/ops.approve.schema.json",
+  "title": "ops.approve",
+  "description": "Device to bridge (request): answer an approval with a signature over frame(\"tnp0-ops-approve\", request_id, device_id, op, params_json, choice).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -12,7 +12,7 @@
       "const": 0
     },
     "method": {
-      "const": "vps.approve"
+      "const": "ops.approve"
     },
     "id": {
       "type": [
@@ -23,21 +23,26 @@
     "params": {
       "type": "object",
       "properties": {
-        "approval_id": {
+        "request_id": {
           "type": "string",
-          "pattern": "^vps-[0-9a-f]{16}$"
+          "pattern": "^op-[0-9a-f]{16}$"
         },
         "choice": {
           "enum": [
             "once",
-            "session",
             "deny"
           ]
+        },
+        "sig": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 200
         }
       },
       "required": [
-        "approval_id",
-        "choice"
+        "request_id",
+        "choice",
+        "sig"
       ]
     }
   },

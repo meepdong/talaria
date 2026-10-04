@@ -31,6 +31,7 @@ Signatures are ECDSA P-256 with SHA-256, DER-encoded, then base64url. Verifiers 
 | `hello.sig_b` | bridge | `frame("tnp0-hello", bridge_id, nonce_b, ts)` |
 | `auth.sig_d` | device | `frame("tnp0-auth", bridge_id, device_id, nonce_b, nonce_d, ts)` |
 | `pair.request.sig_d` | device | `frame("tnp0-pair", bridge_id, nonce_b, device_pk, pairing_secret, name, platform, ts)` |
+| `ops.approve.sig` | device | `frame("tnp0-ops-approve", request_id, device_id, op, params_json, choice)` (§16) |
 
 Every connection starts with the bridge's `hello`, pairing included. `hello` also carries `bridge_pk`, and the device checks that `bridge_id` = id(`bridge_pk`) and that both match what it pinned. The `pair.request` signature is new compared with PROTOCOL.md. It proves the device holds the key it registers, and binds the request to this connection's `nonce_b`.
 
@@ -312,5 +313,19 @@ The bridge offers the agent a few tools over the Model Context Protocol (MCP), s
 | `todo_add` | `{text, due?, group?}` | Adds a to-do (`text` 1 to 500 characters, `due` as `YYYY-MM-DD`, `group` 1 to 40 characters) and returns it. |
 | `todo_update` | `{id, text?, due?, done?, group?}` | Changes a to-do, ticks it off (`done: true`) or opens it again, and returns it. `due: null` and `group: null` clear them. |
 | `todo_comment` | `{id, text}` | Adds a comment to a to-do, marked as the agent's, and returns the to-do. |
+| `server_op` | `{op, params?}` | Runs a server operation from the catalogue (§16). Tier 0 returns its result. Tier 1–2 waits up to 120 s for the owner to approve on a device, then returns the result, or says it was denied or expired. Offered only when `talaria-ops` is reachable. |
 
 A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos or comments: it ticks to-dos off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.
+
+## 16. Server operations
+
+PROTOCOL §10.8 describes them. `talaria-ops` (root, `bridge/src/talaria_bridge/ops/`) owns the catalogue and checks every approval itself. It listens on the Unix socket `/run/talaria-ops/ops.sock` and accepts only the bridge's user. Requests are newline-delimited JSON:
+
+| Request | Answer |
+|---|---|
+| `{"cmd": "catalogue"}` | `{"ops": [...]}` |
+| `{"cmd": "run", "op", "params", "requested_by"}` (tier 0 only) | `{"result": {...}}` |
+| `{"cmd": "prepare", "op", "params", "requested_by"}` (tier 1–2) | `{"request_id", "op", "params_json", "tier", "summary", "expires_at"}` |
+| `{"cmd": "execute", "request_id", "device_id", "choice", "sig"}` | `{"result": {...}}`, or `{"result": null}` for `deny` |
+
+Any failure is `{"error": "<sentence>"}`. `params_json` is `json.dumps(params, sort_keys=True, separators=(",", ":"))`. A prepared request lives 120 s and is used at most once. Every run, of any tier, is appended to `/var/log/talaria-ops/audit.jsonl`.

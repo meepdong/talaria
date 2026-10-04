@@ -37,6 +37,7 @@ PAIR_TOKEN = "AAECAwQFBgcICQoLDA0ODw"
 SHORT_CODE = "HX492KQ7"
 TS = 1790000000
 NAME, PLATFORM = "OnePlus 10 Pro", "android"
+REQUEST_ID, OP, PARAMS_JSON = "op-0123456789abcdef", "service.restart", '{"service":"docker"}'
 
 
 def write(name: str, data: dict) -> None:
@@ -69,12 +70,15 @@ def signature_vectors() -> dict:
     pair = m.pair_signed_data(BRIDGE_ID, NONCE_B, DEVICE_PK, PAIR_TOKEN, NAME, PLATFORM, TS)
     sig_hello, sig_auth, sig_pair = keys.sign(bridge, hello), keys.sign(device, auth), keys.sign(device, pair)
     auth_other_nonce = m.auth_signed_data(BRIDGE_ID, DEVICE_ID, "AAAAAAAAAAAAAAAAAAAAAA", NONCE_D, TS)
+    ops = m.ops_approve_signed_data(REQUEST_ID, DEVICE_ID, OP, PARAMS_JSON, "once")
+    sig_ops = keys.sign(device, ops)
     return {
         "description": "ECDSA P-256 / SHA-256 signatures (DER, base64url) over frame() data. "
                        "Verifiers must accept every case with valid=true and reject every case with valid=false.",
         "inputs": {"bridge_id": BRIDGE_ID, "device_id": DEVICE_ID, "bridge_pk": BRIDGE_PK,
                    "device_pk": DEVICE_PK, "nonce_b": NONCE_B, "nonce_d": NONCE_D,
-                   "pair_token": PAIR_TOKEN, "name": NAME, "platform": PLATFORM, "ts": TS},
+                   "pair_token": PAIR_TOKEN, "name": NAME, "platform": PLATFORM, "ts": TS,
+                   "request_id": REQUEST_ID, "op": OP, "params_json": PARAMS_JSON, "choice": "once"},
         "cases": [
             {"name": "hello", "signer": "bridge", "data_hex": hello.hex(), "sig": sig_hello, "valid": True},
             {"name": "auth", "signer": "device", "data_hex": auth.hex(), "sig": sig_auth, "valid": True},
@@ -85,6 +89,10 @@ def signature_vectors() -> dict:
              "data_hex": auth_other_nonce.hex(), "sig": sig_auth, "valid": False},
             {"name": "hello with ts changed", "signer": "bridge",
              "data_hex": m.hello_signed_data(BRIDGE_ID, NONCE_B, TS + 1).hex(), "sig": sig_hello, "valid": False},
+            {"name": "ops.approve", "signer": "device", "data_hex": ops.hex(), "sig": sig_ops, "valid": True},
+            {"name": "ops.approve with the params changed", "signer": "device",
+             "data_hex": m.ops_approve_signed_data(REQUEST_ID, DEVICE_ID, OP, '{"service":"ssh"}', "once").hex(),
+             "sig": sig_ops, "valid": False},
         ],
     }
 

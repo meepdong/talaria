@@ -20,6 +20,7 @@ object Tnp {
     const val HELLO_LABEL = "tnp0-hello"
     const val AUTH_LABEL = "tnp0-auth"
     const val PAIR_LABEL = "tnp0-pair"
+    const val OPS_APPROVE_LABEL = "tnp0-ops-approve"
 
     // WebSocket close codes (spec/README.md §6)
     const val CLOSE_NORMAL = 1000
@@ -94,4 +95,8 @@ object Tnp {
         bridgeId: String, nonceB: String, devicePk: String, pairingSecret: String,
         name: String, platform: String, ts: Long,
     ): ByteArray = frame(PAIR_LABEL, bridgeId, nonceB, devicePk, pairingSecret, name, platform, ts.toString())
+
+    /** A device's answer to a server operation (§10.8). [paramsJson] is the exact string the bridge sent. */
+    fun opsApproveSignedData(requestId: String, deviceId: String, op: String, paramsJson: String, choice: String): ByteArray =
+        frame(OPS_APPROVE_LABEL, requestId, deviceId, op, paramsJson, choice)
 }

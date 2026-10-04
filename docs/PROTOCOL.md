@@ -399,17 +399,28 @@ Server schedule entries include `runs_on: "server"`, `next_run_at`, `last_run` (
 
 A server job that needs phone data at run time calls the normal device tools (`device_location`, `device_events_query`, …). If the device is unreachable, the bridge answers from its **last known** event data and labels it stale (e.g. `"as_of": "2026-10-03T07:41:00+05:30"`).
 
-### 10.8 VPS command approvals
+### 10.8 Server operations
 
-When the agent calls the bridge's `vps_run` tool, the bridge asks the owner's devices before running anything. Every pending request must reach the owner, even if no app was open when it was made.
+The owner manages the server that runs the bridge from any paired device, and the agent can too, with the owner's approval. Operations come from a **fixed catalogue** run by `talaria-ops`, a small root service beside the bridge. Its parameters are typed (enums, bounded integers, names checked against live lists), and it never runs a shell. Every run is written to an audit log.
+
+| Tier | Meaning | Examples |
+|---|---|---|
+| 0 | Read-only; runs at once | `system.overview`, `services.list`, `service.logs`, `docker.ps`, `tailscale.status`, `bridge.version`, `ssh.recent_logins`, `ops.history` |
+| 1 | Changes something; needs Allow on a device | `service.restart`, `docker.restart`, `bridge.update`, `disk.cleanup`, `apt.upgrade` |
+| 2 | Disruptive; Allow plus a second confirmation in the app | `system.reboot` |
 
 | Method | Direction | Purpose |
 |---|---|---|
-| `vps.approval.request` | bridge → every device (notification) | `{approval_id, command, args, cwd, timeout, agent_id, expires_at}`. Re-sent to each device whose session becomes ready while the request is still pending. |
-| `vps.approve` | device → bridge (request) | `{approval_id, choice: once \| session \| deny}`. The first answer wins; later ones get `CONFLICT`. |
-| `vps.approval.done` | bridge → every device (notification) | `{approval_id, choice: once \| session \| deny \| expired}`. Close the card. `expired` means nobody answered before `expires_at`. |
+| `ops.catalogue` | device → bridge (request) | `{}` → `{ops: [{op, tier, title, params}]}` |
+| `ops.run` | device → bridge (request) | `{op, params}` → `{status: "done", result}` for tier 0, or `{status: "pending", request_id}` |
+| `ops.approval.request` | bridge → every device (notification) | `{request_id, op, params_json, tier, summary, requested_by, expires_at}`. Re-sent to each device whose session becomes ready while it is pending. |
+| `ops.approve` | device → bridge (request) | `{request_id, choice: once \| deny, sig}` |
+| `ops.approval.done` | bridge → every device (notification) | `{request_id, choice: once \| deny \| expired}`: close the card |
+| `ops.result` | bridge → every device (notification) | `{request_id, requested_by, approved_by?, result: {op, ok, exit_code, summary, output, data?}}` |
 
-A client keeps every pending request until it sees `vps.approval.done` for it or its `expires_at` passes, so a request that arrives while the screen is closed is still shown when it opens.
+**The device is the authority.** `sig` is the device's ECDSA signature (spec README §3) over `frame("tnp0-ops-approve", request_id, device_id, op, params_json, choice)`. `params_json` is signed exactly as received, and the app shows what it parses to. `talaria-ops`, not the bridge, checks the signature against the device's registered key, refuses revoked devices, and accepts each `request_id` once, within 120 s. A compromised bridge or agent can ask for an operation, but cannot approve it. Vectors: `spec/vectors/signatures.json` (`ops.approve`).
+
+The agent reaches the same catalogue through the MCP tool `server_op` (spec README §15). Its tier 1–2 requests appear on the owner's devices as approval cards.
 
 ## 11. Relayed devices (watch, glasses)
 

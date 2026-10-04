@@ -69,6 +69,8 @@ class VectorsTest {
                 inputs.str("nonce_b"), inputs.str("nonce_d"), ts),
             "pair.request" to Tnp.pairSignedData(inputs.str("bridge_id"), inputs.str("nonce_b"),
                 inputs.str("device_pk"), inputs.str("pair_token"), inputs.str("name"), inputs.str("platform"), ts),
+            "ops.approve" to Tnp.opsApproveSignedData(inputs.str("request_id"), inputs.str("device_id"),
+                inputs.str("op"), inputs.str("params_json"), inputs.str("choice")),
         )
         for (case in file.getValue("cases").jsonArray.map { it.jsonObject }) {
             val name = case.str("name")
