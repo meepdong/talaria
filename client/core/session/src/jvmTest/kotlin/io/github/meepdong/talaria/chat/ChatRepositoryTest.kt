@@ -344,6 +344,32 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun anApprovalIsAnsweredFromTheApp() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["chat.history"] = { json("""{"messages":[],"next_before":null}""") }
+        api.answers["chat.approve"] = { json("""{"turn_id":"t-1","choice":"session"}""") }
+        val repo = repo(scope, api)
+        repo.open("c-1")
+        advanceUntilIdle()
+        api.push("chat.started", started)
+        api.push("chat.delta", delta(1, """"kind":"approval","text":"Hermes asks to run: rm","approval":{"choices":["once","session","deny"],"command":"rm -rf build","description":"recursive delete","request_id":"r-1"}"""))
+        advanceUntilIdle()
+        val asked = repo.state.value.openMessages.last()
+        assertTrue(asked.waitingForApproval)
+        assertEquals(PendingApproval(listOf("once", "session", "deny"), "rm -rf build", "recursive delete"), asked.approval)
+
+        repo.approve("t-1", "session")
+        advanceUntilIdle()
+        assertEquals("chat.approve" to """{"turn_id":"t-1","choice":"session"}""", api.calls.last().let { it.first to it.second.toString() })
+        api.push("chat.delta", delta(2, """"kind":"approval_done","choice":"session""""))
+        advanceUntilIdle()
+        val answered = repo.state.value.openMessages.last()
+        assertEquals(false, answered.waitingForApproval)
+        assertNull(answered.approval)
+        assertEquals("Allowed for this chat", answered.commentary)
+    }
+
+    @Test
     fun aTurnDuringAHistoryReloadIsNotLost() = chatTest { scope ->
         val api = FakeApi()
         val before = """{"id":"1","role":"user","text":"Hi","ts":1},{"id":"2","role":"assistant","text":"Hello","ts":2}"""

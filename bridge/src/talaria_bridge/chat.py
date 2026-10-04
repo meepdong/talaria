@@ -189,6 +189,7 @@ class Turn:
     tools: list[dict] = field(default_factory=list)
     commentary: list[str] = field(default_factory=list)
     waiting_for_approval: bool = False
+    approval: dict | None = None  # the pending request: {choices, command?, description?, request_id?}
     error: str | None = None
     usage: dict | None = None
     runtime: dict | None = None
@@ -205,10 +206,28 @@ class Turn:
                 "waiting_for_approval": self.waiting_for_approval, "started_at": self.started_at}
         if self.attachments:
             snap["attachments"] = [dict(a) for a in self.attachments]
+        if self.waiting_for_approval and self.approval is not None:
+            snap["approval"] = dict(self.approval)
         for key in ("error", "usage", "runtime"):
             if getattr(self, key) is not None:
                 snap[key] = getattr(self, key)
         return snap
+
+
+APPROVAL_CHOICES = ("once", "session", "always", "deny")
+
+
+def _approval(payload: dict) -> dict:
+    """What a device needs from Hermes's approval.request: what to run, why, and the allowed answers."""
+    choices = payload.get("choices")
+    if not (isinstance(choices, list) and choices):
+        choices = ["once", "deny"]
+    pending: dict = {"choices": [c for c in choices if c in APPROVAL_CHOICES] or ["once", "deny"]}
+    for key in ("command", "description", "request_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            pending[key] = value[:MAX_PREVIEW] if key != "request_id" else value[:256]
+    return pending
 
 
 def _usage(raw) -> dict | None:
@@ -617,7 +636,7 @@ class ChatService:
                 conv.hermes_session_id, turn.content if turn.content is not None else turn.user_text)
             async for name, payload in stream:
                 if turn.waiting_for_approval and name != "approval.request":
-                    turn.waiting_for_approval = False
+                    turn.waiting_for_approval, turn.approval = False, None
                 if name == "run.started":
                     run_id = payload.get("run_id")
                     turn.run_id = run_id if isinstance(run_id, str) else None
@@ -640,8 +659,10 @@ class ChatService:
                         await self._delta(turn, "commentary", text=text)
                 elif name == "approval.request":
                     turn.waiting_for_approval = True
-                    what = payload.get("description") or payload.get("command") or "an action"
-                    await self._delta(turn, "approval", text=f"Waiting for approval in Hermes: {what}"[:MAX_PREVIEW])
+                    turn.approval = _approval(payload)
+                    what = turn.approval.get("description") or turn.approval.get("command") or "an action"
+                    await self._delta(turn, "approval", text=f"Hermes asks to run: {what}"[:MAX_PREVIEW],
+                                      approval=dict(turn.approval))
                 elif name == "assistant.completed":
                     content = payload.get("content")
                     if isinstance(content, str):
@@ -669,7 +690,7 @@ class ChatService:
             log.exception("chat turn %s failed", turn.turn_id)
             status, turn.error = "failed", f"Bridge error: {type(exc).__name__}"
         finally:
-            turn.waiting_for_approval = False
+            turn.waiting_for_approval, turn.approval = False, None
             turn.status = status or "failed"
             if final_text is not None:
                 turn.text = final_text
@@ -854,6 +875,30 @@ class ChatService:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
         return {"turn_id": turn.turn_id, "accepted": accepted}
 
+    async def approve(self, p: dict) -> dict:
+        turn = self._turn(p)
+        choice = p.get("choice")
+        if choice not in APPROVAL_CHOICES:
+            raise RpcError(m.INVALID_PARAMS, "choice must be one of " + ", ".join(APPROVAL_CHOICES))
+        pending = turn.approval
+        if turn.status != "running" or turn.run_id is None or not turn.waiting_for_approval or pending is None:
+            raise RpcError(m.CONFLICT, "Nothing is waiting for approval")
+        if choice not in pending["choices"]:
+            raise RpcError(m.INVALID_PARAMS, "Hermes doesn't offer that choice here")
+        try:
+            answered = await self._client(turn.agent_id).approve_run(turn.run_id, choice, pending.get("request_id"))
+        except HermesError as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
+        except HermesUnavailable as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        if turn.approval is pending:  # the stream may have moved on meanwhile
+            turn.waiting_for_approval, turn.approval = False, None
+        if not answered:
+            raise RpcError(m.CONFLICT, "Nothing is waiting for approval")
+        # tells every device, so the card goes away on the phone and the laptop alike
+        await self._delta(turn, "approval_done", choice=choice)
+        return {"turn_id": turn.turn_id, "choice": choice}
+
     def aside(self, p: dict) -> tuple[dict, Job]:
         conv = self._conversation(p)
         question = _note(p.get("text"), "text")
@@ -989,6 +1034,8 @@ class ChatService:
             return await self.models(p), None
         if method == "chat.steer":
             return await self.steer(p), None
+        if method == "chat.approve":
+            return await self.approve(p), None
         if method == "chat.aside":
             return self.aside(p)
         if method == "chat.status":
@@ -1000,7 +1047,7 @@ class ChatService:
 
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
-                          "conversations.set_model", "agent.models", "chat.steer", "chat.aside", "chat.status",
+                          "conversations.set_model", "agent.models", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 

@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -37,6 +39,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -62,6 +65,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -383,11 +387,15 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
             Text("🔧 ${t.name} $mark", style = MaterialTheme.typography.bodySmall,
                 color = if (t.state == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        m.commentary?.let {
+        m.commentary?.takeIf { m.approval == null }?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (m.waitingForApproval) {
+        val approval = m.approval
+        val turn = m.turnId
+        if (approval != null && turn != null) {
+            ApprovalCard(approval) { choice -> actions.approve(turn, choice) }
+        } else if (m.waitingForApproval) {
             Text("Waiting for approval in Hermes", style = MaterialTheme.typography.bodySmall,
                 color = Brand.Brass, modifier = Modifier.testTag("approval"))
         }
@@ -574,3 +582,35 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         }
     }
 }
+
+/** Hermes wants to run something it flags as risky; any paired device can answer (spec §9). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ApprovalCard(a: ApprovalItem, onAnswer: (String) -> Unit) {
+    Card(Modifier.fillMaxWidth().testTag("approval"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Hermes asks to run", style = MaterialTheme.typography.titleSmall)
+            a.command?.let {
+                Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("approval-command"))
+            }
+            a.description?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                a.choices.forEach { (choice, label) ->
+                    val mod = Modifier.testTag("approve-$choice")
+                    when (choice) {
+                        "once" -> Button(onClick = { onAnswer(choice) }, modifier = mod) { Text(label) }
+                        "deny" -> TextButton(onClick = { onAnswer(choice) }, modifier = mod) {
+                            Text(label, color = MaterialTheme.colorScheme.error)
+                        }
+                        else -> OutlinedButton(onClick = { onAnswer(choice) }, modifier = mod) { Text(label) }
+                    }
+                }
+            }
+        }
+    }
+}
+

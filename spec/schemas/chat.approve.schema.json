@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/chat.approve.schema.json",
+  "title": "chat.approve",
+  "description": "Device to bridge (request): answer the approval a running turn is waiting for (\u00a79).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "chat.approve"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "choice": {
+          "enum": [
+            "once",
+            "session",
+            "always",
+            "deny"
+          ]
+        }
+      },
+      "required": [
+        "turn_id",
+        "choice"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ]
+}

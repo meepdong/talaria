@@ -22,6 +22,7 @@ import io.github.meepdong.talaria.chat.ConversationSummary
 import io.github.meepdong.talaria.chat.ConversationThread
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.OutgoingFile
+import io.github.meepdong.talaria.chat.PendingApproval
 import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ToolStep
 import kotlin.test.Test
@@ -44,6 +45,7 @@ class ChatScreensTest {
         override fun sendMessage(text: String) { calls += "send $text" }
         override fun retryMessage(key: String) { calls += "retry $key" }
         override fun stopReply(turnId: String) { calls += "stop $turnId" }
+        override fun approve(turnId: String, choice: String) { calls += "approve $turnId $choice" }
         override fun showStatus() { calls += "status" }
         override fun attachFiles(photos: Boolean) { calls += "attach $photos" }
         override fun removeAttachment(index: Int) { calls += "remove $index" }
@@ -117,6 +119,28 @@ class ChatScreensTest {
         onNodeWithTag("send").performClick()
         onNodeWithTag("back").performClick()
         assertEquals(listOf("open c-2", "new", "retry local:m-1", "send Thanks", "close"), actions.calls)
+    }
+
+    @Test
+    fun approvalCard() = runComposeUiTest {
+        val actions = Recorder()
+        val asking = ChatMessage("reply:t-2", Role.ASSISTANT, "", null, MessageState.STREAMING, turnId = "t-2",
+            waitingForApproval = true,
+            approval = PendingApproval(listOf("once", "session", "always", "deny", "odd"), "rm -rf build", "recursive delete"))
+        val s = state().let { st ->
+            st.copy(threads = st.threads.mapValues { (_, t) -> t.copy(messages = t.messages + asking) })
+        }
+        val v = view(s)
+        assertEquals(listOf("once", "session", "always", "deny"), v.messages.last().approval!!.choices.map { it.first },
+            "choices the app doesn't know are left out")
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        onNodeWithTag("approval-command").assertTextContains("rm -rf build")
+        onNodeWithText("recursive delete").assertExists()
+        onNodeWithTag("approve-session").performClick()
+        onNodeWithTag("approve-deny").performClick()
+        assertEquals(listOf("approve t-2 session", "approve t-2 deny"), actions.calls)
     }
 
     @Test

@@ -4,6 +4,7 @@
     POST   /api/sessions/{id}/chat/stream     one turn, streamed back as server-sent events
     POST   /v1/runs/{run_id}/stop             stop a running turn
     POST   /v1/runs/{run_id}/steer            a note for a running turn (§11)
+    POST   /v1/runs/{run_id}/approval         answer an approval request (§9)
     GET    /api/model/options                 the models the agent can use (§11)
     POST   /api/sessions/{id}/model           pin a session to a model (§11)
     GET    /api/sessions/{id}                 session info, for chat.status (§11)
@@ -113,6 +114,19 @@ class HermesClient:
         """False when the run no longer takes notes (it was finishing)."""
         try:
             await self._call("POST", f"/v1/runs/{run_id}/steer", json={"input": text})
+        except HermesError as exc:
+            if exc.status == 409:
+                return False
+            raise
+        return True
+
+    async def approve_run(self, run_id: str, choice: str, request_id: str | None = None) -> bool:
+        """Answer the run's pending approval. False when nothing was waiting any more."""
+        body: dict = {"choice": choice}
+        if request_id:
+            body["request_id"] = request_id
+        try:
+            await self._call("POST", f"/v1/runs/{run_id}/approval", json=body)
         except HermesError as exc:
             if exc.status == 409:
                 return False
