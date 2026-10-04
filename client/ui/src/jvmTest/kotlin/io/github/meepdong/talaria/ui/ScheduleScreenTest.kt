@@ -43,6 +43,7 @@ class ScheduleScreenTest {
         override fun describeAutomation(text: String) { calls += "describe $text" }
         override fun setAutomationPaused(id: String, paused: Boolean) { calls += "paused $id $paused" }
         override fun runAutomation(id: String) { calls += "run $id" }
+        override fun runAutomationInChat(id: String) { calls += "chat $id" }
         override fun deleteAutomation(id: String) { calls += "delete $id" }
     }
 
@@ -105,6 +106,36 @@ class ScheduleScreenTest {
         assertEquals(listOf("Now", "in 55 min", "18:00"), home.nextUp.map { it.until }, "the catch-up has started")
         assertEquals(listOf("Morning summary", "Email digest"), home.automationsOn.map { it.name })
         assertFalse(HomeView().withSchedule(ScheduleState(available = false), now, utc).automationsAvailable)
+    }
+
+    @Test
+    fun aBlockedRunOffersRunInChat() = runComposeUiTest {
+        val tidy = Automation("0000000000cc", "Tidy downloads", When.Time("*/10 * * * *"), "Tidy.", "log", "talaria",
+            "scheduled", "*/10 * * * *", lastRunAt = at(9, 30), lastStatus = "blocked")
+        val blocked = state.copy(automations = listOf(tidy), today = listOf(
+            AutomationRan(tidy.id, tidy.name, "log", AutomationRun(at(9, 30), "blocked", blocked = "recursive delete"))))
+        val item = scheduleView(blocked, now, utc).automations.single()
+        assertTrue(item.blocked && item.failed)
+        assertEquals("Blocked 09:30: it needs your approval", item.last)
+        val day = HomeView().withSchedule(blocked, now, utc).day.single()
+        assertEquals("recursive delete", day.blocked)
+        assertTrue(blocked.today.single().notificationText().contains("recursive delete"))
+
+        val actions = Recorder()
+        setContent {
+            TalariaTheme {
+                Box(Modifier.size(1200.dp, 2400.dp)) {
+                    androidx.compose.foundation.layout.Column {
+                        DayCards(HomeView().withSchedule(blocked, now, utc), actions, wide = true)
+                        ScheduleScreen(scheduleView(blocked, now, utc), actions)
+                    }
+                }
+            }
+        }
+        onNodeWithTag("blocked-0000000000cc").assertTextContains("recursive delete", substring = true)
+        onNodeWithTag("run-in-chat-0000000000cc").performClick()
+        onNodeWithTag("automation-chat-0000000000cc").performScrollTo().performClick()
+        assertEquals(listOf("chat 0000000000cc", "chat 0000000000cc"), actions.calls)
     }
 
     @Test

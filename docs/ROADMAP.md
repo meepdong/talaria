@@ -50,6 +50,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 - One agent via the bridge chat proxy (Hermes API server Sessions API, one session per conversation).
 - Streaming replies, tool-progress indicators, cancel, history.
 - **Approvals:** when the agent wants to run a command it flags as dangerous, the chat shows what and why, with Allow once / Allow for this chat / Always / Deny, answered from any paired device.
+- **Blocked automations:** a scheduled run that Hermes stopped because it needed an approval shows on Home with a notification and a **Run in chat** button, which runs the task in a new chat where the approval card appears; Always allow there covers future runs.
 - **Voice:** on-device speech-to-text (Android `SpeechRecognizer`; on desktop, a local engine such as Vosk or whisper.cpp), edit before send, optional auto-send; spoken replies via TTS.
 - **Attachments:** photos (downscaled, GPS stripped), PDFs (page picking), files; blob upload.
 - **Share to Talaria (Android):** Talaria is in the share sheet for files, photos and text from any app; sharing opens a new chat with them attached, ready to send.

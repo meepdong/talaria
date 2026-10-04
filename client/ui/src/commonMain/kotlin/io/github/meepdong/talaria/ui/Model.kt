@@ -211,6 +211,9 @@ interface TalariaActions {
     fun clearDescribeReply() {}
     fun setAutomationPaused(id: String, paused: Boolean) {}
     fun runAutomation(id: String) {}
+
+    /** Run its task now in a new chat, where an approval it needs can be answered. */
+    fun runAutomationInChat(id: String) {}
     fun deleteAutomation(id: String) {}
 }
 

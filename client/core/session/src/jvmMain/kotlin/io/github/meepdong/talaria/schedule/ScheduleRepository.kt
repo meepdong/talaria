@@ -55,7 +55,7 @@ data class Automation(
     val scheduleText: String,
     val nextRunAt: Long? = null,
     val lastRunAt: Long? = null,
-    /** ok, error or nothing. */
+    /** ok, error, nothing or blocked. */
     val lastStatus: String? = null,
     val lastError: String? = null,
 ) {
@@ -64,14 +64,20 @@ data class Automation(
 
 data class AutomationRun(
     val at: Long,
+    /** ok, error, nothing or blocked. */
     val status: String,
     val text: String? = null,
     val error: String? = null,
     val conversationId: String? = null,
+    /** What the agent wasn't allowed to do with nobody there to approve it, when [status] is blocked. */
+    val blocked: String? = null,
 )
 
 /** A run that finished, as `automations.ran` says it. */
-data class AutomationRan(val id: String, val name: String, val resultTo: String, val run: AutomationRun)
+data class AutomationRan(val id: String, val name: String, val resultTo: String, val run: AutomationRun) {
+    /** Home shows it, and the apps notify: results for Home, and runs that were blocked. */
+    val forHome get() = resultTo == "home" || run.status == "blocked"
+}
 
 /** One calendar event. [start] and [end] are ISO 8601 times, or dates for all-day events. */
 data class CalendarEvent(val title: String, val start: String, val end: String, val allDay: Boolean, val location: String? = null)
@@ -111,7 +117,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
                     when (msg.str("method")) {
                         "automations.changed" -> _state.update { it.copy(automations = automations(p), loaded = true) }
                         "automations.ran" -> ran(p)?.let { r ->
-                            if (r.resultTo == "home") _state.update { s -> s.copy(today = listOf(r) + s.today.filterNot { it.id == r.id }) }
+                            if (r.forHome) _state.update { s -> s.copy(today = listOf(r) + s.today.filterNot { it.id == r.id }) }
                             _ran.tryEmit(r)
                         }
                     }
@@ -187,6 +193,14 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
 
     fun runNow(id: String) {
         call("automations.run", buildJsonObject { put("id", id) }) { r -> r.obj("automation")?.let(::automation)?.let(::upsert) }
+    }
+
+    /**
+     * Run the automation's task now in a new conversation, where approvals can be answered;
+     * [opened] gets the conversation's id.
+     */
+    fun runInChat(id: String, opened: (String) -> Unit) {
+        call("automations.run_in_chat", buildJsonObject { put("id", id) }) { r -> r.str("conversation_id")?.let(opened) }
     }
 
     fun delete(id: String) {
@@ -287,6 +301,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
             text = o.str("text"),
             error = o.str("error"),
             conversationId = o.str("conversation_id"),
+            blocked = o.str("blocked"),
         )
 
         fun ran(o: JsonObject): AutomationRan? = AutomationRan(

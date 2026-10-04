@@ -1,6 +1,7 @@
 package io.github.meepdong.talaria.ui
 
 import io.github.meepdong.talaria.schedule.Automation
+import io.github.meepdong.talaria.schedule.AutomationRan
 import io.github.meepdong.talaria.schedule.CalendarEvent
 import io.github.meepdong.talaria.schedule.ScheduleState
 import io.github.meepdong.talaria.schedule.When
@@ -87,10 +88,12 @@ fun automationItem(a: Automation, nowMs: Long, zone: ZoneId = ZoneId.systemDefau
             when (a.lastStatus) {
                 "error" -> "Failed $it" + (a.lastError?.let { e -> ": ${e.take(120)}" } ?: "")
                 "nothing" -> "Checked $it, nothing yet"
+                "blocked" -> "Blocked $it: it needs your approval"
                 else -> "Ran $it"
             }
         },
-        failed = a.lastStatus == "error",
+        failed = a.lastStatus == "error" || a.lastStatus == "blocked",
+        blocked = a.lastStatus == "blocked",
         byAgent = a.madeIn == "agent",
         resultTo = resultLabel(a.resultTo),
     )
@@ -140,12 +143,20 @@ fun HomeView.withSchedule(state: ScheduleState?, nowMs: Long, zone: ZoneId = Zon
     return copy(
         day = s.today.map { r ->
             DayResult(r.name, r.run.text ?: r.run.error.orEmpty(), HM.format(Instant.ofEpochSecond(r.run.at).atZone(zone)),
-                failed = r.run.status == "error", conversationId = r.run.conversationId)
+                failed = r.run.status == "error", conversationId = r.run.conversationId, id = r.id,
+                blocked = if (r.run.status == "blocked") r.run.blocked ?: "something" else null)
         },
         nextUp = (events + runs).sortedBy { it.second }.take(NEXT_UP).map { it.first },
         automationsOn = s.automations.filter { !it.paused && it.state != "completed" }.map { automationItem(it, nowMs, zone) },
         automationsAvailable = s.available,
     )
+}
+
+/** A notification's text for a run. */
+fun AutomationRan.notificationText(): String = when (run.status) {
+    "error" -> "It failed: ${run.error ?: "unknown error"}"
+    "blocked" -> "Blocked: it needs your approval for ${run.blocked ?: "something"}. Open Home and tap Run in chat."
+    else -> run.text.orEmpty()
 }
 
 const val NEXT_UP = 5

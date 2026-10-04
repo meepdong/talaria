@@ -66,7 +66,7 @@ Paired apps open on Home. The menu bar runs down the side on a wide window and a
 
 ## 2a′. Schedule (M2)
 
-Today's calendar, read through the agent, next to the agent's automations. Each automation shows when it runs, when it next works, how its last run went and where its result goes. It has a switch to pause it, **Run now** and **Delete**. Jobs Hermes made in any chat are listed too, marked "Made by Hermes".
+Today's calendar, read through the agent, next to the agent's automations. Each automation shows when it runs, when it next works, how its last run went and where its result goes. It has a switch to pause it, **Run now** and **Delete**. When its last run was blocked because it needed an approval, it also has **Run in chat**. Jobs Hermes made in any chat are listed too, marked "Made by Hermes".
 
 **New automation** offers two ways in. **Describe it**: type what you want ("every weekday at 8, summarise my unread email") and Hermes sets it up with its own scheduler. **Set it up yourself**: a name; when (at a time, when something arrives, or after a calendar event); what Hermes should do; and where the result goes (Home, a new chat, or the log only). **Morning catch-up summary** fills the form for the weekday summary of the company call: it watches 10:30–13:00 for the Gemini notes email, and summarises from the calendar alone if the email hasn't come by 13:00.
 
@@ -113,6 +113,7 @@ The folders the bridge shares (spec/README.md §12): what was sent from Talaria,
 **Attach:** camera, photo, PDF, file. Images are downscaled and location data removed.
 **Composer:** one rounded field with 📎 on the left and 🎤 on the right inside it, and a round ➤ beside it, so the text gets the width on a phone.
 **Approvals:** when Hermes wants to run something it flags as risky, the reply shows a card with the command, why it was flagged, and Allow once / Allow for this chat / Always allow / Deny (only the answers Hermes offers). Any paired device can answer; the card goes away on all of them.
+**Blocked automations:** a scheduled run has nobody to approve anything, so Hermes refuses risky commands in it. Such a run shows in Your day on Home, whatever its result setting, as "Blocked: Hermes needed your approval for …" with a **Run in chat** button, and notifies once. Run in chat opens a new chat that runs the automation's task; its approval card appears there, and Always allow lets future scheduled runs do the same.
 **Model:** the chip in the header opens a dropdown of the models Hermes has keys for, grouped by provider, with a search box at the top. `/model name` picks a model directly when one matches, and opens the dropdown filtered to the matches when several do.
 
 ## 5. Group chat
