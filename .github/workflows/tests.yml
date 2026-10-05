@@ -91,6 +91,19 @@ jobs:
       - name: Test
         run: ./gradlew check --console=plain
 
+      # failed client tests become annotations, readable without a GitHub login (issue 19)
+      - name: Report failed tests
+        if: failure()
+        run: |
+          python - <<'PY'
+          import glob, xml.etree.ElementTree as E
+          for path in glob.glob("**/build/test-results/**/*.xml", recursive=True):
+              for case in E.parse(path).getroot().iter("testcase"):
+                  for bad in list(case.iter("failure")) + list(case.iter("error")):
+                      msg = (bad.get("message") or "").replace("\n", " ")[:400]
+                      print(f"::error title={case.get('classname')}.{case.get('name')}::{msg}")
+          PY
+
       # The desktop app as a folder with its own Java runtime (createDistributable).
       # Download it from the run's artifacts and start bin/Talaria or Talaria.exe.
       - name: Build the desktop app
