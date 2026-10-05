@@ -31,6 +31,8 @@ data class TmuxSession(
 data class TermScreen(
     val session: String, val cols: Int, val rows: Int, val cursorX: Int, val cursorY: Int, val command: String,
     val control: Boolean, val text: String,
+    /** A full-screen program (Claude Code, vim) draws in the alternate screen, which has no scrollback: page it instead. */
+    val alternate: Boolean = false,
 )
 
 /** A key for [TerminalRepository.keys]: literal text, or a named key such as Enter or C-c. */
@@ -53,6 +55,11 @@ data class TerminalState(
     /** Why the terminal closed (the session ended, the grant expired). */
     val closed: String? = null,
     val error: String? = null,
+    /** Scrollback above the screen, oldest first, once asked for ([TerminalRepository.history]). */
+    val history: String? = null,
+    val loadingHistory: Boolean = false,
+    /** tmux.kill requests waiting for an approval: request id → session. */
+    val ending: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -94,15 +101,46 @@ class TerminalRepository(
         }
     }
 
-    /** Ask to open [session]: an approval appears; once this device approves it, the screen follows. */
-    fun open(session: String, control: Boolean = false) {
+    /** Ask to open [session] for typing (one approval, spec §16.1); once this device approves it, the screen follows. */
+    fun open(session: String, control: Boolean = true) {
         // a watch going on stays on screen until the new grant arrives
         _state.update { it.copy(session = session, control = control, requestId = null, closed = null, error = null,
-            screen = if (it.session == session) it.screen else null) }
+            screen = if (it.session == session) it.screen else null, history = if (it.session == session) it.history else null) }
         call("ops.run", buildJsonObject {
             put("op", if (control) "terminal.control" else "terminal.watch")
             put("params", buildJsonObject { put("session", session) })
         }) { r -> r.str("request_id")?.let { id -> _state.update { it.copy(requestId = id) } } }
+    }
+
+    /** A new root tmux session: [folder] and [command] can be anything (empty command: a shell); one approval opens it. */
+    fun create(name: String, folder: String, command: String) {
+        _state.update { it.copy(session = name, control = true, requestId = null, closed = null, error = null, screen = null, history = null) }
+        call("ops.run", buildJsonObject {
+            put("op", "tmux.new")
+            put("params", buildJsonObject {
+                put("name", name)
+                put("folder", folder)
+                put("command", command)
+            })
+        }) { r -> r.str("request_id")?.let { id -> _state.update { it.copy(requestId = id) } } }
+    }
+
+    /** End a session (and everything running in it), after an approval. */
+    fun end(session: String) {
+        call("ops.run", buildJsonObject {
+            put("op", "tmux.kill")
+            put("params", buildJsonObject { put("session", session) })
+        }) { r -> r.str("request_id")?.let { id -> _state.update { it.copy(ending = it.ending + (id to session)) } } }
+    }
+
+    /** The scrollback above the screen (up to [lines]); a full-screen program has none. */
+    fun history(lines: Int = 3000) {
+        val grant = _state.value.grant ?: return
+        _state.update { it.copy(loadingHistory = true) }
+        call("term.history", buildJsonObject {
+            put("grant", grant)
+            put("lines", lines)
+        }) { r -> _state.update { it.copy(history = r.str("text").orEmpty(), loadingHistory = false) } }
     }
 
     fun keys(keys: List<TermKey>) {
@@ -120,7 +158,8 @@ class TerminalRepository(
     /** Back to the list: stop watching and end the grant. */
     fun close() {
         _state.value.grant?.let(::stopGrant)
-        _state.update { it.copy(session = null, control = false, requestId = null, grant = null, screen = null, closed = null) }
+        _state.update { it.copy(session = null, control = false, requestId = null, grant = null, screen = null, closed = null,
+            history = null, loadingHistory = false) }
     }
 
     fun dismissError() = _state.update { it.copy(error = null) }
@@ -139,6 +178,11 @@ class TerminalRepository(
             "ops.result" -> {
                 val s = _state.value
                 val result = p.obj("result") ?: return
+                s.ending[p.str("request_id")]?.let {
+                    _state.update { st -> st.copy(ending = st.ending - p.str("request_id")!!) }
+                    refresh()
+                    return
+                }
                 if (p.str("request_id") != s.requestId || p.str("approved_by") != deviceId) return
                 val ok = (result["ok"] as? JsonPrimitive)?.booleanOrNull == true
                 val grant = result.obj("data")?.str("grant")
@@ -151,7 +195,9 @@ class TerminalRepository(
                 watch(grant)
                 if (old != null && old != grant) stopGrant(old)
             }
-            "ops.approval.done" -> if (p.str("request_id") == _state.value.requestId && p.str("choice") != "once") {
+            "ops.approval.done" -> if (p.str("choice") != "once" && p.str("request_id") in _state.value.ending) {
+                _state.update { it.copy(ending = it.ending - p.str("request_id")!!) }
+            } else if (p.str("request_id") == _state.value.requestId && p.str("choice") != "once") {
                 // denied, or nobody answered in time
                 _state.update { it.copy(requestId = null, session = if (it.grant == null) null else it.session, control = false) }
             }
@@ -179,7 +225,7 @@ class TerminalRepository(
             } catch (e: TnpException) {
                 "Not connected to the bridge"
             }
-            if (error != null) _state.update { it.copy(loading = false, error = error) }
+            if (error != null) _state.update { it.copy(loading = false, loadingHistory = false, error = error) }
         }
     }
 
@@ -195,5 +241,6 @@ class TerminalRepository(
         session = o.str("session") ?: return null, cols = int(o, "cols") ?: return null, rows = int(o, "rows") ?: return null,
         cursorX = int(o, "cursor_x") ?: 0, cursorY = int(o, "cursor_y") ?: 0, command = o.str("command") ?: "",
         control = (o["control"] as? JsonPrimitive)?.booleanOrNull == true, text = o.str("text") ?: "",
+        alternate = (o["alternate"] as? JsonPrimitive)?.booleanOrNull == true,
     )
 }

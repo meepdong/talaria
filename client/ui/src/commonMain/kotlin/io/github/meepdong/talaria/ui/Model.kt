@@ -103,6 +103,15 @@ data class TerminalView(
     val cursor: Pair<Int, Int>? = null,
     /** Typing allowed (a control grant). */
     val control: Boolean = false,
+    /** A full-screen program (Claude Code, vim): swipes page it (PgUp/PgDn) instead of showing scrollback. */
+    val alternate: Boolean = false,
+    /** Scrollback above the screen, once loaded (swipe down at the top). */
+    val history: String? = null,
+    val loadingHistory: Boolean = false,
+    /** Away from the app for more than 5 minutes: fingerprint or screen lock to see and type again. */
+    val locked: Boolean = false,
+    /** Sessions being ended (waiting for approval). */
+    val ending: Set<String> = emptySet(),
     /** "Watching · claude · 89×33". */
     val status: String = "",
     val closed: String? = null,
@@ -281,6 +290,14 @@ interface TalariaActions {
     fun closeTerminal() {}
     /** Ask to type in the open session (tier 2: typing acts as root). */
     fun terminalTakeControl() {}
+    /** A new root tmux session: any [folder], any [command] (empty: a shell); one approval opens it full screen. */
+    fun newTerminal(name: String, folder: String, command: String) {}
+    /** End a session and everything running in it (an approval first). */
+    fun endTerminal(session: String) {}
+    /** Load the scrollback above the screen. */
+    fun terminalHistory() {}
+    /** Fingerprint or screen lock, to see and type in an open terminal again. */
+    fun unlockTerminal() {}
     /** A named key: Enter, Escape, Tab, Up, Down, Left, Right, C-c, … */
     fun terminalKey(key: String) {}
     /** Literal text, then Enter when [enter]. */

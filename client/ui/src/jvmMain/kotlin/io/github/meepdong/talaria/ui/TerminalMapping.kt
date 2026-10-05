@@ -5,7 +5,7 @@ import io.github.meepdong.talaria.terminal.TerminalState
 import io.github.meepdong.talaria.terminal.TmuxSession
 
 /** The Terminals page from the terminal state and the approvals waiting (spec §16.1). */
-fun terminalView(t: TerminalState, ops: OpsState, nowMs: Long): TerminalView {
+fun terminalView(t: TerminalState, ops: OpsState, nowMs: Long, locked: Boolean = false): TerminalView {
     val approval = t.requestId?.let { id ->
         ops.pending.firstOrNull { it.requestId == id }?.let { TerminalApproval(id, it.summary, t.control, id in ops.answering) }
     }
@@ -21,6 +21,11 @@ fun terminalView(t: TerminalState, ops: OpsState, nowMs: Long): TerminalView {
         cols = screen?.cols ?: 80,
         cursor = screen?.takeIf { control }?.let { it.cursorX to it.cursorY },
         control = control,
+        alternate = screen?.alternate == true,
+        history = t.history,
+        loadingHistory = t.loadingHistory,
+        locked = locked && t.grant != null,
+        ending = t.ending.values.toSet(),
         status = when {
             screen == null && approval == null && t.session != null && t.closed == null -> "Opening…"
             screen == null -> ""

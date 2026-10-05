@@ -151,6 +151,9 @@ class TalariaController(
     /** Opens a fetched file with the device's own app; set by the platform. */
     private var fileOpener: FileOpener? = null
     @Volatile private var installer: AppUpdater? = null
+    /** The owner's fingerprint or screen lock for terminal approvals; null where the device has none to ask (desktop). */
+    @Volatile private var authenticator: Authenticator? = null
+    private val terminalLock = TerminalLock(nowMs)
     private var textSharer: ((String) -> Unit)? = null
 
     /**
@@ -704,6 +707,33 @@ class TalariaController(
         terminals?.open(session)
     }
 
+    override fun newTerminal(name: String, folder: String, command: String) {
+        terminals?.create(name.trim(), folder.trim().ifEmpty { "/root" }, command.trim())
+    }
+
+    override fun endTerminal(session: String) {
+        terminals?.end(session)
+    }
+
+    override fun terminalHistory() {
+        terminals?.history()
+    }
+
+    override fun unlockTerminal() {
+        val auth = authenticator ?: return
+        auth.authenticate("Unlock the terminal") { ok -> if (ok) terminalLock.unlock() }
+    }
+
+    /** How this platform asks for the owner's fingerprint or screen lock; null where it can't (desktop). */
+    fun setAuthenticator(auth: Authenticator?) {
+        authenticator = auth
+    }
+
+    /** The app came to the front, or left it (the 5-minute grace for terminals counts from leaving). */
+    fun setForeground(visible: Boolean) {
+        terminalLock.foreground(visible)
+    }
+
     override fun closeTerminal() {
         terminals?.close()
         terminals?.refresh()
@@ -842,6 +872,22 @@ class TalariaController(
     }
 
     override fun opsApprove(requestId: String, choice: String) {
+        val op = ops?.state?.value?.pending?.firstOrNull { it.requestId == requestId }?.op
+        val auth = authenticator
+        if (choice == "once" && op in GUARDED && auth != null && !terminalLock.unlocked) {
+            // a root terminal from this phone: its owner's fingerprint or screen lock first (owner, 2026-10-05)
+            auth.authenticate("Approve: open a root terminal") { ok ->
+                if (ok) {
+                    terminalLock.unlock()
+                    approveOps(requestId, choice)
+                }
+            }
+            return
+        }
+        approveOps(requestId, choice)
+    }
+
+    private fun approveOps(requestId: String, choice: String) {
         ops?.approve(requestId, choice)
     }
 
@@ -1037,7 +1083,8 @@ class TalariaController(
             if (x.page.status) {
                 Screen.Status(status.copy(canGoBack = true, balances = balanceItems(l.chat?.balances.orEmpty())))
             } else if (x.page.terminal) {
-                Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now), status)
+                Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now,
+                    locked = authenticator != null && !terminalLock.unlocked), status)
             } else if (x.page.server) {
                 Screen.Server(serverView(opsState, m.bridge.deviceId), status)
             } else {
@@ -1102,3 +1149,6 @@ class TalariaController(
         }
     }
 }
+
+/** Approvals that open a root terminal or change sessions: these need the fingerprint or screen lock (§16.1). */
+private val GUARDED = setOf("terminal.watch", "terminal.control", "tmux.new", "tmux.kill")

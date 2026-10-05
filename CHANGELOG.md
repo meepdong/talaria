@@ -4,6 +4,15 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Changed
+- Terminals, second version: one approval opens a session full screen (system bars hidden), fitted to the width with
+  pinch to zoom; tap the screen to type straight into it; a key row with sticky Ctrl and Alt, arrows, PgUp/PgDn,
+  Home/End and F1–F12; swipe up for earlier lines (in Claude Code and other full-screen programs, a swipe pages them).
+- New session (any name, folder and command, with Shell / Claude Code / opencode shortcuts) and End session (long-press).
+- Terminal approvals ask for your fingerprint or screen lock, again after 5 minutes away from the app.
+
 ## [0.2.0-beta.5] - 2026-10-05
 
 ### Added

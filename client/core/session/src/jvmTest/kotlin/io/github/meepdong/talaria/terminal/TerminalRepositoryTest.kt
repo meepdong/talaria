@@ -64,7 +64,7 @@ class TerminalRepositoryTest {
         advanceUntilIdle()
         assertEquals(listOf(TmuxSession("claude", "claude", "/root", 89, 33, 2, 100)), repo.state.value.sessions)
 
-        repo.open("claude")
+        repo.open("claude", control = false)
         advanceUntilIdle()
         assertEquals("op-1", repo.state.value.requestId)
         assertEquals("""{"op":"terminal.watch","params":{"session":"claude"}}""", api.last("ops.run").toString())
@@ -136,6 +136,46 @@ class TerminalRepositoryTest {
         advanceUntilIdle()
         assertNull(repo.state.value.grant, "a grant that already ended isn't kept")
         assertEquals("no such terminal grant, or it ended", repo.state.value.error)
+        scope.cancel()
+    }
+
+    @Test
+    fun newSessionsHistoryAndEnding() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        var asked = 0
+        api.answers["ops.run"] = { json("""{"status":"pending","request_id":"op-${++asked}"}""") }
+        api.answers["term.history"] = { json("""{"session":"build","text":"earlier"}""") }
+        val repo = TerminalRepository(scope, api, ME)
+        repo.start()
+        advanceUntilIdle()
+
+        repo.open("claude")
+        advanceUntilIdle()
+        assertEquals("""{"op":"terminal.control","params":{"session":"claude"}}""", api.last("ops.run").toString(), "one approval, for typing")
+
+        repo.create("build", "/opt/talaria", "claude --continue")
+        advanceUntilIdle()
+        assertEquals("""{"op":"tmux.new","params":{"name":"build","folder":"/opt/talaria","command":"claude --continue"}}""",
+            api.last("ops.run").toString())
+        assertEquals("build", repo.state.value.session)
+        api.notifications.emit(result("op-2", ME, "tmux.new", G1))
+        advanceUntilIdle()
+        assertEquals(G1, repo.state.value.grant)
+        assertEquals("""{"grant":"$G1"}""", api.last("term.watch").toString())
+
+        repo.history()
+        advanceUntilIdle()
+        assertEquals("""{"grant":"$G1","lines":3000}""", api.last("term.history").toString())
+        assertEquals("earlier", repo.state.value.history)
+
+        api.answers["tmux.sessions"] = { json("{}") }
+        repo.end("old")
+        advanceUntilIdle()
+        assertEquals(mapOf("op-3" to "old"), repo.state.value.ending)
+        api.notifications.emit(json("""{"method":"ops.approval.done","params":{"request_id":"op-3","choice":"deny"}}"""))
+        advanceUntilIdle()
+        assertEquals(emptyMap(), repo.state.value.ending, "denied: nothing ends")
         scope.cancel()
     }
 }

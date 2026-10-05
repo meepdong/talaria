@@ -32,6 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import io.github.meepdong.talaria.protocol.PairingPayload
 import io.github.meepdong.talaria.ui.FileOpener
 import io.github.meepdong.talaria.ui.Screen
@@ -140,6 +143,22 @@ class MainActivity : ComponentActivity() {
             }
             BackHandler(enabled = current is Screen.Chat && current.menuOpen) { controller.setMenuOpen(false) }
 
+            // a terminal on screen takes it all: the system bars come back with a swipe
+            val immersive = current is Screen.Terminal && current.view.open != null && current.view.text != null
+            LaunchedEffect(immersive) {
+                val bars = WindowCompat.getInsetsController(window, window.decorView)
+                if (immersive) {
+                    bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    bars.hide(WindowInsetsCompat.Type.systemBars())
+                } else {
+                    bars.show(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+            DisposableEffect(controller) {
+                controller.setAuthenticator(Unlock(this@MainActivity))
+                onDispose { controller.setAuthenticator(null) }
+            }
+
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                 if (scanning && screen is Screen.Connect) {
                     QrScanScreen(
@@ -175,10 +194,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         app.visible = true
+        app.controller.setForeground(true)  // a terminal locks again after 5 minutes away
     }
 
     override fun onStop() {
         app.visible = false
+        app.controller.setForeground(false)
         super.onStop()
     }
 
