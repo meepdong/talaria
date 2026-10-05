@@ -4,7 +4,7 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
-## [Unreleased]
+## [0.2.0-beta.8] - 2026-10-06
 
 ### Added
 - Swipes wherever things pile up: on Home's Your day and Needs you, swipe left to archive and right to mark read
