@@ -117,6 +117,8 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.delete` | request | `{conversation_id}` → `{conversation_id, deleted}` |
 | `conversations.pin` | request | `{conversation_id, pinned}` → `{conversation_id, pinned}` |
 | `conversations.archive` | request | `{conversation_id, archived}` → `{conversation_id, archived}` |
+| `voice.speech` | request | `{text, voice?}` → `{format, audio}` |
+| `voice.ack` | request | `{text, conversation_id?}` → `{text}` |
 | `chat.hide` | request | `{conversation_id, message_ids}` → `{conversation_id, message_ids}` |
 | `chat.hidden` | notification | `{conversation_id, message_ids}` |
 | `chat.file` | notification | `{conversation_id, message}` |
@@ -150,9 +152,11 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Archiving.** `conversations.archive` takes a conversation off the list (devices show it under Archived), or puts it back with `archived: false`; `conversations.list` marks archived ones `archived: true`. Nothing is deleted, on the bridge or in the agent. A new message sent in an archived conversation puts it back. Devices archive with a swipe left, with Undo; deleting stays in the long-press menu.
 
+**Talk's voice.** When an agent has a `voice_key_file` (an OpenRouter key), devices can ask for natural speech and a quick first line. `voice.speech` turns up to 150 characters into audio, base64: `wav` (24 kHz 16-bit mono, from Gemini 3.8 Flash-Lite TTS, the default, voice Despina) or `mp3` (from Qwen-Audio TTS Flash, with `voice_engine: "qwen"`); `voice_name` in agents.json picks another of the engine's voices. `voice.ack` returns one short line acknowledging what was said (from a small fast model, never answering it), using the conversation's last answer as context. Without a voice key both are `-32601` and devices use their own voice. Messages spoken in Talk start with 🎙, which tells the agent the reply will be read aloud.
+
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
-Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.archive`, `conversations.result`, `chat.hide`, `chat.hide.result`, `chat.hidden`.
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.archive`, `conversations.result`, `chat.hide`, `chat.hide.result`, `voice.speech`, `voice.speech.result`, `voice.ack`, `voice.ack.result`, `chat.hidden`.
 
 ## 10. Attachments (M2)
 

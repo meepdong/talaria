@@ -273,7 +273,7 @@ class ControllerTest {
         input.listener!!.done("what's on today")
         // sent straight away, then Talk waits for Hermes's reply to speak it
         val sent = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.THINKING }
-        assertEquals("what's on today", sent.view.messages.last().text)
+        assertEquals("🎙 what's on today", sent.view.messages.last().text, "marked as spoken, for Hermes and in the chat")
         assertNull(sent.view.voice.dictation, "not left in the composer")
 
         // a tap while Hermes thinks interrupts and listens again; saying nothing ends Talk

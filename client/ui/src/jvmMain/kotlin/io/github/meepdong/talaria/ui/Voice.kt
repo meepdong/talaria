@@ -20,6 +20,9 @@ interface SpeechOutput {
     /** Stops anything already speaking first. [onDone] runs when it finishes or is stopped. */
     fun speak(text: String, onDone: () -> Unit)
     fun stop()
+
+    /** [text] is likely to be spoken next: a voice that has to fetch audio can start now. */
+    fun prepare(text: String) {}
 }
 
 /** Small on/off settings that outlive the app, such as "read replies aloud". */

@@ -36,6 +36,9 @@ class AgentConfig:
     files: tuple[dict, ...] = ()  # shared folders (§12): {"id", "name", "path", "agent_path"?}
     calendar_command: tuple[str, ...] = ()  # calendar.day (§14): a command printing a day's events as JSON
     tools_key_file: str | None = None  # tools for the agent (§15): the token it sends to the bridge's MCP endpoint
+    voice_key_file: str | None = None  # an OpenRouter key for Talk's voice (§9): speech and the quick first line
+    voice_engine: str | None = None  # "gemini" (default) or "qwen"
+    voice_name: str | None = None  # one of that engine's voices; its first by default
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -71,12 +74,16 @@ def load_agents(path: Path) -> list[AgentConfig]:
                 and (not calendar or Path(calendar[0]).is_absolute())):
             raise ValueError(f"{path}: an agent's calendar_command must be a list of arguments starting with an"
                              " absolute path")
+        voice_key = entry.get("voice_key_file")
+        if voice_key is not None and not (isinstance(voice_key, str) and Path(voice_key).is_absolute()):
+            raise ValueError(f"{path}: an agent's voice_key_file must be an absolute path")
         tools_key = entry.get("tools_key_file")
         if tools_key is not None and not (isinstance(tools_key, str) and Path(tools_key).is_absolute()):
             raise ValueError(f"{path}: an agent's tools_key_file must be an absolute path")
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
-                                  tuple(files), tuple(calendar), tools_key))
+                                  tuple(files), tuple(calendar), tools_key, voice_key,
+                                  entry.get("voice_engine"), entry.get("voice_name")))
     return agents
 
 

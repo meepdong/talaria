@@ -18,10 +18,16 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
     private var stopped = false
     private val cued = mutableSetOf<String>()
     private var toolsSeen = 0
+    /** The next thing to say, frozen while something else is said so its audio can be fetched meanwhile. */
+    private var next: String? = null
+    private var saidAnything = false
+    private var replyStarted = false
+    private var lastSoundMs = 0L
+    private var nudges = 0
 
     /** The reply so far: its text, its tool steps, and whether it has ended. */
     fun update(text: String, tools: List<ToolStep>, over: Boolean) {
-        val next = synchronized(lock) {
+        val nextUp = synchronized(lock) {
             if (stopped || finished) return
             // a tool starting while nothing is waiting to be said: a short cue, once per kind of tool
             tools.drop(toolsSeen).forEach { step ->
@@ -31,11 +37,58 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
             toolsSeen = tools.size
             val (ready, upTo) = completeSentences(text, consumed, over)
             consumed = upTo
-            if (ready.isNotBlank()) waiting.append(ready).append(' ')
+            if (ready.isNotBlank()) {
+                waiting.append(ready).append(' ')
+                replyStarted = true
+            }
             replyOver = over
             takeNext()
         }
-        next?.let(::say) ?: maybeFinish()
+        nextUp?.let(::say) ?: run {
+            freezeNext()
+            maybeFinish()
+        }
+    }
+
+    /**
+     * The quick line said while Hermes starts working ("Sure, checking your calendar."), from a fast model: said
+     * first, unless Hermes has already started to answer or something has been said.
+     */
+    fun opening(line: String) {
+        val nextUp = synchronized(lock) {
+            if (stopped || finished || saidAnything || replyStarted || speaking) return
+            waiting.insert(0, "$line ")
+            takeNext()
+        }
+        nextUp?.let(::say)
+    }
+
+    /**
+     * Called every second or so while the reply runs: after [QUIET_MS] with nothing said (tools are working), a
+     * short "still on it" line, at most [MAX_NUDGES] times.
+     */
+    fun nudge(nowMs: Long) {
+        val nextUp = synchronized(lock) {
+            if (stopped || finished || replyOver || speaking || waiting.isNotEmpty() || nudges >= MAX_NUDGES) return
+            if (lastSoundMs == 0L) lastSoundMs = nowMs
+            if (nowMs - lastSoundMs < QUIET_MS) return
+            waiting.append(NUDGES[nudges % NUDGES.size]).append(' ')
+            nudges++
+            takeNext()
+        }
+        nextUp?.let(::say)
+    }
+
+    /** While something is said, the next batch is frozen so its audio can be fetched now. */
+    private fun freezeNext() {
+        val upcoming = synchronized(lock) {
+            if (!speaking || next != null || waiting.isEmpty() || stopped) return
+            val words = speakable(waiting.toString())
+            waiting.clear()
+            next = words.takeIf { it.isNotBlank() }
+            next
+        }
+        upcoming?.let(out::prepare)
     }
 
     /** Stop talking now (the owner interrupted, or Talk ended); [onFinished] isn't called. */
@@ -49,7 +102,13 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
 
     /** What to say next, marking it spoken; null when nothing waits or something is still being said. */
     private fun takeNext(): String? {
-        if (speaking || waiting.isEmpty()) return null
+        if (speaking) return null
+        next?.let {
+            next = null
+            speaking = true
+            return it
+        }
+        if (waiting.isEmpty()) return null
         val words = speakable(waiting.toString())
         waiting.clear()
         if (words.isBlank()) return null
@@ -58,25 +117,34 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
     }
 
     private fun say(words: String) {
+        synchronized(lock) { saidAnything = true }
         onSpeak()
         out.speak(words) {
-            val next = synchronized(lock) {
+            val following = synchronized(lock) {
                 speaking = false
+                lastSoundMs = 0L  // the quiet is counted from the next nudge() on
                 if (stopped) return@speak
                 takeNext()
             }
-            next?.let(::say) ?: maybeFinish()
+            following?.let(::say) ?: maybeFinish()
         }
+        freezeNext()
     }
 
     private fun maybeFinish() {
         val done = synchronized(lock) {
-            if (stopped || finished || speaking || waiting.isNotEmpty() || !replyOver) false else true.also { finished = true }
+            if (stopped || finished || speaking || waiting.isNotEmpty() || next != null || !replyOver) false
+            else true.also { finished = true }
         }
         if (done) onFinished()
     }
 
     companion object {
+        /** How long Talk stays quiet while Hermes works before saying it's still on it. */
+        const val QUIET_MS = 8_000L
+        const val MAX_NUDGES = 3
+        private val NUDGES = listOf("Still working on it.", "Almost there.", "This one is taking a little longer.")
+
         /** What Talk says when Hermes starts a tool, by what the tool's name suggests. */
         fun cueFor(tool: String): String {
             val t = tool.lowercase()

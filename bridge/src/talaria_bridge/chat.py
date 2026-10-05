@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .accounts import OpenRouterAccount
+from .voice import VOICE_METHODS, VoiceError, VoiceService
 from .automations import AUTOMATION_METHODS, AutomationError, Automations
 from .files import FILES_METHODS, FilesError, FilesService, Found
 from .todo_groups import GroupingError, group_todos
@@ -428,8 +429,9 @@ class ChatService:
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
                  inboxes: dict[str, Path] | None = None, accounts: list[OpenRouterAccount] | None = None,
                  files: FilesService | None = None, todos: TodoStore | None = None,
-                 automations: Automations | None = None):
+                 automations: Automations | None = None, voice: VoiceService | None = None):
         self.store = store
+        self.voice = voice  # Talk's natural voice and quick first line (§9)
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         if automations is not None:
             automations.notify = lambda msg: self.broadcast(msg)
@@ -472,6 +474,8 @@ class ChatService:
             await client.close()
         for account in self.accounts:
             await account.close()
+        if self.voice is not None:
+            await self.voice.close()
 
     # chat.send
 
@@ -1321,6 +1325,18 @@ class ChatService:
             return await self.status(p), None
         if method == "account.balance":
             return await self.balance(), None
+        if method in VOICE_METHODS:
+            if self.voice is None:
+                raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            p = dict(p)
+            if method == "voice.ack" and p.get("conversation_id") is not None:
+                conv = self._conversation(p)
+                if conv.last_role == "assistant" and conv.last_text:
+                    p["context"] = conv.last_text
+            try:
+                return await (self.voice.speech(p) if method == "voice.speech" else self.voice.ack(p)), None
+            except VoiceError as exc:
+                raise RpcError(exc.code, exc.message) from None
         raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
@@ -1328,7 +1344,7 @@ CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.his
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",
-                          "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
+                          "account.balance"}) | VOICE_METHODS | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

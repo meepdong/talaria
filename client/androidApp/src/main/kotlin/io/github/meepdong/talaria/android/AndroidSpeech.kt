@@ -155,3 +155,57 @@ class AndroidVoice(context: Context) : SpeechOutput {
         return out
     }
 }
+
+/**
+ * Plays Talk's natural voice (WAV or MP3 from the bridge) through the assistant audio stream. One clip at a time; [stop] ends it
+ * and still calls its onDone, as [io.github.meepdong.talaria.ui.AudioPlayer] asks.
+ */
+class AndroidAudio(context: Context) : io.github.meepdong.talaria.ui.AudioPlayer {
+    private val dir = java.io.File(context.cacheDir, "talk").apply { mkdirs() }
+    private val lock = Any()
+    private var player: android.media.MediaPlayer? = null
+    private var done: (() -> Unit)? = null
+    private var count = 0
+
+    override fun play(audio: ByteArray, onDone: () -> Unit) {
+        stop()
+        val kind = if (audio.size > 4 && String(audio, 0, 4, Charsets.US_ASCII) == "RIFF") "wav" else "mp3"
+        val file = java.io.File(dir, "clip-${synchronized(lock) { ++count % 4 }}.$kind")
+        val p = android.media.MediaPlayer()
+        synchronized(lock) {
+            player = p
+            done = onDone
+        }
+        try {
+            file.writeBytes(audio)
+            p.setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            p.setDataSource(file.path)
+            p.setOnCompletionListener { finished(p) }
+            p.setOnErrorListener { _, _, _ -> finished(p); true }
+            p.prepare()
+            p.start()
+        } catch (e: Exception) {
+            finished(p)
+        }
+    }
+
+    override fun stop() {
+        val p = synchronized(lock) { player }
+        if (p != null) {
+            runCatching { p.stop() }
+            finished(p)
+        }
+    }
+
+    private fun finished(p: android.media.MediaPlayer) {
+        val callback = synchronized(lock) {
+            if (player !== p) return
+            player = null
+            done.also { done = null }
+        }
+        runCatching { p.release() }
+        callback?.invoke()
+    }
+}

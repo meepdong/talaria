@@ -19,6 +19,7 @@ from . import __version__
 from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
+from .voice import VoiceService
 from .chat import ChatService, ChatStore
 from .todos import TodoStore
 from .automations import AutomationStore, Automations
@@ -83,6 +84,7 @@ def cert_spki_sha256(cert_path: Path) -> str:
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     """Chat for every agent with an api_url. An unreadable key file leaves that agent out."""
     clients, inboxes, accounts, roots, calendars = {}, {}, [], {}, {}
+    voice = None
     for agent in agents:
         if agent.api_url is None:
             continue
@@ -102,6 +104,12 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
                 accounts.append(OpenRouterAccount(read_api_key(Path(agent.openrouter_key_file))))
             except (OSError, ValueError) as exc:
                 print(f"WARNING: no OpenRouter balance: cannot read {agent.openrouter_key_file} ({exc})", file=sys.stderr)
+        if agent.voice_key_file is not None and voice is None:
+            try:
+                voice = VoiceService(read_api_key(Path(agent.voice_key_file)), engine=agent.voice_engine or "gemini",
+                                     voice=agent.voice_name)
+            except (OSError, ValueError) as exc:  # also an unknown engine or voice
+                print(f"WARNING: Talk uses the phone's own voice: cannot read {agent.voice_key_file} ({exc})", file=sys.stderr)
     if not clients:
         return None
 
@@ -111,7 +119,8 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
                        files=FilesService(roots), todos=TodoStore(home / "chat.db"),
-                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars))
+                       automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars),
+                       voice=voice)
 
 
 def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, ops: ServerOps | None = None) -> AgentTools | None:

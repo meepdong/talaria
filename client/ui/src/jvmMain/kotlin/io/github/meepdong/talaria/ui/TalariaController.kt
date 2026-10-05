@@ -9,6 +9,7 @@ import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.OutgoingFile
 import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ServerFile
+import io.github.meepdong.talaria.chat.VoiceApi
 import io.github.meepdong.talaria.ops.OpsRepository
 import io.github.meepdong.talaria.ops.OpsState
 import io.github.meepdong.talaria.files.FilesRepository
@@ -112,6 +113,7 @@ class TalariaController(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
             val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
             val updates: UpdateRepository, val terminals: TerminalRepository,
+            val voice: VoiceApi = VoiceApi(client.asChatApi()),
         ) : Mode
     }
 
@@ -184,6 +186,17 @@ class TalariaController(
     @Volatile private var talkOn = false
     private var talkLoop: TalkLoop? = null
     private var talkFollow: Job? = null
+
+    /** Talk's natural voice (Talk 2): speech from the bridge, played here; null where the app can't play audio. */
+    @Volatile private var talkVoice: SpeechOutput? = null
+
+    /** The platform's audio player, for Talk's natural voice; without one Talk uses the device's own voice. */
+    fun setAudioPlayer(player: AudioPlayer?) {
+        talkVoice = player?.let {
+            CloudSpeech(scope, fetch = { text -> (mode.value as? Mode.Connected)?.voice?.speech(text) }, player = it,
+                fallback = speechOutput)
+        }
+    }
     private var pairJob: Job? = null
     private var started = false
 
@@ -426,11 +439,13 @@ class TalariaController(
     }
 
     /** The chat last open on this device, if it's still there; else a new one. */
-    private fun resumeChat() {
+    private fun resumeChat(maxAgeS: Long? = null) {
         val c = chat ?: return newConversation()
         val s = c.state.value
         val id = s.openId ?: prefs.getString(PREF_LAST_CHAT, "").takeIf { it.isNotEmpty() }
-        if (id != null && s.conversations.any { it.id == id }) openConversation(id) else newConversation()
+        val last = s.conversations.firstOrNull { it.id == id }
+        val recent = maxAgeS == null || (last != null && nowMs() / 1000 - last.updatedAt <= maxAgeS)
+        if (last != null && recent) openConversation(last.id) else newConversation()
     }
 
     // swipes and Undo (UX1)
@@ -529,7 +544,8 @@ class TalariaController(
         }
         when (voice.value.talk) {
             null -> {
-                resumeChat()
+                // the last chat, if it's recent: an old long chat would make every spoken reply slow
+                resumeChat(maxAgeS = TALK_RESUME_S)
                 talkOn = true
                 listenForTalk()
             }
@@ -581,8 +597,10 @@ class TalariaController(
     /** Send what was said, then speak the reply to it as it streams and listen again once it's said. */
     private fun talkSend(text: String) {
         val c = chat ?: return endTalk()
-        val cmid = c.send(text) ?: return endTalk()
-        val out = speechOutput ?: return endTalk()  // nothing to speak with: one message, as dictation
+        val conversationId = c.state.value.openId
+        // 🎙 tells Hermes it's spoken (SOUL.md: say what you're doing, answer briefly), and shows it in the chat
+        val cmid = c.send("$SPOKEN $text") ?: return endTalk()
+        val out = talkVoice ?: speechOutput ?: return endTalk()  // nothing to speak with: one message, as dictation
         voice.update { it.copy(talk = TalkPhase.THINKING) }
         val loop = TalkLoop(out, onSpeak = { voice.update { if (it.talk != null) it.copy(talk = TalkPhase.SPEAKING) else it } }) {
             scope.launch { if (talkOn) listenForTalk() }
@@ -590,6 +608,14 @@ class TalariaController(
         talkLoop = loop
         talkFollow?.cancel()
         talkFollow = scope.launch {
+            // a quick line from a fast model while Hermes starts, and "still on it" while its tools run
+            launch { (mode.value as? Mode.Connected)?.voice?.ack(text, conversationId)?.let(loop::opening) }
+            launch {
+                while (true) {
+                    delay(NUDGE_TICK_MS)
+                    loop.nudge(nowMs())
+                }
+            }
             c.state.map { talkReply(it, cmid) }
                 .filterNotNull().distinctUntilChanged().collect { m ->
                     if (m.waitingForApproval) {
@@ -1338,6 +1364,13 @@ class TalariaController(
          */
         fun talkReply(s: ChatState, cmid: String) = s.openMessages.firstOrNull { it.clientMsgId == cmid }?.turnId
             ?.let { turn -> s.openMessages.lastOrNull { it.role == Role.ASSISTANT && it.turnId == turn } }
+
+        /** Marks a message as spoken in Talk, for Hermes (SOUL.md) and in the chat. */
+        const val SPOKEN = "🎙"
+
+        /** Talk continues the last chat only if it was active this recently, to keep spoken replies quick. */
+        const val TALK_RESUME_S = 3_600L
+        private const val NUDGE_TICK_MS = 1_000L
 
         /** How long Undo shows after a swipe. */
         const val UNDO_MS = 5_000L

@@ -38,6 +38,7 @@ class TalariaApplication : Application() {
             prefs = SharedPrefs(getSharedPreferences("settings", MODE_PRIVATE)),
         )
         controller.setInstaller(AppInstaller(this))
+        controller.setAudioPlayer(AndroidAudio(this))
         controller.start()
     }
 

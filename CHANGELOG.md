@@ -4,6 +4,17 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk has a natural voice: Hermes's replies are spoken by a neural voice (Gemini 3.8 Flash-Lite TTS, voice
+  Despina) instead of the phone's own, fetched sentence by sentence and played without gaps. The phone's voice
+  takes over if the voice service can't be reached.
+- Talk answers within a second or two: a quick line ("Sure, checking your calendar.") from a fast model while
+  Hermes starts, Hermes says what it's doing before using a tool, and "Still working on it." after 8 s of quiet.
+- Talk continues the last chat only if it was active in the last hour, so old long chats don't slow it down.
+  Spoken messages show 🎙 in the chat.
+
 ## [0.2.0-beta.10] - 2026-10-06
 
 ### Added
