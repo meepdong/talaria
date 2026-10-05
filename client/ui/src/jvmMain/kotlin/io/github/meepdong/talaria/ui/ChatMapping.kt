@@ -5,6 +5,7 @@ import io.github.meepdong.talaria.chat.Attachment
 import io.github.meepdong.talaria.chat.ChatMessage
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.ConversationStatus
+import io.github.meepdong.talaria.chat.ConversationSummary
 import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.MessageState
 import io.github.meepdong.talaria.chat.OutgoingFile
@@ -106,16 +107,8 @@ fun chatView(
     }
     return ChatView(
         // pinned chats first, each part newest first as the list comes
-        conversations = state.conversations.sortedByDescending { it.pinned }.map { c ->
-            ConversationItem(
-                id = c.id,
-                title = c.title,
-                preview = c.lastText?.let { (if (c.lastRole == Role.USER) "You: " else "") + it.replace('\n', ' ') }.orEmpty(),
-                time = shortTime(c.updatedAt * 1000, nowMs).orEmpty(),
-                running = c.activeTurnId != null,
-                pinned = c.pinned,
-            )
-        },
+        conversations = state.conversations.filter { !it.archived }.sortedByDescending { it.pinned }.map { it.item(nowMs) },
+        archived = state.conversations.filter { it.archived }.sortedByDescending { it.updatedAt }.map { it.item(nowMs) },
         listMessage = listMessage,
         openId = state.openId,
         conversationOpen = conversationOpen,
@@ -172,3 +165,12 @@ fun balanceItems(list: List<io.github.meepdong.talaria.chat.AccountBalance>): Li
 }
 
 private val NO_IMAGES = ImageCache { null }
+
+private fun ConversationSummary.item(nowMs: Long) = ConversationItem(
+    id = id,
+    title = title,
+    preview = lastText?.let { (if (lastRole == Role.USER) "You: " else "") + it.replace('\n', ' ') }.orEmpty(),
+    time = shortTime(updatedAt * 1000, nowMs).orEmpty(),
+    running = activeTurnId != null,
+    pinned = pinned,
+)

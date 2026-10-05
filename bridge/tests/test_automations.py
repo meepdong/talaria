@@ -250,7 +250,8 @@ async def test_blocked_runs_reach_home_once_and_run_in_chat(tmp_path: Path):
     check("chat.send.result", m.result("1", res))
     assert turn.conversation_id == res["conversation_id"] and turn.agent_id == "hermes"
     assert turn.user_text.startswith('Run my automation "Tidy downloads" now')
-    assert turn.user_text.endswith("Delete files older than a week in ~/Downloads.")
+    assert "Delete files older than a week in ~/Downloads.\n\nIts last run (" in turn.user_text
+    assert turn.user_text.endswith("answered:\n> Deleted 12 files."), "Hermes knows what the last run said"
     assert hermes.actions == [], "the job itself isn't run or changed"
     check("automations.run_in_chat", m.request("2", "automations.run_in_chat", {"id": tidy["id"]}))
     with pytest.raises(Exception) as err:
@@ -298,6 +299,50 @@ async def test_home_dismiss_takes_one_run_off_home(tmp_path: Path):
         with pytest.raises(AutomationError) as err:
             await autos.handle("home.dismiss", bad)
         assert err.value.code == m.INVALID_PARAMS
+
+
+async def test_home_read_archive_and_restore(tmp_path: Path):
+    autos, hermes, sent = setup(tmp_path)
+    summary = (await autos.add({"name": "Morning summary", "when": MORNING, "task": "Summarise."}))["automation"]
+    now = int(time.time())
+    hermes.ran(summary["id"], now - 60, "Ship Friday.")
+    await autos.poll_once()
+    at = autos.home({})["results"][0]["run"]["at"]
+    assert "read" not in autos.home({})["results"][0], "new results are unread"
+
+    sent.clear()
+    req = check("home.read", m.request("1", "home.read", {"id": summary["id"], "at": at}))
+    assert result("home.read.result", await autos.handle("home.read", req["params"])) == {}
+    assert result("home.get.result", autos.home({}))["results"][0]["read"] is True
+    changed = [check("home.changed", x)["params"] for x in sent if x["method"] == "home.changed"]
+    assert changed[-1]["results"][0]["read"] is True, "every device hears it"
+    await autos.handle("home.read", {"id": summary["id"], "at": at, "read": False})
+    assert "read" not in autos.home({})["results"][0]
+
+    await autos.handle("home.dismiss", {"id": summary["id"], "at": at})
+    assert autos.home({})["results"] == []
+    req = check("home.archived", m.request("2", "home.archived", {}))
+    archived = result("home.archived.result", await autos.handle("home.archived", req["params"]))["results"]
+    assert [(r["name"], r["run"]["text"]) for r in archived] == [("Morning summary", "Ship Friday.")]
+
+    req = check("home.restore", m.request("3", "home.restore", {"id": summary["id"], "at": at}))
+    assert result("home.restore.result", await autos.handle("home.restore", req["params"])) == {}
+    assert [r["name"] for r in autos.home({})["results"]] == ["Morning summary"]
+    assert autos.archived({})["results"] == []
+    with pytest.raises(AutomationError) as err:
+        await autos.handle("home.read", {"id": summary["id"], "at": at, "read": "yes"})
+    assert err.value.code == m.INVALID_PARAMS
+
+
+async def test_run_in_chat_says_why_it_was_blocked(tmp_path: Path):
+    autos, hermes, sent = setup(tmp_path)
+    tidy = (await autos.add({"name": "Tidy downloads", "when": {"kind": "time", "schedule": "*/10 * * * *"},
+                             "task": "Delete old files.", "result_to": "log"}))["automation"]
+    hermes.ran(tidy["id"], int(time.time()) - 60, "Blocked.", tool=REFUSED)
+    await autos.poll_once()
+    _, text, blocked = await autos.chat_task({"id": tidy["id"]})
+    assert blocked is not None
+    assert "Delete old files.\n\nIts last run (" in text and ") was blocked: it needed my approval for " in text
 
 
 async def test_run_in_chat_resolves_the_blocked_run(tmp_path: Path):

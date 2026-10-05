@@ -50,6 +50,8 @@ class ScheduleScreenTest {
         override fun runAutomationInChat(id: String) { calls += "chat $id" }
         override fun deleteAutomation(id: String) { calls += "delete $id" }
         override fun dismissHomeItem(id: String, at: Long) { calls += "dismiss $id $at" }
+        override fun markHomeRead(id: String, at: Long, read: Boolean) { calls += "read $id $at $read" }
+        override fun askAboutResult(id: String, at: Long) { calls += "ask $id $at" }
     }
 
     private val utc = ZoneOffset.UTC
@@ -195,15 +197,25 @@ class ScheduleScreenTest {
     }
 
     @Test
-    fun resultsShowAsMarkdownAndLongOnesFold() = runComposeUiTest {
+    fun resultsArePreviewsThatOpenWhole() = runComposeUiTest {
         val long = "**Tick complete** — no alert.\n\nHere's what I found:\n" + (1..12).joinToString("\n") { "- source $it checked" }
         val home = HomeView(day = listOf(DayResult("Flight watch", long, "19:40", id = "0000000000aa", at = 1)))
-        setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(home, Recorder(), wide = false) } } }
-        onNodeWithText("Tick complete", substring = true).assertExists()
+        val actions = Recorder()
+        setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(home, actions, wide = false) } } }
+        onNodeWithTag("result-0000000000aa", useUnmergedTree = true).assertTextContains("Tick complete — no alert. Here's what I found: source 1 checked", substring = true)
         onNodeWithText("**Tick complete**", substring = true).assertDoesNotExist()
-        onNodeWithText("source 12", substring = true).assertDoesNotExist()
-        onNodeWithTag("result-more").performClick()
-        onNodeWithText("source 12", substring = true).assertExists()
+        onNodeWithTag("unread-0000000000aa", useUnmergedTree = true).assertExists()
+        onNodeWithTag("day-open-0000000000aa").performClick()
+        assertEquals(listOf("read 0000000000aa 1 true"), actions.calls, "opening it reads it, on every device")
+        onNodeWithTag("result-sheet").assertExists()
+        onNode(hasText("source 12 checked", substring = true) and hasAnyAncestor(hasTestTag("result-sheet"))).assertExists()
+        onNodeWithTag("sheet-ask").performClick()
+        assertEquals("ask 0000000000aa 1", actions.calls.last())
+    }
+
+    @Test
+    fun previewsDropMarkdown() {
+        assertEquals("Ship it Friday. Two things: tests pass docs", previewText("# Ship it **Friday**.\n\n---\nTwo things:\n- tests pass\n1. [docs](http://x)"))
     }
 
     @Test

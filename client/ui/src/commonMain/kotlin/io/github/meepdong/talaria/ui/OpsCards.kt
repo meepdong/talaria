@@ -70,9 +70,13 @@ fun OpsApprovalCard(a: OpsApprovalItem, actions: TalariaActions) {
     }
 }
 
-/** An approved server operation that finished: what it did, and its output on demand. */
+/** An approved server operation that finished: what it did, and its output on demand. Swipe left to clear it. */
 @Composable
-fun OpsResultCard(r: OpsResultItem, actions: TalariaActions) {
+fun OpsResultCard(r: OpsResultItem, actions: TalariaActions) = SwipeRow(
+    key = r.requestId,
+    left = SwipeAction("Clear", SwipeColors.Archive) { actions.opsDismiss(r.requestId) },
+    right = null,
+) {
     var open by remember(r.requestId) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth().testTag("ops-result"),
         colors = CardDefaults.cardColors(containerColor = if (r.ok) MaterialTheme.colorScheme.surfaceVariant
@@ -87,7 +91,8 @@ fun OpsResultCard(r: OpsResultItem, actions: TalariaActions) {
                         Text(if (open) "Hide output" else "Show output")
                     }
                 }
-                TextButton(onClick = { actions.opsDismiss(r.requestId) }, modifier = Modifier.testTag("ops-dismiss")) { Text("Dismiss") }
+                TextButton(onClick = { actions.askAboutServerResult(r.requestId) }, modifier = Modifier.testTag("ops-ask")) { Text("Ask Hermes") }
+                TextButton(onClick = { actions.opsDismiss(r.requestId) }, modifier = Modifier.testTag("ops-dismiss")) { Text("Clear") }
             }
         }
     }

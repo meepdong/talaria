@@ -96,6 +96,9 @@
               },
               "pinned": {
                 "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
               }
             },
             "required": [

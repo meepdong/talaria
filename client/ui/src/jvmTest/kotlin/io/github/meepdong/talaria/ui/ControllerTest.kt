@@ -278,6 +278,38 @@ class ControllerTest {
     }
 
     @Test
+    fun aDeletedTodoWaitsOutItsUndo() = runBlocking {
+        val key = keys.create()
+        store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
+        val c = controller()
+        c.start()
+        c.await<Screen.Chat>()
+        c.deleteTodo("t-1")
+        assertEquals("To-do deleted", c.await<Screen.Chat> { it.undo != null }.undo)
+        c.undo()
+        c.await<Screen.Chat> { it.undo == null }
+        // a second swipe while Undo shows: the first stands, the second can be undone
+        c.deleteTodo("t-1")
+        c.deleteTodo("t-2")
+        c.await<Screen.Chat> { it.undo == "To-do deleted" }
+        c.close()
+    }
+
+    @Test
+    fun askingAboutSomethingSaysWhatItIs() {
+        val ran = io.github.meepdong.talaria.schedule.AutomationRan("00000000000a", "Flight watch", "home",
+            io.github.meepdong.talaria.schedule.AutomationRun(1_791_192_600, "ok", text = "**No alert.**\nCheapest ₹4,200."))
+        assertEquals("About my automation \"Flight watch\" (it ran 5 Oct, 09:30). It said:\n> **No alert.**\n> Cheapest ₹4,200.\n\n",
+            TalariaController.aboutResult(ran, java.time.ZoneOffset.UTC))
+        val blocked = ran.copy(run = ran.run.copy(status = "blocked", text = null, blocked = "recursive delete"))
+        assertTrue(TalariaController.aboutResult(blocked, java.time.ZoneOffset.UTC).contains("it was blocked, needing my approval for recursive delete."))
+        assertEquals("About the server action \"Restart Hermes\" (it failed, asked by Phone). Its output:\n```\nexit 1\n```\n\n",
+            TalariaController.aboutServerResult(OpsResultItem("r-1", "Restart Hermes", false, "exit 1\n", "Phone")))
+        assertEquals("From my to-do list: Renew passport\nDue: 2026-10-09\nIn my list: Errands\n\nPlease take care of this, or tell me what you need from me.",
+            TalariaController.handOver("Renew passport", due = "2026-10-09", group = "Errands"))
+    }
+
+    @Test
     fun sharedFilesOpenANewChatReadyToSend() = runBlocking {
         val key = keys.create()
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")

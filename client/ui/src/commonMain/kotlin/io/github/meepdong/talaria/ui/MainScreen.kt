@@ -67,11 +67,27 @@ fun MainScreen(screen: Screen.Chat, actions: TalariaActions) {
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Page(screen, actions, Modifier.weight(1f).fillMaxWidth())
+                    screen.undo?.let { UndoBar(it, actions) }
                     // a phone shows a conversation full screen, with its own back button
                     if (!(screen.tab == Tab.CHATS && screen.view.conversationOpen)) BottomTabs(screen, actions)
                 }
             }
+            if (wide) screen.undo?.let { UndoBar(it, actions, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp).widthIn(max = 480.dp)) }
             if (screen.menuOpen) MenuPanel(screen, actions, wide)
+        }
+    }
+}
+
+/** What the last swipe did, with Undo, for a few seconds (UX1). */
+@Composable
+private fun UndoBar(label: String, actions: TalariaActions, modifier: Modifier = Modifier) {
+    Surface(color = MaterialTheme.colorScheme.inverseSurface, shape = RoundedCornerShape(10.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).testTag("undo-bar")) {
+        Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.weight(1f))
+            TextButton(onClick = actions::undo, modifier = Modifier.testTag("undo")) {
+                Text("Undo", color = MaterialTheme.colorScheme.inversePrimary, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

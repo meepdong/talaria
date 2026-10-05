@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/conversations.result.schema.json",
-  "title": "conversations.result",
-  "description": "Result of conversations.rename, conversations.delete, conversations.pin and conversations.archive.",
+  "$id": "https://talaria.invalid/tnp/v0/conversations.archive.schema.json",
+  "title": "conversations.archive",
+  "description": "Device to bridge (request): take a conversation off the list, or put it back with archived: false (§9). Nothing is deleted.",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,13 +11,16 @@
     "tnp": {
       "const": 0
     },
+    "method": {
+      "const": "conversations.archive"
+    },
     "id": {
       "type": [
         "string",
         "integer"
       ]
     },
-    "result": {
+    "params": {
       "type": "object",
       "properties": {
         "conversation_id": {
@@ -25,28 +28,21 @@
           "minLength": 1,
           "maxLength": 64
         },
-        "title": {
-          "type": "string"
-        },
-        "deleted": {
-          "type": "boolean"
-        },
-        "pinned": {
-          "type": "boolean"
-        },
         "archived": {
           "type": "boolean"
         }
       },
       "required": [
-        "conversation_id"
+        "conversation_id",
+        "archived"
       ]
     }
   },
   "required": [
     "jsonrpc",
     "tnp",
+    "method",
     "id",
-    "result"
+    "params"
   ]
 }

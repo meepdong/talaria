@@ -74,6 +74,9 @@
                   "at",
                   "status"
                 ]
+              },
+              "read": {
+                "type": "boolean"
               }
             },
             "required": [

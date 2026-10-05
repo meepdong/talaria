@@ -4,6 +4,22 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Swipes wherever things pile up: on Home's Your day and Needs you, swipe left to archive and right to mark read
+  or unread; on chats, left archives (under Archived at the end of the list) and right pins; on to-dos, right ticks
+  off and left deletes; on server results, left clears. Undo shows for 5 seconds after each. Long-press menus and
+  screen readers offer the same actions.
+- Your day shows each result as two lines with a dot while unread; tap one for the whole result, with Ask Hermes
+  about this, Open chat and Copy. Its ⋮ has Mark all read, Archive read and Archived (restore anything archived in
+  the last 30 days). Read and archived carry across devices, and take the phone's notification with them;
+  swiping a notification away marks the result read.
+- Chat with Hermes and Talk go back to the chat you were last in, with everything Hermes knows from it; `/new` or
+  the + in a chat's header starts a new one.
+- Ask Hermes about a result, a server action, or a to-do now tells Hermes what it is: what ran and when, what it
+  said or why it failed, the to-do's due date and list. Run in chat says what the last run was blocked from.
+
 ## [0.2.0-beta.7] - 2026-10-05
 
 ### Fixed

@@ -74,7 +74,7 @@ data class AutomationRun(
 )
 
 /** A run that finished, as `automations.ran` says it. */
-data class AutomationRan(val id: String, val name: String, val resultTo: String, val run: AutomationRun) {
+data class AutomationRan(val id: String, val name: String, val resultTo: String, val run: AutomationRun, val read: Boolean = false) {
     /** Home shows it, and the apps notify: results for Home, and runs that were blocked. */
     val forHome get() = resultTo == "home" || run.status == "blocked"
 }
@@ -93,6 +93,10 @@ data class ScheduleState(
     val calendarError: String? = null,
     /** Today's results for Home, newest first. */
     val today: List<AutomationRan> = emptyList(),
+    /** [today] came from the bridge (home.get or home.changed), so a result missing from it was read or archived. */
+    val homeLoaded: Boolean = false,
+    /** What was archived off Home in the last month, newest first; null until asked for. */
+    val archived: List<AutomationRan>? = null,
     /** Asking the agent to set one up from words. */
     val describing: Boolean = false,
     val describeReply: String? = null,
@@ -120,7 +124,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
                             if (r.forHome) _state.update { s -> s.copy(today = listOf(r) + s.today.filterNot { it.id == r.id }) }
                             _ran.tryEmit(r)
                         }
-                        "home.changed" -> _state.update { it.copy(today = homeResults(p)) }
+                        "home.changed" -> _state.update { it.copy(today = homeResults(p), homeLoaded = true) }
                     }
                 }
             }
@@ -140,7 +144,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
             val events = (r["events"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::event) }
             _state.update { it.copy(events = events, calendarError = r.str("error")) }
         }
-        call("home.get", JsonObject(emptyMap())) { r -> _state.update { it.copy(today = homeResults(r)) } }
+        call("home.get", JsonObject(emptyMap())) { r -> _state.update { it.copy(today = homeResults(r), homeLoaded = true) } }
     }
 
     /** `home.get`'s result or `home.changed`'s params: Home's runs for today. */
@@ -151,6 +155,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
                 o["name"]?.let { put("name", it) }
                 put("result_to", "home")
                 o["run"]?.let { put("run", it) }
+                o["read"]?.let { put("read", it) }
             }) }
         }
 
@@ -218,6 +223,32 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
             put("at", at)
         }) {}
     }
+
+    /** Read, or unread again, on every device. */
+    fun markHomeRead(id: String, at: Long, read: Boolean) {
+        _state.update { s -> s.copy(today = s.today.map { if (it.id == id && it.run.at == at) it.copy(read = read) else it }) }
+        call("home.read", buildJsonObject {
+            put("id", id)
+            put("at", at)
+            put("read", read)
+        }) {}
+    }
+
+    /** Put an archived run back: Home shows it again while it's today's latest. */
+    fun restoreHomeItem(id: String, at: Long) {
+        _state.update { s -> s.copy(archived = s.archived?.filterNot { it.id == id && it.run.at == at }) }
+        call("home.restore", buildJsonObject {
+            put("id", id)
+            put("at", at)
+        }) {}
+    }
+
+    /** What was archived off Home, into [ScheduleState.archived]. */
+    fun loadArchived() {
+        call("home.archived", JsonObject(emptyMap())) { r -> _state.update { it.copy(archived = homeResults(r)) } }
+    }
+
+    fun closeArchived() = _state.update { it.copy(archived = null) }
 
     private fun upsert(a: Automation) = _state.update { s ->
         val list = if (s.automations.any { it.id == a.id }) s.automations.map { if (it.id == a.id) a else it } else s.automations + a
@@ -320,6 +351,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
             name = o.str("name") ?: return null,
             resultTo = o.str("result_to") ?: "log",
             run = o.obj("run")?.let(::run) ?: return null,
+            read = (o["read"] as? JsonPrimitive)?.contentOrNull == "true",
         )
 
         fun event(o: JsonObject): CalendarEvent? = CalendarEvent(

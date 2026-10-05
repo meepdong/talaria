@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     last_text TEXT,
     model_provider TEXT,
     model_name TEXT,
-    pinned INTEGER
+    pinned INTEGER,
+    archived INTEGER
 );
 CREATE TABLE IF NOT EXISTS hidden_messages (
     conversation_id TEXT NOT NULL,
@@ -131,7 +132,7 @@ CREATE TABLE IF NOT EXISTS agent_files (
 );
 """
 COLUMNS = ("id", "agent_id", "hermes_session_id", "title", "created_at", "updated_at", "last_role", "last_text",
-           "model_provider", "model_name", "pinned")
+           "model_provider", "model_name", "pinned", "archived")
 
 
 @dataclass
@@ -147,6 +148,7 @@ class Conversation:
     model_provider: str | None = None  # the model the conversation is pinned to (§11)
     model_name: str | None = None
     pinned: int | None = None  # pinned to the top of the list (§9)
+    archived: int | None = None  # off the list until opened from Archived, or written in again (§9)
 
     @property
     def model(self) -> dict | None:
@@ -166,6 +168,8 @@ class ChatStore:
                 self.db.execute(f"ALTER TABLE conversations ADD COLUMN {column} TEXT")
         if "pinned" not in have:
             self.db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER")
+        if "archived" not in have:
+            self.db.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER")
         self.db.execute("CREATE TABLE IF NOT EXISTS default_models "
                         "(agent_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL)")
 
@@ -222,6 +226,9 @@ class ChatStore:
 
     def pin(self, conversation_id: str, pinned: bool) -> None:
         self.db.execute("UPDATE conversations SET pinned = ? WHERE id = ?", (1 if pinned else None, conversation_id))
+
+    def archive(self, conversation_id: str, archived: bool) -> None:
+        self.db.execute("UPDATE conversations SET archived = ? WHERE id = ?", (1 if archived else None, conversation_id))
 
     def hide(self, conversation_id: str, message_ids: list[str]) -> None:
         self.db.executemany("INSERT OR IGNORE INTO hidden_messages (conversation_id, message_id) VALUES (?, ?)",
@@ -619,6 +626,7 @@ class ChatService:
         self._turns[turn.turn_id] = turn
         self._evict()
         self.store.touch(conv_id, "user", text.strip() or _attachments_preview(turn.attachments), now_s)
+        self.store.archive(conv_id, False)  # writing in an archived chat brings it back
         result = {"conversation_id": conv_id, "turn_id": turn.turn_id, "title": conv.title}
         if queued:
             result["queued"] = True
@@ -995,6 +1003,8 @@ class ChatService:
                 item["model"] = c.model
             if c.pinned:
                 item["pinned"] = True
+            if c.archived:
+                item["archived"] = True
             out.append(item)
         return {"conversations": out}
 
@@ -1027,6 +1037,15 @@ class ChatService:
                 log.warning("could not pin Hermes session %s: %s", conv.hermes_session_id, exc)
         self.store.pin(conv.id, pinned)
         return {"conversation_id": conv.id, "pinned": pinned}
+
+    async def archive(self, p: dict) -> dict:
+        """Take a conversation off the list (or put it back with archived: false). Nothing is deleted."""
+        conv = self._conversation(p)
+        archived = p.get("archived")
+        if not isinstance(archived, bool):
+            raise RpcError(m.INVALID_PARAMS, "archived must be true or false")
+        self.store.archive(conv.id, archived)
+        return {"conversation_id": conv.id, "archived": archived}
 
     async def hide(self, p: dict) -> dict:
         """Hide messages from Talaria on every device. The agent's session keeps them."""
@@ -1282,6 +1301,8 @@ class ChatService:
             return await self.delete(p), None
         if method == "conversations.pin":
             return await self.pin(p), None
+        if method == "conversations.archive":
+            return await self.archive(p), None
         if method == "chat.hide":
             return await self.hide(p), None
         if method == "conversations.set_model":
@@ -1306,7 +1327,7 @@ class ChatService:
 CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
-                          "automations.run_in_chat", "conversations.pin", "chat.hide",
+                          "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",
                           "account.balance"}) | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 

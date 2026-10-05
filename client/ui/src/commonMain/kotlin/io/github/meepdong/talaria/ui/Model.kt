@@ -43,6 +43,8 @@ sealed interface Screen {
         val files: FilesView = FilesView(),
         val schedule: ScheduleView = ScheduleView(),
         val todos: TodosView = TodosView(),
+        /** "Archived", "Deleted": what the last swipe did, with Undo, for a few seconds. */
+        val undo: String? = null,
     ) : Screen
 }
 
@@ -81,6 +83,8 @@ data class HomeView(
     val arranging: Boolean = false,
     /** A newer release to install, shown above everything else until it's installed. */
     val update: UpdateBanner? = null,
+    /** What was archived off Home in the last month, while that list is open; [DayResult.time] has the date. */
+    val archived: List<DayResult>? = null,
 )
 
 /** Home's "Update available" card (§17). [status] is the download's progress or what went wrong. */
@@ -307,6 +311,9 @@ interface TalariaActions {
     fun deleteConversation(id: String) {}
     fun pinConversation(id: String, pinned: Boolean) {}
 
+    /** Off the list (under Archived), or back; Hermes keeps the chat either way. */
+    fun archiveConversation(id: String, archived: Boolean) {}
+
     /** Delete messages of the open chat from Talaria on every device; Hermes keeps them (spec/README.md §9). */
     fun deleteMessages(keys: List<String>) {}
 
@@ -337,11 +344,14 @@ interface TalariaActions {
     /** Download the newer release, check it and hand it to the system installer. */
     fun installUpdate() {}
 
-    /** The Chat button: a new chat, ready to type. */
+    /** The Chat button: back to the chat last open on this device, or a new one when there's none (/new starts one). */
     fun startChat() {}
 
-    /** The mic button: say something to Hermes and hear the answer, in a new chat. */
+    /** The mic button: say something to Hermes and hear the answer, in the chat last open on this device. */
     fun talk() {}
+
+    /** Take back what the last swipe did (the Undo bar). */
+    fun undo() {}
 
     // Home's tiles, ordered per device
 
@@ -396,8 +406,23 @@ interface TalariaActions {
     fun runAutomationInChat(id: String) {}
     fun deleteAutomation(id: String) {}
 
-    /** Dismiss a blocked automation run from Home's "Needs you" card. */
+    /** Archive a run off Home, on every device (Undo puts it back). */
     fun dismissHomeItem(id: String, at: Long) {}
+
+    /** Read, or unread again, on every device; reading one clears its notification. */
+    fun markHomeRead(id: String, at: Long, read: Boolean) {}
+    fun markAllHomeRead() {}
+    /** Archive every result on Home that has been read. */
+    fun archiveReadHome() {}
+    /** The list of what was archived off Home in the last month (null closes it). */
+    fun showArchivedHome(open: Boolean) {}
+    fun restoreHomeItem(id: String, at: Long) {}
+
+    /** A chat about one result: its own chat when it has one, with the result quoted in the composer. */
+    fun askAboutResult(id: String, at: Long) {}
+
+    /** A new chat with a finished server operation (what ran, how it went, its output) quoted in the composer. */
+    fun askAboutServerResult(requestId: String) {}
 }
 
 /** The tray icon's colour. */

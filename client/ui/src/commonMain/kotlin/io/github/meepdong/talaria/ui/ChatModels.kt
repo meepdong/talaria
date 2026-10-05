@@ -97,6 +97,8 @@ data class ChatView(
     val opsApprovals: List<OpsApprovalItem> = emptyList(),
     /** Approved server operations that finished, until dismissed. */
     val opsResults: List<OpsResultItem> = emptyList(),
+    /** Chats swiped away, under Archived at the end of the list, newest first. */
+    val archived: List<ConversationItem> = emptyList(),
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

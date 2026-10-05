@@ -153,6 +153,12 @@ private fun RecentChatsCard(home: HomeView, actions: TalariaActions, modifier: M
         }
         home.recent.forEachIndexed { i, c ->
             if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SwipeRow(
+                key = c.id,
+                left = SwipeAction("Archive", SwipeColors.Archive) { actions.archiveConversation(c.id, true) },
+                right = SwipeAction(if (c.pinned) "Unpin" else "Pin", SwipeColors.Read) { actions.pinConversation(c.id, !c.pinned) },
+                modifier = Modifier.testTag("swipe-recent-${c.id}"),
+            ) {
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { actions.openConversation(c.id) }
                     .padding(vertical = 8.dp).testTag("recent-${c.id}"),
@@ -168,6 +174,7 @@ private fun RecentChatsCard(home: HomeView, actions: TalariaActions, modifier: M
                 Text(if (c.running) "Replying…" else c.time, style = MaterialTheme.typography.labelMedium,
                     color = if (c.running) Brand.Busy else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 12.dp))
+            }
             }
         }
     }
@@ -220,8 +227,14 @@ private fun TodoCard(home: HomeView, actions: TalariaActions, modifier: Modifier
     }
 }
 
+/** A to-do on Home: swipe right to tick it off (or back), left to delete it (with Undo). */
 @Composable
-private fun TodoRow(t: TodoItem, actions: TalariaActions) {
+private fun TodoRow(t: TodoItem, actions: TalariaActions) = SwipeRow(
+    key = t.id,
+    left = SwipeAction("Delete", SwipeColors.Delete) { actions.deleteTodo(t.id) },
+    right = SwipeAction(if (t.done) "Not done" else "Done", SwipeColors.Done) { actions.setTodoDone(t.id, !t.done) },
+    modifier = Modifier.testTag("swipe-todo-${t.id}"),
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("todo-${t.id}"),
         verticalAlignment = Alignment.CenterVertically,

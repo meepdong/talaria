@@ -116,6 +116,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.rename` | request | `{conversation_id, title}` → `{conversation_id, title}` |
 | `conversations.delete` | request | `{conversation_id}` → `{conversation_id, deleted}` |
 | `conversations.pin` | request | `{conversation_id, pinned}` → `{conversation_id, pinned}` |
+| `conversations.archive` | request | `{conversation_id, archived}` → `{conversation_id, archived}` |
 | `chat.hide` | request | `{conversation_id, message_ids}` → `{conversation_id, message_ids}` |
 | `chat.hidden` | notification | `{conversation_id, message_ids}` |
 | `chat.file` | notification | `{conversation_id, message}` |
@@ -147,9 +148,11 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Pinning.** `conversations.pin` pins a conversation, or unpins it with `pinned: false`; `conversations.list` marks pinned ones `pinned: true`, and devices list them first. The bridge also pins the agent's session where the agent supports it.
 
+**Archiving.** `conversations.archive` takes a conversation off the list (devices show it under Archived), or puts it back with `archived: false`; `conversations.list` marks archived ones `archived: true`. Nothing is deleted, on the bridge or in the agent. A new message sent in an archived conversation puts it back. Devices archive with a swipe left, with Undo; deleting stays in the long-press menu.
+
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
-Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.result`, `chat.hide`, `chat.hide.result`, `chat.hidden`.
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.archive`, `conversations.result`, `chat.hide`, `chat.hide.result`, `chat.hidden`.
 
 ## 10. Attachments (M2)
 
@@ -272,6 +275,9 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 | `calendar.day` | request | `{date?}` → `{date, events}` or `{date, events: [], error}` |
 | `home.get` | request | `{}` → `{date, results}` |
 | `home.dismiss` | request | `{id, at}` → `{}` |
+| `home.read` | request | `{id, at, read?}` → `{}` |
+| `home.restore` | request | `{id, at}` → `{}` |
+| `home.archived` | request | `{}` → `{results}` |
 | `home.changed` | notification | `{date, results}` |
 
 **An automation** is `{id, name, when, task, result_to, made_in, state, next_run_at?, last_run_at?, last_status?, last_error?, schedule_text}`:
@@ -298,11 +304,13 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 
 **Home.** `home.get` returns today's `results`: the latest run today of each automation with `result_to: home`, and of any other automation whose latest run today is `blocked`, each `{id, name, run}`, newest first, so a device that was off sees the morning summary, or that it was blocked, when it opens.
 
-`home.dismiss` takes one run (`id` of the automation, `at` of the run) off Home for good, and every device gets `home.changed` with what `home.get` now returns. Only that run goes: a later run of the same job that belongs on Home shows again. When `automations.run_in_chat` is used on a job whose latest run was `blocked`, and the chat turn ends `completed`, the bridge dismisses that blocked run the same way. Dismissing an unknown or already dismissed run is not an error.
+`home.dismiss` archives one run: it takes the run (`id` of the automation, `at` of the run) off Home for good, and every device gets `home.changed` with what `home.get` now returns. Only that run goes: a later run of the same job that belongs on Home shows again. When `automations.run_in_chat` is used on a job whose latest run was `blocked`, and the chat turn ends `completed`, the bridge dismisses that blocked run the same way. Dismissing an unknown or already dismissed run is not an error.
+
+`home.read` marks one run read (`read` defaults to true; `false` marks it unread again), and `home.get` and `home.changed` mark read runs `read: true`; every device gets `home.changed`, so a result opened on the phone stops looking new on the laptop, and devices take down its notification. `home.archived` returns the runs archived in the last 30 days that the run log still has, newest first, at most 100, each `{id, name, run}`; `home.restore` takes one back off that list (Home shows it again while it is that automation's latest run today), and every device gets `home.changed`. Read and archived marks are kept for 30 days. `automations.run_in_chat` tells the agent how the automation's last run went (what it was blocked from doing, why it failed, or what it said), so it knows why it is being run again.
 
 **Errors.** `AGENT_UNAVAILABLE` when the agent's jobs can't be reached; `NOT_FOUND` for an unknown automation; `INVALID_PARAMS` for a bad schedule, window or day; `CONFLICT` when changing the `when` of a `kind: other` job.
 
-Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`, `home.dismiss`, `home.dismiss.result`, `home.changed`.
+Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`, `home.dismiss`, `home.dismiss.result`, `home.read`, `home.read.result`, `home.restore`, `home.restore.result`, `home.archived`, `home.archived.result`, `home.changed`.
 
 ## 15. Tools for the agent (M2)
 

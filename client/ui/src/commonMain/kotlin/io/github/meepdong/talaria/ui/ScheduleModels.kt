@@ -51,6 +51,8 @@ data class AutomationItem(
 data class DayResult(
     val name: String, val text: String, val time: String, val failed: Boolean = false, val conversationId: String? = null,
     val id: String = "", val blocked: String? = null, val at: Long = 0,
+    /** Opened, or marked read, on any device: no dot, normal weight. */
+    val read: Boolean = false,
 )
 
 /** A line in "Next up": a calendar event or an automation about to run. */

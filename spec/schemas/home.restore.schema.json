@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/home.dismiss.schema.json",
-  "title": "home.dismiss",
-  "description": "Device to bridge (request): archive a run off Home on every device (§14).",
+  "$id": "https://talaria.invalid/tnp/v0/home.restore.schema.json",
+  "title": "home.restore",
+  "description": "Device to bridge (request): put an archived run back on Home (§14).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -12,7 +12,7 @@
       "const": 0
     },
     "method": {
-      "const": "home.dismiss"
+      "const": "home.restore"
     },
     "id": {
       "type": [

@@ -62,6 +62,7 @@ import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -127,7 +128,17 @@ class TalariaController(
         val modelQuery: String? = null,
         /** Home's tiles are being rearranged (long-press on a tile's title). */
         val arrangingHome: Boolean = false,
+        /** From [swipes]: what the Undo bar says, and to-dos waiting out their Undo before they're deleted. */
+        val undo: String? = null,
+        val hiddenTodos: Set<String> = emptySet(),
     )
+
+    /** The last swipe that can be taken back (UX1). Kept apart from [page], which opening a chat replaces. */
+    private data class Swipes(val label: String? = null, val hiddenTodos: Set<String> = emptySet())
+    private val swipes = MutableStateFlow(Swipes())
+    private var undoAction: (() -> Unit)? = null
+    private var undoCommit: (() -> Unit)? = null
+    private var undoJob: Job? = null
 
     private val mode = MutableStateFlow<Mode>(Mode.Connect(defaultDeviceName))
     private val test = MutableStateFlow<TestView?>(null)
@@ -204,7 +215,7 @@ class TalariaController(
     )
 
     private val extras = combine(
-        combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
+        combine(log.entries, network, test, combine(page, swipes) { p, w -> p.copy(undo = w.label, hiddenTodos = w.hiddenTodos) }) { e, n, t, p -> Quad(e, n, t, p) },
         combine(pending, pendingServer, fileTask, homeOrder) { a, b, c, d -> Quad(a, b, c, d) }, picker, voice, speechInput,
     ) { q, files, pick, v, input ->
         Extras(q.a, q.b, q.c, q.d, files.a, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
@@ -246,6 +257,20 @@ class TalariaController(
         }
     }
 
+    /**
+     * Home's results that still want attention, as "id@at", once Home has loaded: a notification for anything else
+     * (read or archived on any device) is cleared.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val homeUnread: Flow<Set<String>> = mode.flatMapLatest { m ->
+        if (m is Mode.Connected) {
+            m.schedule.state.filter { it.homeLoaded }.map { s -> s.today.filter { !it.read }.map { "${it.id}@${it.run.at}" }.toSet() }
+                .distinctUntilChanged()
+        } else {
+            emptyFlow()
+        }
+    }
+
     /** Load the saved pairing and connect, and start the clock and the network check. */
     fun start() {
         if (started) return
@@ -261,6 +286,11 @@ class TalariaController(
                 network.value = runCatching { networkCheck() }.getOrNull()
                 delay(networkEveryMs)
             }
+        }
+        scope.launch {
+            // Chat with Hermes and Talk come back to the chat last open here, even after a restart
+            mode.flatMapLatest { m -> if (m is Mode.Connected) m.chat.state.map { it.openId } else emptyFlow() }
+                .filterNotNull().distinctUntilChanged().collect { prefs.setString(PREF_LAST_CHAT, it) }
         }
         scope.launch {
             replies.collect { r ->
@@ -393,7 +423,98 @@ class TalariaController(
     }
 
     override fun startChat() {
+        resumeChat()
+    }
+
+    /** The chat last open on this device, if it's still there; else a new one. */
+    private fun resumeChat() {
+        val c = chat ?: return newConversation()
+        val s = c.state.value
+        val id = s.openId ?: prefs.getString(PREF_LAST_CHAT, "").takeIf { it.isNotEmpty() }
+        if (id != null && s.conversations.any { it.id == id }) openConversation(id) else newConversation()
+    }
+
+    // swipes and Undo (UX1)
+
+    /** Show Undo for a few seconds: [undo] takes the swipe back; [commit] runs once it's too late to (if anything waits). */
+    private fun offerUndo(label: String, undo: () -> Unit, commit: () -> Unit = {}) {
+        undoJob?.cancel()
+        finishUndo()  // the swipe before stands
+        undoAction = undo
+        undoCommit = commit
+        swipes.update { it.copy(label = label) }
+        undoJob = scope.launch {
+            delay(UNDO_MS)
+            finishUndo()
+        }
+    }
+
+    private fun finishUndo() {
+        val commit = undoCommit
+        undoAction = null
+        undoCommit = null
+        swipes.update { it.copy(label = null) }
+        commit?.invoke()
+    }
+
+    override fun undo() {
+        undoJob?.cancel()
+        val action = undoAction
+        undoAction = null
+        undoCommit = null
+        swipes.update { it.copy(label = null) }
+        action?.invoke()
+    }
+
+    override fun markHomeRead(id: String, at: Long, read: Boolean) {
+        schedule?.markHomeRead(id, at, read)
+    }
+
+    override fun markAllHomeRead() {
+        val s = schedule ?: return
+        s.state.value.today.filter { !it.read }.forEach { s.markHomeRead(it.id, it.run.at, true) }
+    }
+
+    override fun archiveReadHome() {
+        val s = schedule ?: return
+        val read = s.state.value.today.filter { it.read }
+        if (read.isEmpty()) return
+        read.forEach { s.dismissHomeItem(it.id, it.run.at) }
+        offerUndo(if (read.size == 1) "Archived 1 result" else "Archived ${read.size} results",
+            undo = { read.forEach { s.restoreHomeItem(it.id, it.run.at) } })
+    }
+
+    override fun showArchivedHome(open: Boolean) {
+        if (open) schedule?.loadArchived() else schedule?.closeArchived()
+    }
+
+    override fun restoreHomeItem(id: String, at: Long) {
+        schedule?.restoreHomeItem(id, at)
+    }
+
+    override fun askAboutResult(id: String, at: Long) {
+        val s = schedule ?: return
+        val st = s.state.value
+        val r = (st.today + st.archived.orEmpty()).firstOrNull { it.id == id && it.run.at == at } ?: return
+        if (!r.read) s.markHomeRead(id, at, true)
+        s.closeArchived()
+        val own = r.run.conversationId?.takeIf { c -> chat?.state?.value?.conversations?.any { it.id == c } == true }
+        if (own != null) openConversation(own) else newConversation()
+        voice.update { it.copy(dictation = Dictation(++dictations, aboutResult(r, java.time.ZoneId.systemDefault()), send = false)) }
+    }
+
+    override fun askAboutServerResult(requestId: String) {
+        val m = mode.value as? Mode.Connected ?: return
+        val r = opsResults(m.ops.state.value, m.bridge.deviceId).firstOrNull { it.requestId == requestId } ?: return
+        page.update { it.copy(server = false, terminal = false) }
         newConversation()
+        voice.update { it.copy(dictation = Dictation(++dictations, aboutServerResult(r), send = false)) }
+    }
+
+    override fun archiveConversation(id: String, archived: Boolean) {
+        val c = chat ?: return
+        c.archive(id, archived)
+        if (archived) offerUndo("Chat archived", undo = { c.archive(id, false) })
     }
 
     override fun talk() {
@@ -406,7 +527,7 @@ class TalariaController(
             toggleDictation()
             return
         }
-        newConversation()
+        resumeChat()
         talking = true
         toggleDictation()
     }
@@ -592,7 +713,15 @@ class TalariaController(
     }
 
     override fun deleteTodo(id: String) {
-        todos?.delete(id)
+        val t = todos ?: return
+        // gone from the list now, deleted once Undo has passed
+        swipes.update { it.copy(hiddenTodos = it.hiddenTodos + id) }
+        offerUndo("To-do deleted",
+            undo = { swipes.update { it.copy(hiddenTodos = it.hiddenTodos - id) } },
+            commit = {
+                t.delete(id)
+                swipes.update { it.copy(hiddenTodos = it.hiddenTodos - id) }
+            })
     }
 
     override fun editTodo(id: String, text: String) {
@@ -628,7 +757,7 @@ class TalariaController(
         val c = chat ?: return
         val todo = todos?.state?.value?.todos?.firstOrNull { it.id == id } ?: return
         newConversation()
-        c.send(handOver(todo.text, todo.comments.map { (if (it.byAgent) "Hermes" else "Me") + ": " + it.text }),
+        c.send(handOver(todo.text, todo.comments.map { (if (it.byAgent) "Hermes" else "Me") + ": " + it.text }, todo.due, todo.group),
             conversationId = null, todoId = todo.id)
     }
 
@@ -678,7 +807,9 @@ class TalariaController(
     }
 
     override fun dismissHomeItem(id: String, at: Long) {
-        schedule?.dismissHomeItem(id, at)
+        val s = schedule ?: return
+        s.dismissHomeItem(id, at)
+        offerUndo("Archived", undo = { s.restoreHomeItem(id, at) })
     }
 
     override fun startArrangingHome() {
@@ -1089,21 +1220,23 @@ class TalariaController(
                 Screen.Server(serverView(opsState, m.bridge.deviceId), status)
             } else {
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
+                val todosShown = l.todos?.let { t -> t.copy(todos = t.todos.filterNot { it.id in x.page.hiddenTodos }) }
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
                     x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare,
                         openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
                 Screen.Chat(
                     view, withBalance,
+                    undo = x.page.undo,
                     tab = x.page.tab,
                     tabs = TABS,
-                    home = homeView(view, now, l.todos).copy(order = x.homeOrder, arranging = x.page.arrangingHome,
+                    home = homeView(view, now, todosShown).copy(order = x.homeOrder, arranging = x.page.arrangingHome,
                         update = l.updates?.takeIf { installer != null }?.let(::updateBanner)).withSchedule(l.schedule, now),
                     menu = menuView(view, withBalance, l.chat?.models, VERSION).withUpdate(l.updates, installer != null),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice, x.fileTask.progress),
                     schedule = scheduleView(l.schedule, now),
-                    todos = todosView(l.todos, view, now),
+                    todos = todosView(todosShown, view, now),
                 )
             }
         }
@@ -1126,13 +1259,46 @@ class TalariaController(
         const val PREF_AUTO_SEND = "voice.auto_send"
         /** Home's tile order on this device, as "DAY,NEXT,…" (see [homeOrder]). */
         const val PREF_HOME_ORDER = "home.order"
+        /** The chat last open on this device, for Chat with Hermes and Talk. */
+        const val PREF_LAST_CHAT = "chat.last"
+
+        /** How long Undo shows after a swipe. */
+        const val UNDO_MS = 5_000L
+
+        private val WHEN = java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm")
+
+        /** What "Ask Hermes about this" puts in the composer for a result from Home: what ran, when, and what it said. */
+        fun aboutResult(r: io.github.meepdong.talaria.schedule.AutomationRan, zone: java.time.ZoneId) = buildString {
+            val at = WHEN.format(java.time.Instant.ofEpochSecond(r.run.at).atZone(zone))
+            append("About my automation \"").append(r.name).append("\" (it ran ").append(at).append(")")
+            when (r.run.status) {
+                "blocked" -> append(": it was blocked, needing my approval for ").append(r.run.blocked ?: "something").append(".")
+                "error" -> append(": it failed: ").append(r.run.error ?: "no reason given").append(".")
+                else -> append(". It said:\n").append(quote(r.run.text.orEmpty()))
+            }
+            append("\n\n")
+        }
+
+        /** What "Ask Hermes about this" puts in the composer for a finished server operation. */
+        fun aboutServerResult(r: OpsResultItem) = buildString {
+            append("About the server action \"").append(r.summary).append("\" (")
+            append(if (r.ok) "it worked" else "it failed").append(", asked by ").append(r.from).append(")")
+            if (r.output.isNotBlank()) append(". Its output:\n```\n").append(r.output.trim().take(MAX_QUOTE)).append("\n```")
+            append("\n\n")
+        }
+
+        private fun quote(text: String) = text.trim().take(MAX_QUOTE).lines().joinToString("\n") { "> $it" }
+
+        private const val MAX_QUOTE = 8_000
 
         /** [VoiceView.speakingKey] while a reply is read aloud on its own. */
         const val READ_ALOUD_KEY = "read-aloud"
 
         /** What a to-do handed to the agent says. */
-        fun handOver(todo: String, comments: List<String> = emptyList()) = buildString {
+        fun handOver(todo: String, comments: List<String> = emptyList(), due: String? = null, group: String? = null) = buildString {
             append("From my to-do list: ").append(todo)
+            if (due != null) append("\nDue: ").append(due)
+            if (group != null) append("\nIn my list: ").append(group)
             if (comments.isNotEmpty()) append("\n\nComments on it:\n").append(comments.joinToString("\n") { "- $it" })
             append("\n\nPlease take care of this, or tell me what you need from me.")
         }

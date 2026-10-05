@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/conversations.result.schema.json",
-  "title": "conversations.result",
-  "description": "Result of conversations.rename, conversations.delete, conversations.pin and conversations.archive.",
+  "$id": "https://talaria.invalid/tnp/v0/home.read.schema.json",
+  "title": "home.read",
+  "description": "Device to bridge (request): mark a Home run read, or unread with read: false, on every device (§14).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,42 +11,42 @@
     "tnp": {
       "const": 0
     },
+    "method": {
+      "const": "home.read"
+    },
     "id": {
       "type": [
         "string",
         "integer"
       ]
     },
-    "result": {
+    "params": {
       "type": "object",
       "properties": {
-        "conversation_id": {
+        "id": {
           "type": "string",
           "minLength": 1,
           "maxLength": 64
         },
-        "title": {
-          "type": "string"
+        "at": {
+          "type": "integer",
+          "minimum": 0
         },
-        "deleted": {
-          "type": "boolean"
-        },
-        "pinned": {
-          "type": "boolean"
-        },
-        "archived": {
+        "read": {
           "type": "boolean"
         }
       },
       "required": [
-        "conversation_id"
+        "id",
+        "at"
       ]
     }
   },
   "required": [
     "jsonrpc",
     "tnp",
+    "method",
     "id",
-    "result"
+    "params"
   ]
 }

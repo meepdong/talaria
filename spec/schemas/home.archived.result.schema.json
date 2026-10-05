@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/home.changed.schema.json",
-  "title": "home.changed",
-  "description": "Bridge to every device (notification): today's Home results changed (§14).",
+  "$id": "https://talaria.invalid/tnp/v0/home.archived.result.schema.json",
+  "title": "home.archived.result",
+  "description": "Result of home.archived: newest first, at most 100.",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,16 +11,15 @@
     "tnp": {
       "const": 0
     },
-    "method": {
-      "const": "home.changed"
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
     },
-    "params": {
+    "result": {
       "type": "object",
       "properties": {
-        "date": {
-          "type": "string",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-        },
         "results": {
           "type": "array",
           "items": {
@@ -85,7 +84,6 @@
         }
       },
       "required": [
-        "date",
         "results"
       ]
     }
@@ -93,7 +91,7 @@
   "required": [
     "jsonrpc",
     "tnp",
-    "method",
-    "params"
+    "id",
+    "result"
   ]
 }

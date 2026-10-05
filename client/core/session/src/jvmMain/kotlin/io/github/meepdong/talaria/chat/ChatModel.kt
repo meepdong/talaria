@@ -15,6 +15,8 @@ data class ConversationSummary(
     val queuedTurnIds: List<String> = emptyList(),
     /** Listed first (spec/README.md §9). */
     val pinned: Boolean = false,
+    /** Off the list, under Archived; writing in it brings it back (spec/README.md §9). */
+    val archived: Boolean = false,
 )
 
 /** A model as Hermes names it, e.g. openrouter / anthropic/claude-sonnet-4. */

@@ -170,4 +170,42 @@ class ScheduleRepositoryTest {
         assertEquals(emptyList(), repo.state.value.today)
         scope.cancel()
     }
+
+    @Test
+    fun readArchivedAndRestore() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        api.answers["automations.list"] = { json("""{"automations":[$MORNING]}""") }
+        api.answers["calendar.day"] = { json("""{"date":"2026-10-05","events":[]}""") }
+        api.answers["home.get"] = { json("""{"date":"2026-10-05","results":[
+            {"id":"00000000000a","name":"Morning summary","run":{"at":1500,"status":"ok","text":"Ship Friday."},"read":true}]}""") }
+        api.answers["home.read"] = { json("{}") }
+        api.answers["home.restore"] = { json("{}") }
+        api.answers["home.archived"] = { json("""{"results":[
+            {"id":"0000000000cc","name":"Tidy downloads","run":{"at":900,"status":"ok","text":"Deleted 3 files."}}]}""") }
+        val repo = ScheduleRepository(scope, api)
+        repo.start()
+        assertEquals(false, repo.state.value.homeLoaded, "nothing to clear notifications by until Home has loaded")
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        assertEquals(true, repo.state.value.homeLoaded)
+        assertEquals(true, repo.state.value.today.single().read)
+
+        repo.markHomeRead("00000000000a", 1500, false)
+        assertEquals(false, repo.state.value.today.single().read, "unread at once")
+        advanceUntilIdle()
+        assertEquals("home.read" to json("""{"id":"00000000000a","at":1500,"read":false}"""), api.calls.last())
+
+        repo.loadArchived()
+        advanceUntilIdle()
+        assertEquals(listOf("Deleted 3 files."), repo.state.value.archived?.map { it.run.text })
+        repo.restoreHomeItem("0000000000cc", 900)
+        assertEquals(emptyList(), repo.state.value.archived)
+        advanceUntilIdle()
+        assertEquals("home.restore" to json("""{"id":"0000000000cc","at":900}"""), api.calls.last())
+        repo.closeArchived()
+        assertEquals(null, repo.state.value.archived)
+        scope.cancel()
+    }
 }

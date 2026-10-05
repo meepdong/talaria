@@ -56,6 +56,39 @@ class MainScreenTest {
     }
 
     @Test
+    fun archivedChatsLeaveTheListAndRecent() {
+        val state = ChatState(
+            conversations = listOf(
+                ConversationSummary("c-1", "hermes", "Trip plans", 1, 1_700_000_000, archived = true),
+                ConversationSummary("c-2", "hermes", "Groceries", 1, 1_600_000_000),
+            ),
+            listLoaded = true,
+        )
+        val view = chatView(state, false, true, status, 1_700_000_100_000)
+        assertEquals(listOf("c-2"), view.conversations.map { it.id })
+        assertEquals(listOf("c-1"), view.archived.map { it.id })
+        assertEquals(listOf("c-2"), homeView(view, 1_700_000_100_000).recent.map { it.id })
+    }
+
+    @Test
+    fun undoBarTakesTheSwipeBack() = runComposeUiTest {
+        val calls = mutableListOf<String>()
+        val actions = object : TalariaActions {
+            override fun pairWithLink(link: String, deviceName: String) {}
+            override fun pairWithCode(code: String, address: String, deviceName: String) {}
+            override fun cancelPairing() {}
+            override fun testConnection() {}
+            override fun reconnectNow() {}
+            override fun forgetServer() {}
+            override fun undo() { calls += "undo" }
+        }
+        setContent { TalariaTheme { MainScreen(screen().copy(undo = "Chat archived"), actions) } }
+        onNodeWithText("Chat archived").assertExists()
+        onNodeWithTag("undo").performClick()
+        assertEquals(listOf("undo"), calls)
+    }
+
+    @Test
     fun homeAndMenuMapping() {
         val s = screen()
         assertEquals(listOf("Trip plans", "Groceries"), s.home.recent.map { it.title })

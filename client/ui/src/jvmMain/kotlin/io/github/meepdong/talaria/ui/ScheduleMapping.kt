@@ -141,18 +141,26 @@ fun HomeView.withSchedule(state: ScheduleState?, nowMs: Long, zone: ZoneId = Zon
         if (at - nowMs > NEXT_UP_WINDOW_MS || a.`when` is When.AfterEvent) return@mapNotNull null
         NextItem(HM.format(Instant.ofEpochMilli(maxOf(at, nowMs)).atZone(zone)), a.name, untilLabel(at, nowMs, zone), automation = true) to at
     }
+    val today = now.toLocalDate()
     return copy(
-        day = s.today.map { r ->
-            val at = r.run.at
-            DayResult(r.name, r.run.text ?: r.run.error.orEmpty(), HM.format(Instant.ofEpochSecond(at).atZone(zone)),
-                failed = r.run.status == "error", conversationId = r.run.conversationId, id = r.id,
-                blocked = if (r.run.status == "blocked") r.run.blocked ?: "something" else null, at = at)
+        day = s.today.map { it.dayResult(zone) { t -> HM.format(t) } },
+        archived = s.archived?.map { r ->
+            r.dayResult(zone) { t -> if (t.toLocalDate() == today) "Today " + HM.format(t) else DATE_HM.format(t) }
         },
         nextUp = (events + runs).sortedBy { it.second }.take(NEXT_UP).map { it.first },
         automationsOn = s.automations.filter { !it.paused && it.state != "completed" }.map { automationItem(it, nowMs, zone) },
         automationsAvailable = s.available,
     )
 }
+
+
+private val DATE_HM = DateTimeFormatter.ofPattern("d MMM HH:mm")
+
+private fun AutomationRan.dayResult(zone: ZoneId, time: (java.time.ZonedDateTime) -> String) = DayResult(
+    name, run.text ?: run.error.orEmpty(), time(Instant.ofEpochSecond(run.at).atZone(zone)),
+    failed = run.status == "error", conversationId = run.conversationId, id = id,
+    blocked = if (run.status == "blocked") run.blocked ?: "something" else null, at = run.at, read = read,
+)
 
 /** A notification's text for a run. */
 fun AutomationRan.notificationText(): String = when (run.status) {

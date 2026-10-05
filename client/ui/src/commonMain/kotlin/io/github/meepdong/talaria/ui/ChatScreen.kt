@@ -38,6 +38,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -123,24 +124,48 @@ private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Com
         view.listMessage?.let {
             Text(it, Modifier.padding(16.dp).testTag("list-message"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        var showArchived by remember { mutableStateOf(false) }
         LazyColumn(Modifier.weight(1f).testTag("conversations")) {
             items(view.conversations, key = { it.id }) { c ->
                 ConversationRow(c, selected = c.id == view.openId, actions)
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
+            if (view.archived.isNotEmpty()) {
+                item(key = "archived-toggle") {
+                    TextButton(onClick = { showArchived = !showArchived },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("archived-chats")) {
+                        Text((if (showArchived) "Hide archived" else "Archived") + " (${view.archived.size})")
+                    }
+                }
+                if (showArchived) {
+                    items(view.archived, key = { "archived-${it.id}" }) { c ->
+                        ConversationRow(c, selected = c.id == view.openId, actions, archived = true)
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                    }
+                }
+            }
         }
     }
 }
 
-/** A chat in the list; long press (or right click) to rename, pin or delete it. */
+/**
+ * A chat in the list: swipe left to archive it (right on an archived one brings it back), right to pin it;
+ * long press (or right click) to rename, pin, archive or delete it.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ConversationRow(c: ConversationItem, selected: Boolean, actions: TalariaActions) {
+fun ConversationRow(c: ConversationItem, selected: Boolean, actions: TalariaActions, archived: Boolean = false) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    Box {
+    SwipeRow(
+        key = c.id,
+        left = if (archived) null else SwipeAction("Archive", SwipeColors.Archive) { actions.archiveConversation(c.id, true) },
+        right = if (archived) SwipeAction("Unarchive", SwipeColors.Read) { actions.archiveConversation(c.id, false) }
+                else SwipeAction(if (c.pinned) "Unpin" else "Pin", SwipeColors.Read) { actions.pinConversation(c.id, !c.pinned) },
+        modifier = Modifier.testTag("swipe-chat-${c.id}"),
+    ) { Box {
         Column(
             Modifier.fillMaxWidth().background(bg)
                 .combinedClickable(onLongClick = { menu = true }) { actions.openConversation(c.id) }
@@ -163,6 +188,8 @@ private fun ConversationRow(c: ConversationItem, selected: Boolean, actions: Tal
                 onClick = { menu = false; renaming = true })
             DropdownMenuItem(text = { Text(if (c.pinned) "Unpin" else "Pin to top") }, modifier = Modifier.testTag("chat-pin"),
                 onClick = { menu = false; actions.pinConversation(c.id, !c.pinned) })
+            DropdownMenuItem(text = { Text(if (archived) "Unarchive" else "Archive") }, modifier = Modifier.testTag("chat-archive"),
+                onClick = { menu = false; actions.archiveConversation(c.id, !archived) })
             DropdownMenuItem(
                 text = { Text(if (confirmDelete) "Tap again to delete" else "Delete", color = MaterialTheme.colorScheme.error) },
                 modifier = Modifier.testTag("chat-delete"),
@@ -177,7 +204,7 @@ private fun ConversationRow(c: ConversationItem, selected: Boolean, actions: Tal
                 },
             )
         }
-    }
+    } }
     if (renaming) {
         RenameDialog(c.title, onDone = { title ->
             renaming = false
@@ -199,6 +226,11 @@ private fun Conversation(
             Text(view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
             if (showBack) ConnectionDot(view, actions)
+            if (view.openId != null) {
+                IconButton(onClick = actions::newConversation, modifier = Modifier.testTag("new-chat-here")) {
+                    Icon(TalariaIcons.Plus, "New chat")
+                }
+            }
             view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions) }
             ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
             menu()

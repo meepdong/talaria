@@ -181,6 +181,26 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun archiveAndPutBack() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Hi","created_at":1,"updated_at":2}]}""") }
+        api.answers["conversations.archive"] = { p -> json("""{"conversation_id":"c-1","archived":${p["archived"]}}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.archive("c-1", true)
+        assertEquals(true, repo.state.value.conversations.single().archived, "off the list at once")
+        advanceUntilIdle()
+        assertEquals("conversations.archive" to json("""{"conversation_id":"c-1","archived":true}"""), api.calls.last())
+
+        api.answers["conversations.archive"] = { throw RpcException(-32000, "nope") }
+        repo.archive("c-1", false)
+        advanceUntilIdle()
+        assertEquals(true, repo.state.value.conversations.single().archived, "back as it was when the bridge refuses")
+    }
+
+    @Test
     fun aMessageSentWhileReconnectingShowsOnce() = chatTest { scope ->
         // issue 29: history reloaded after a reconnect can already hold a message this device is still sending
         val api = FakeApi()

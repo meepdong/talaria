@@ -132,10 +132,16 @@ private fun AddTodo(actions: TalariaActions, modifier: Modifier) {
     }
 }
 
-/** One to-do: tick it, or tap it to see its comments and decide what to do with it. */
+/** One to-do: tick it (or swipe right), swipe left to delete it, or tap it to see its comments and decide what to do. */
 @Composable
 private fun TodoEntry(t: TodoItem, open: Boolean, groups: List<String>, actions: TalariaActions, onToggle: () -> Unit) {
     Column(Modifier.fillMaxWidth().testTag("todo-entry-${t.id}")) {
+        SwipeRow(
+            key = t.id,
+            left = SwipeAction("Delete", SwipeColors.Delete) { actions.deleteTodo(t.id) },
+            right = SwipeAction(if (t.done) "Not done" else "Done", SwipeColors.Done) { actions.setTodoDone(t.id, !t.done) },
+            modifier = Modifier.testTag("swipe-todo-${t.id}"),
+        ) {
         Row(
             Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onToggle).testTag("todo-row-${t.id}"),
             verticalAlignment = Alignment.CenterVertically,
@@ -159,6 +165,7 @@ private fun TodoEntry(t: TodoItem, open: Boolean, groups: List<String>, actions:
                 }
             }
             Text(if (open) "▴" else "▾", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
+        }
         }
         if (open) TodoDetails(t, groups, actions)
     }

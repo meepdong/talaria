@@ -1,5 +1,20 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -281,8 +296,17 @@ fun NeedsYouCard(home: HomeView, actions: TalariaActions) {
                 if (i > 0 || home.approvals.isNotEmpty()) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
                 }
+                // approvals above never swipe: allowing or denying stays a deliberate tap
+                SwipeRow(
+                    key = "${d.id}@${d.at}",
+                    left = SwipeAction("Archive", SwipeColors.Archive) { actions.dismissHomeItem(d.id, d.at) },
+                    right = SwipeAction(if (d.read) "Mark unread" else "Mark read", SwipeColors.Read) { actions.markHomeRead(d.id, d.at, !d.read) },
+                    modifier = Modifier.testTag("swipe-blocked-${d.id}"),
+                ) { Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    UnreadDot(!d.read, Modifier.padding(end = 8.dp))
+                    Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f),
+                        fontWeight = if (d.read) FontWeight.Normal else FontWeight.Bold)
                     Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text("Hermes needed your approval for ${d.blocked}, and nobody was there to give it.",
@@ -292,40 +316,190 @@ fun NeedsYouCard(home: HomeView, actions: TalariaActions) {
                         Text("Run in chat")
                     }
                     OutlinedButton(onClick = { actions.dismissHomeItem(d.id, d.at) }, modifier = Modifier.testTag("dismiss-${d.id}")) {
-                        Text("Dismiss")
+                        Text("Archive")
                     }
                 }
+                } }
             }
         }
     }
 }
 
-/** Today's finished results. [tile] adds Home's rearranging. */
+/**
+ * Today's finished results, as two-line previews with a dot while unread (UX1): tap for the whole result, swipe left
+ * to archive, right to mark read or unread, long-press for everything. [tile] adds Home's rearranging.
+ */
 @Composable
 fun YourDayCard(home: HomeView, actions: TalariaActions, m: Modifier, tile: TileChrome = TileChrome()) {
     val done = home.day.filter { it.blocked == null }
-    SectionCard("Your day", modifier = m.testTag("your-day"), trailing = tile.trailing ?: {}, onTitleLongClick = tile.onTitleLongClick) {
+    var openKey by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    val open = { d: DayResult ->
+        openKey = d.id to d.at
+        if (!d.read) actions.markHomeRead(d.id, d.at, true)
+    }
+    SectionCard("Your day", modifier = m.testTag("your-day"), onTitleLongClick = tile.onTitleLongClick,
+        trailing = tile.trailing ?: { DayMenu(done, actions) }) {
         if (done.isEmpty()) {
             Text("Nothing yet today. Results from automations that report to Home show up here.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         done.forEachIndexed { i, d ->
-            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (d.text.isNotBlank()) {
-                if (d.failed) {
-                    Text(d.text, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
-                } else {
-                    ResultText(d.text, Modifier.padding(top = 4.dp).testTag("result-${d.id}"))
-                }
-            }
-            d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            DayRow(d, actions, onOpen = { open(d) })
+        }
+    }
+    val shown = openKey?.let { (id, at) -> (home.day + home.archived.orEmpty()).firstOrNull { it.id == id && it.at == at } }
+    shown?.let { d -> ResultSheet(d, actions, onClose = { openKey = null }) }
+    // archived on another device while open: close it, so it doesn't pop up again if it comes back
+    LaunchedEffect(openKey, shown == null) { if (shown == null) openKey = null }
+    home.archived?.let { ArchivedResults(it, actions, onOpen = open) }
+}
+
+/** Your day's ⋮: Mark all read, Archive read, Archived. */
+@Composable
+private fun DayMenu(done: List<DayResult>, actions: TalariaActions) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menu = true }, modifier = Modifier.testTag("day-menu")) {
+            Text("⋮", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { contentDescription = "More for Your day" })
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("Mark all read") }, enabled = done.any { !it.read },
+                modifier = Modifier.testTag("day-all-read"), onClick = { menu = false; actions.markAllHomeRead() })
+            DropdownMenuItem(text = { Text("Archive read") }, enabled = done.any { it.read },
+                modifier = Modifier.testTag("day-archive-read"), onClick = { menu = false; actions.archiveReadHome() })
+            DropdownMenuItem(text = { Text("Archived…") }, modifier = Modifier.testTag("day-archived"),
+                onClick = { menu = false; actions.showArchivedHome(true) })
         }
     }
 }
+
+/** One result: name and time, then two lines of it; bold with a dot while unread. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DayRow(d: DayResult, actions: TalariaActions, onOpen: () -> Unit) {
+    var menu by remember(d.id, d.at) { mutableStateOf(false) }
+    SwipeRow(
+        key = "${d.id}@${d.at}",
+        left = SwipeAction("Archive", SwipeColors.Archive) { actions.dismissHomeItem(d.id, d.at) },
+        right = SwipeAction(if (d.read) "Mark unread" else "Mark read", SwipeColors.Read) { actions.markHomeRead(d.id, d.at, !d.read) },
+        modifier = Modifier.testTag("day-${d.id}"),
+    ) {
+        Box {
+            Row(
+                Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }, onClick = onOpen)
+                    .padding(vertical = 10.dp).testTag("day-open-${d.id}"),
+            ) {
+                UnreadDot(!d.read, Modifier.padding(top = 6.dp, end = 10.dp).then(if (!d.read) Modifier.testTag("unread-${d.id}") else Modifier))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(d.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontWeight = if (d.read) FontWeight.Normal else FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp))
+                    }
+                    if (d.text.isNotBlank()) {
+                        Text(previewText(d.text), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp).testTag("result-${d.id}"))
+                    }
+                }
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Open") }, onClick = { menu = false; onOpen() })
+                DropdownMenuItem(text = { Text(if (d.read) "Mark unread" else "Mark read") }, modifier = Modifier.testTag("day-read-${d.id}"),
+                    onClick = { menu = false; actions.markHomeRead(d.id, d.at, !d.read) })
+                DropdownMenuItem(text = { Text("Archive") }, modifier = Modifier.testTag("day-archive-${d.id}"),
+                    onClick = { menu = false; actions.dismissHomeItem(d.id, d.at) })
+                DropdownMenuItem(text = { Text("Ask Hermes about this") }, modifier = Modifier.testTag("day-ask-${d.id}"),
+                    onClick = { menu = false; actions.askAboutResult(d.id, d.at) })
+                DropdownMenuItem(text = { Text("Stop sending these to Home") }, modifier = Modifier.testTag("day-mute-${d.id}"),
+                    onClick = { menu = false; actions.setAutomationResultTo(d.id, "log") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnreadDot(unread: Boolean, modifier: Modifier = Modifier) {
+    Box(modifier.size(8.dp).background(if (unread) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+        .semantics { if (unread) contentDescription = "Unread" })
+}
+
+/** A whole result, opened from Your day or Archived: what it said, then where to take it. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ResultSheet(d: DayResult, actions: TalariaActions, onClose: () -> Unit) {
+    @Suppress("DEPRECATION") val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onClose,
+        modifier = Modifier.testTag("result-sheet"),
+        title = {
+            Column {
+                Text(d.name, style = MaterialTheme.typography.titleMedium)
+                Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                if (d.failed) Text(d.text, color = MaterialTheme.colorScheme.error) else MarkdownText(d.text.trim())
+            }
+        },
+        confirmButton = {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)) {
+                TextButton(onClick = { onClose(); actions.askAboutResult(d.id, d.at) }, modifier = Modifier.testTag("sheet-ask")) {
+                    Text("Ask Hermes about this")
+                }
+                d.conversationId?.let { c ->
+                    TextButton(onClick = { onClose(); actions.openConversation(c) }, modifier = Modifier.testTag("sheet-open-chat")) { Text("Open chat") }
+                }
+                TextButton(onClick = { clipboard.setText(AnnotatedString(d.text)) }, modifier = Modifier.testTag("sheet-copy")) { Text("Copy") }
+                TextButton(onClick = onClose, modifier = Modifier.testTag("sheet-close")) { Text("Close") }
+            }
+        },
+    )
+}
+
+/** What was archived off Home in the last month: open one again, or put it back. */
+@Composable
+private fun ArchivedResults(items: List<DayResult>, actions: TalariaActions, onOpen: (DayResult) -> Unit) {
+    AlertDialog(
+        onDismissRequest = { actions.showArchivedHome(false) },
+        modifier = Modifier.testTag("archived-results"),
+        title = { Text("Archived") },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                if (items.isEmpty()) Text("Nothing archived in the last 30 days.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                items.forEachIndexed { i, d ->
+                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth().clickable { onOpen(d) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(d.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(d.time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (d.text.isNotBlank()) {
+                                Text(previewText(d.text), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        TextButton(onClick = { actions.restoreHomeItem(d.id, d.at) }, modifier = Modifier.testTag("restore-${d.id}")) {
+                            Text("Restore")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { actions.showArchivedHome(false) }) { Text("Close") } },
+    )
+}
+
+/** A result's first words as plain text: Markdown marks and line breaks out, for a two-line preview. */
+fun previewText(text: String): String = text.lineSequence()
+    .map { it.trim().removePrefix(">").trim().replace(Regex("^(#{1,6}|[-*+]|\\d+[.)])\\s+"), "") }
+    .filter { it.isNotEmpty() && !it.all { c -> c == '-' || c == '*' || c == '_' } }
+    .joinToString(" ")
+    .replace(Regex("\\*\\*|__|`"), "")
+    .replace(Regex("\\[([^]]*)]\\([^)]*\\)"), "$1")
 
 @Composable
 fun NextUpCard(home: HomeView, m: Modifier, tile: TileChrome = TileChrome()) {

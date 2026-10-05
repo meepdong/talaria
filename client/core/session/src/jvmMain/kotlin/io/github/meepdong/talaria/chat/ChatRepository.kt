@@ -214,6 +214,25 @@ class ChatRepository(
         }
     }
 
+    /** Take a chat off the list, or put it back. Nothing is deleted: Hermes keeps the session. */
+    fun archive(conversationId: String, archived: Boolean) {
+        fun set(on: Boolean) = _state.update { s -> s.copy(conversations = s.conversations.map { if (it.id == conversationId) it.copy(archived = on) else it }) }
+        set(archived)
+        scope.launch {
+            try {
+                api.request("conversations.archive", buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("archived", archived)
+                })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                set(!archived)
+                notice("Couldn't ${if (archived) "archive" else "unarchive"}: ${e.message}")
+            }
+        }
+    }
+
     fun pin(conversationId: String, pinned: Boolean) {
         fun set(on: Boolean) = _state.update { s -> s.copy(conversations = s.conversations.map { if (it.id == conversationId) it.copy(pinned = on) else it }) }
         set(pinned)
@@ -982,6 +1001,7 @@ class ChatRepository(
             model = parseModel(c.obj("model")),
             queuedTurnIds = (c["queued_turn_ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
             pinned = (c["pinned"] as? JsonPrimitive)?.content == "true",
+            archived = (c["archived"] as? JsonPrimitive)?.content == "true",
         )
     }
 

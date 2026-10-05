@@ -48,7 +48,8 @@ CRON_DOW = {"mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6, "sun": 0
 DAY_NAMES = {"mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"}
 RESULT_TO = ("home", "chat", "log")
 HHMM = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
-DISMISSED_KEPT_S = 3 * 86400  # Home only shows today's runs
+DISMISSED_KEPT_S = 30 * 86400  # archived runs can be read and restored for a month
+MAX_ARCHIVED = 100
 JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 SCHEMA = """
@@ -77,6 +78,11 @@ CREATE TABLE IF NOT EXISTS automation_seen (
     status TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS home_dismissed (
+    job_id TEXT NOT NULL,
+    run_at INTEGER NOT NULL,
+    PRIMARY KEY (job_id, run_at)
+);
+CREATE TABLE IF NOT EXISTS home_read (
     job_id TEXT NOT NULL,
     run_at INTEGER NOT NULL,
     PRIMARY KEY (job_id, run_at)
@@ -121,6 +127,10 @@ Give the job a short name. If the request is unclear or can't be scheduled, don'
 RUN_IN_CHAT_PROMPT = """Run my automation "{name}" now, here in our chat, so I can approve anything it needs.
 
 {task}"""
+
+RUN_IN_CHAT_LAST = """
+
+Its last run ({when}) {what}"""
 
 
 class AutomationError(Exception):
@@ -328,7 +338,33 @@ class AutomationStore:
 
     def dismiss(self, job_id: str, run_at: int) -> None:
         self.db.execute("INSERT OR REPLACE INTO home_dismissed (job_id, run_at) VALUES (?, ?)", (job_id, run_at))
-        self.db.execute("DELETE FROM home_dismissed WHERE run_at < ?", (int(time.time()) - DISMISSED_KEPT_S,))
+        self._forget_old()
+
+    def restore(self, job_id: str, run_at: int) -> None:
+        self.db.execute("DELETE FROM home_dismissed WHERE job_id = ? AND run_at = ?", (job_id, run_at))
+
+    def is_read(self, job_id: str, run_at: int) -> bool:
+        r = self.db.execute("SELECT 1 FROM home_read WHERE job_id = ? AND run_at = ?", (job_id, run_at)).fetchone()
+        return r is not None
+
+    def set_read(self, job_id: str, run_at: int, read: bool) -> None:
+        if read:
+            self.db.execute("INSERT OR REPLACE INTO home_read (job_id, run_at) VALUES (?, ?)", (job_id, run_at))
+        else:
+            self.db.execute("DELETE FROM home_read WHERE job_id = ? AND run_at = ?", (job_id, run_at))
+        self._forget_old()
+
+    def archived(self) -> list[tuple[str, dict]]:
+        """Archived runs of the last month that are still in the run log, newest first."""
+        rows = self.db.execute(
+            "SELECT r.* FROM automation_runs r JOIN home_dismissed d ON d.job_id = r.job_id AND d.run_at = r.at"
+            " WHERE r.at >= ? ORDER BY r.at DESC LIMIT ?", (int(time.time()) - DISMISSED_KEPT_S, MAX_ARCHIVED)).fetchall()
+        return [(r["job_id"], _run(r)) for r in rows]
+
+    def _forget_old(self) -> None:
+        old = int(time.time()) - DISMISSED_KEPT_S
+        self.db.execute("DELETE FROM home_dismissed WHERE run_at < ?", (old,))
+        self.db.execute("DELETE FROM home_read WHERE run_at < ?", (old,))
 
 
 def _run(r: sqlite3.Row) -> dict:
@@ -565,7 +601,10 @@ class Automations:
             raise AutomationError(m.CONFLICT, "This automation has no task to run in a chat")
         latest = self.store.runs(job["id"], 1)
         blocked = (job["id"], latest[0]["at"]) if latest and latest[0]["status"] == "blocked" else None
-        return agent_id, RUN_IN_CHAT_PROMPT.format(name=item["name"], task=task), blocked
+        text = RUN_IN_CHAT_PROMPT.format(name=item["name"], task=task)
+        if latest:
+            text += last_run_note(latest[0])
+        return agent_id, text, blocked
 
     async def delete(self, p: dict) -> dict:
         agent_id, job = await self._find(p.get("id"))
@@ -669,9 +708,18 @@ class Automations:
             if job_id in done or run["status"] == "nothing":
                 continue
             if (job_id in home or run["status"] == "blocked") and not self.store.is_dismissed(job_id, run["at"]):
-                results.append({"id": job_id, "name": names.get(job_id, "Automation")[:MAX_NAME], "run": run})
+                item = {"id": job_id, "name": names.get(job_id, "Automation")[:MAX_NAME], "run": run}
+                if self.store.is_read(job_id, run["at"]):
+                    item["read"] = True
+                results.append(item)
             done.add(job_id)  # only the latest run counts
         return {"date": today.isoformat(), "results": results}
+
+    def archived(self, p: dict) -> dict:
+        """home.archived: what was archived off Home in the last month, to read again or restore."""
+        names = {str(j.get("id")): str(j.get("name") or "Untitled") for jobs in self._jobs.values() for j in jobs}
+        return {"results": [{"id": job_id, "name": names.get(job_id, "Automation")[:MAX_NAME], "run": run}
+                            for job_id, run in self.store.archived()]}
 
     # watching Hermes
 
@@ -751,19 +799,33 @@ class Automations:
         return sessions[0], (replies[-1].strip() if replies else ""), blocked_reason(rows)
 
     async def dismiss(self, p: dict) -> dict:
-        """home.dismiss: take one run off Home on every device."""
-        job_id, run_at = p.get("id"), p.get("at")
-        if not (isinstance(job_id, str) and JOB_ID.match(job_id)):
-            raise _invalid("id must be an automation id")
-        if not (isinstance(run_at, int) and not isinstance(run_at, bool) and run_at >= 0):
-            raise _invalid("at must be a non-negative integer")
-        await self.dismiss_run(job_id, run_at)
+        """home.dismiss: archive one run off Home on every device."""
+        await self.dismiss_run(*_home_run(p))
         return {}
+
+    async def restore(self, p: dict) -> dict:
+        """home.restore: put an archived run back (Home shows it again if it's still today's latest)."""
+        self.store.restore(*_home_run(p))
+        await self._home_changed()
+        return {}
+
+    async def mark_read(self, p: dict) -> dict:
+        """home.read: mark one run read (or unread with read: false) on every device."""
+        job_id, run_at = _home_run(p)
+        read = p.get("read", True)
+        if not isinstance(read, bool):
+            raise _invalid("read must be true or false")
+        self.store.set_read(job_id, run_at, read)
+        await self._home_changed()
+        return {}
+
+    async def _home_changed(self) -> None:
+        if self.notify is not None:
+            await self.notify(m.notification("home.changed", self.home({})))
 
     async def dismiss_run(self, job_id: str, run_at: int) -> None:
         self.store.dismiss(job_id, run_at)
-        if self.notify is not None:
-            await self.notify(m.notification("home.changed", self.home({})))
+        await self._home_changed()
 
     async def handle(self, method: str, p: dict) -> dict:
         if method == "automations.list":
@@ -786,9 +848,42 @@ class Automations:
             return self.home(p)
         if method == "home.dismiss":
             return await self.dismiss(p)
+        if method == "home.restore":
+            return await self.restore(p)
+        if method == "home.read":
+            return await self.mark_read(p)
+        if method == "home.archived":
+            return self.archived(p)
         raise AutomationError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
 AUTOMATION_METHODS = frozenset({"automations.list", "automations.add", "automations.describe", "automations.update",
                                 "automations.run", "automations.delete", "automations.runs", "calendar.day",
-                                "home.get", "home.dismiss"})
+                                "home.get", "home.dismiss", "home.restore", "home.read", "home.archived"})
+
+
+def last_run_note(run: dict) -> str:
+    """What Hermes is told about the run before, so "run it again" comes with why it's being run again."""
+    when = dt.datetime.fromtimestamp(run["at"]).strftime("%-d %b %H:%M")
+    if run["status"] == "blocked":
+        what = f"was blocked: it needed my approval for {run.get('blocked') or 'something'}, and I wasn't there."
+    elif run["status"] == "error":
+        what = f"failed: {run.get('error') or 'no reason given'}"
+    elif run.get("text"):
+        what = "answered:\n" + "\n".join("> " + line for line in run["text"].strip()[:MAX_LAST_RUN].splitlines())
+    else:
+        return ""
+    return RUN_IN_CHAT_LAST.format(when=when, what=what)
+
+
+MAX_LAST_RUN = 4000
+
+
+def _home_run(p: dict) -> tuple[str, int]:
+    """The run a home.* request names: the automation's id and the run's time."""
+    job_id, run_at = p.get("id"), p.get("at")
+    if not (isinstance(job_id, str) and JOB_ID.match(job_id)):
+        raise _invalid("id must be an automation id")
+    if not (isinstance(run_at, int) and not isinstance(run_at, bool) and run_at >= 0):
+        raise _invalid("at must be a non-negative integer")
+    return job_id, run_at

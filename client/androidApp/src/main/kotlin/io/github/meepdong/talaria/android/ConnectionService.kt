@@ -91,6 +91,11 @@ class ConnectionService : Service() {
             }
         }
 
+        // A result read or archived on any device takes its notification with it.
+        scope.launch {
+            controller.homeUnread.collect { unread -> AutomationNotifier.keepOnly(this@ConnectionService, unread) }
+        }
+
         // Server operations waiting for approval: a notification each until answered (PROTOCOL §10.8).
         scope.launch {
             controller.opsPending.collect { pending -> OpsNotifier.update(this@ConnectionService, pending) }
@@ -111,6 +116,11 @@ class ConnectionService : Service() {
             val request = intent.getStringExtra(OpsNotifier.EXTRA_REQUEST)
             val choice = intent.getStringExtra(OpsNotifier.EXTRA_CHOICE)
             if (request != null && (choice == "once" || choice == "deny")) controller.opsApprove(request, choice)
+        }
+        if (intent?.action == AutomationNotifier.ACTION_READ) {
+            val id = intent.getStringExtra(AutomationNotifier.EXTRA_ID)
+            val at = intent.getLongExtra(AutomationNotifier.EXTRA_AT, -1)
+            if (id != null && at >= 0) controller.markHomeRead(id, at, true)
         }
         if (intent?.action == ReplyNotifier.ACTION_REPLY) {
             val conv = intent.getStringExtra(ReplyNotifier.EXTRA_CONVERSATION)

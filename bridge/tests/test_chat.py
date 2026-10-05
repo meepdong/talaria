@@ -360,6 +360,18 @@ async def test_pin_and_hide(chat_bridge):
     listed = check("conversations.list.result", await call(phone, "l1", "conversations.list"))["result"]
     assert listed["conversations"][0]["pinned"] is True
 
+    check("conversations.archive", m.request("a", "conversations.archive", {"conversation_id": conv, "archived": True}))
+    archived = check("conversations.result", await call(phone, "a1", "conversations.archive",
+                                                        {"conversation_id": conv, "archived": True}))
+    assert archived["result"] == {"conversation_id": conv, "archived": True}
+    listed = check("conversations.list.result", await call(laptop, "l2", "conversations.list"))["result"]
+    assert listed["conversations"][0]["archived"] is True, "kept, and marked for every device"
+    assert conv[2:] and hermes.sessions[f"talaria_{conv[2:]}"], "Hermes keeps the session"
+    res2 = (await call(phone, "c2", "chat.send", {"conversation_id": conv, "text": "Back again"}))["result"]
+    await until_done(phone, res2["turn_id"])
+    listed = (await call(phone, "l3", "conversations.list"))["result"]
+    assert "archived" not in listed["conversations"][0], "writing in it brings it back"
+
     before = (await call(phone, "h1", "chat.history", {"conversation_id": conv}))["result"]["messages"]
     question = next(x for x in before if x["role"] == "user")
     check("chat.hide", m.request("x", "chat.hide", {"conversation_id": conv, "message_ids": [question["id"]]}))
