@@ -46,6 +46,9 @@ sealed interface Screen {
 /** The pages in the menu bar. */
 enum class Tab(val label: String) { HOME("Home"), CHATS("Chats"), TODOS("To-dos"), FILES("Files"), SCHEDULE("Schedule") }
 
+/** Home's movable tiles, in the default order. "Needs you" isn't one: it stays on top while something waits. */
+enum class HomeTile(val label: String) { DAY("Your day"), NEXT("Next up"), AUTOMATIONS("Automations on"), TODOS("To do"), RECENT("Recent chats") }
+
 /** The Home page: today at a glance. */
 data class HomeView(
     /** "Monday 5 October". */
@@ -69,6 +72,10 @@ data class HomeView(
     val automationsOn: List<AutomationItem> = emptyList(),
     /** False when the bridge has no automations, which hides those cards. */
     val automationsAvailable: Boolean = true,
+    /** The tiles below "Needs you", in this device's order. */
+    val order: List<HomeTile> = HomeTile.entries,
+    /** Rearranging: each tile shows ↑ and ↓, and Home a Done button. */
+    val arranging: Boolean = false,
 )
 
 /** A to-do on Home (spec/README.md §13). */
@@ -257,6 +264,13 @@ interface TalariaActions {
 
     /** The mic button: say something to Hermes and hear the answer, in a new chat. */
     fun talk() {}
+
+    // Home's tiles, ordered per device
+
+    /** A long-press on a tile's title. */
+    fun startArrangingHome() {}
+    fun moveHomeTile(tile: HomeTile, up: Boolean) {}
+    fun doneArrangingHome() {}
 
     // Files (§12)
 

@@ -255,6 +255,24 @@ private fun Field(label: String, value: String, tag: String, minLines: Int = 1, 
  */
 @Composable
 fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
+    NeedsYouCard(home, actions)
+    if (!home.automationsAvailable) return
+    if (wide) {
+        YourDayCard(home, actions, Modifier.fillMaxWidth().widthIn(max = 1120.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.widthIn(max = 1120.dp)) {
+            NextUpCard(home, Modifier.weight(1f))
+            AutomationsOnCard(home, actions, Modifier.weight(1f))
+        }
+    } else {
+        YourDayCard(home, actions, Modifier.fillMaxWidth())
+        NextUpCard(home, Modifier.fillMaxWidth())
+        AutomationsOnCard(home, actions, Modifier.fillMaxWidth())
+    }
+}
+
+/** Blocked runs and server approvals, while any wait; Home keeps it on top. */
+@Composable
+fun NeedsYouCard(home: HomeView, actions: TalariaActions) {
     val blocked = home.day.filter { it.blocked != null }
     if (blocked.isNotEmpty() || home.approvals.isNotEmpty()) {
         SectionCard("Needs you", modifier = Modifier.fillMaxWidth().widthIn(max = 1120.dp).testTag("needs-you")) {
@@ -280,68 +298,63 @@ fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
             }
         }
     }
-    if (!home.automationsAvailable) return
+}
+
+/** Today's finished results. [tile] adds Home's rearranging. */
+@Composable
+fun YourDayCard(home: HomeView, actions: TalariaActions, m: Modifier, tile: TileChrome = TileChrome()) {
     val done = home.day.filter { it.blocked == null }
-    val your: @Composable (Modifier) -> Unit = { m ->
-        SectionCard("Your day", modifier = m.testTag("your-day")) {
-            if (done.isEmpty()) {
-                Text("Nothing yet today. Results from automations that report to Home show up here.",
+    SectionCard("Your day", modifier = m.testTag("your-day"), trailing = tile.trailing ?: {}, onTitleLongClick = tile.onTitleLongClick) {
+        if (done.isEmpty()) {
+            Text("Nothing yet today. Results from automations that report to Home show up here.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        done.forEachIndexed { i, d ->
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (d.text.isNotBlank()) {
+                Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp))
+            }
+            d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
+        }
+    }
+}
+
+@Composable
+fun NextUpCard(home: HomeView, m: Modifier, tile: TileChrome = TileChrome()) {
+    SectionCard("Next up", modifier = m.testTag("next-up"), trailing = tile.trailing ?: {}, onTitleLongClick = tile.onTitleLongClick) {
+        if (home.nextUp.isEmpty()) Text("Nothing coming up.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        home.nextUp.forEach { n ->
+            Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(n.time, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(56.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            done.forEachIndexed { i, d ->
-                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (d.text.isNotBlank()) {
-                    Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(top = 4.dp))
-                }
-                d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
+                Text((if (n.automation) "⚙ " else "") + n.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                Text(n.until, style = MaterialTheme.typography.labelMedium, color = Brand.Blue)
             }
         }
     }
-    val next: @Composable (Modifier) -> Unit = { m ->
-        SectionCard("Next up", modifier = m.testTag("next-up")) {
-            if (home.nextUp.isEmpty()) Text("Nothing coming up.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            home.nextUp.forEach { n ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(n.time, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(56.dp),
+}
+
+@Composable
+fun AutomationsOnCard(home: HomeView, actions: TalariaActions, m: Modifier, tile: TileChrome = TileChrome()) {
+    SectionCard("Automations on", modifier = m.testTag("automations-on"), onTitleLongClick = tile.onTitleLongClick,
+        trailing = tile.trailing ?: { OutlinedButton(onClick = { actions.selectTab(Tab.SCHEDULE) }) { Text("Schedule") } }) {
+        if (home.automationsOn.isEmpty()) Text("None on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        home.automationsOn.forEach { a ->
+            Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(a.schedule, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text((if (n.automation) "⚙ " else "") + n.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f))
-                    Text(n.until, style = MaterialTheme.typography.labelMedium, color = Brand.Blue)
                 }
+                a.next?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Brand.Blue) }
             }
         }
-    }
-    val on: @Composable (Modifier) -> Unit = { m ->
-        SectionCard("Automations on", modifier = m.testTag("automations-on"),
-            trailing = { OutlinedButton(onClick = { actions.selectTab(Tab.SCHEDULE) }) { Text("Schedule") } }) {
-            if (home.automationsOn.isEmpty()) Text("None on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            home.automationsOn.forEach { a ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(a.schedule, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    a.next?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Brand.Blue) }
-                }
-            }
-        }
-    }
-    if (wide) {
-        your(Modifier.fillMaxWidth().widthIn(max = 1120.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.widthIn(max = 1120.dp)) {
-            next(Modifier.weight(1f))
-            on(Modifier.weight(1f))
-        }
-    } else {
-        your(Modifier.fillMaxWidth())
-        next(Modifier.fillMaxWidth())
-        on(Modifier.fillMaxWidth())
     }
 }
 

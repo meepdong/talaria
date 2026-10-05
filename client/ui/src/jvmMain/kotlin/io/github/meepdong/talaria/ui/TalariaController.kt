@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
@@ -116,6 +117,8 @@ class TalariaController(
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
         val modelQuery: String? = null,
+        /** Home's tiles are being rearranged (long-press on a tile's title). */
+        val arrangingHome: Boolean = false,
     )
 
     private val mode = MutableStateFlow<Mode>(Mode.Connect(defaultDeviceName))
@@ -123,6 +126,8 @@ class TalariaController(
     private val network = MutableStateFlow<NetworkStatus?>(null)
     private val tick = MutableStateFlow(nowMs())
     private val page = MutableStateFlow(Page())
+    /** Home's tile order on this device; outside [Page], which opening a chat resets. */
+    private val homeOrder = MutableStateFlow(homeOrder(prefs.getString(PREF_HOME_ORDER, "")))
     private val images = ImageCache(imageDecoder)
 
     /** Photos and files picked for the next message. */
@@ -181,14 +186,15 @@ class TalariaController(
         val entries: List<ConnectionLog.Entry>, val net: NetworkStatus?, val test: TestView?, val page: Page,
         val pending: List<OutgoingFile>, val canAttach: Boolean, val voice: VoiceView,
         val serverPending: List<ServerFile> = emptyList(), val fileTask: FileTask = FileTask(), val canShare: Boolean = false,
+        val homeOrder: List<HomeTile> = HomeTile.entries,
     )
 
     private val extras = combine(
         combine(log.entries, network, test, page) { e, n, t, p -> Quad(e, n, t, p) },
-        combine(pending, pendingServer, fileTask) { a, b, c -> Triple(a, b, c) }, picker, voice, speechInput,
+        combine(pending, pendingServer, fileTask, homeOrder) { a, b, c, d -> Quad(a, b, c, d) }, picker, voice, speechInput,
     ) { q, files, pick, v, input ->
-        Extras(q.a, q.b, q.c, q.d, files.first, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
-            files.second, files.third, canShare = textSharer != null)
+        Extras(q.a, q.b, q.c, q.d, files.a, pick != null, v.copy(canDictate = input != null, canSpeak = speechOutput != null),
+            files.b, files.c, canShare = textSharer != null, homeOrder = files.d)
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
@@ -357,7 +363,7 @@ class TalariaController(
     }
 
     override fun selectTab(tab: Tab) {
-        page.update { it.copy(tab = tab, status = false, menuOpen = false) }
+        page.update { it.copy(tab = tab, status = false, menuOpen = false, arrangingHome = false) }
         if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
         if (tab == Tab.TODOS) todos?.refresh()
         if (tab == Tab.FILES) files?.load()
@@ -637,6 +643,19 @@ class TalariaController(
 
     override fun dismissHomeItem(id: String, at: Long) {
         schedule?.dismissHomeItem(id, at)
+    }
+
+    override fun startArrangingHome() {
+        page.update { it.copy(arrangingHome = true) }
+    }
+
+    override fun moveHomeTile(tile: HomeTile, up: Boolean) {
+        val order = homeOrder.updateAndGet { it.moved(tile, up) }
+        prefs.setString(PREF_HOME_ORDER, order.joinToString(",") { it.name })
+    }
+
+    override fun doneArrangingHome() {
+        page.update { it.copy(arrangingHome = false) }
     }
 
     /** The platform's file picker: set while the app can show it, null otherwise. */
@@ -926,7 +945,7 @@ class TalariaController(
                     view, withBalance,
                     tab = x.page.tab,
                     tabs = TABS,
-                    home = homeView(view, now, l.todos).withSchedule(l.schedule, now),
+                    home = homeView(view, now, l.todos).copy(order = x.homeOrder, arranging = x.page.arrangingHome).withSchedule(l.schedule, now),
                     menu = menuView(view, withBalance, l.chat?.models, VERSION),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
@@ -949,6 +968,8 @@ class TalariaController(
 
         const val PREF_READ_ALOUD = "voice.read_aloud"
         const val PREF_AUTO_SEND = "voice.auto_send"
+        /** Home's tile order on this device, as "DAY,NEXT,…" (see [homeOrder]). */
+        const val PREF_HOME_ORDER = "home.order"
 
         /** [VoiceView.speakingKey] while a reply is read aloud on its own. */
         const val READ_ALOUD_KEY = "read-aloud"

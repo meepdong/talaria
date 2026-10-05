@@ -49,4 +49,6 @@ class TalariaApplication : Application() {
 private class SharedPrefs(private val prefs: android.content.SharedPreferences) : Prefs {
     override fun get(key: String, default: Boolean) = prefs.getBoolean(key, default)
     override fun set(key: String, value: Boolean) = prefs.edit().putBoolean(key, value).apply()
+    override fun getString(key: String, default: String) = prefs.getString(key, default) ?: default
+    override fun setString(key: String, value: String) = prefs.edit().putString(key, value).apply()
 }

@@ -112,3 +112,17 @@ const val RECENT_CHATS = 5
 
 /** Open to-dos on Home; the To-dos page has the rest. */
 const val HOME_TODOS = 5
+
+/** A saved tile order ("DAY,NEXT,…"): unknown names are skipped, and tiles it doesn't name follow in the default order. */
+fun homeOrder(saved: String): List<HomeTile> {
+    val named = saved.split(",").mapNotNull { n -> HomeTile.entries.firstOrNull { it.name == n.trim() } }.distinct()
+    return named + HomeTile.entries.filterNot { it in named }
+}
+
+/** [tile] one place up or down; at either end nothing changes. */
+fun List<HomeTile>.moved(tile: HomeTile, up: Boolean): List<HomeTile> {
+    val i = indexOf(tile)
+    val j = if (up) i - 1 else i + 1
+    if (i < 0 || j !in indices) return this
+    return toMutableList().apply { add(j, removeAt(i)) }
+}

@@ -27,10 +27,16 @@ interface Prefs {
     fun get(key: String, default: Boolean): Boolean
     fun set(key: String, value: Boolean)
 
+    fun getString(key: String, default: String): String
+    fun setString(key: String, value: String)
+
     class Memory : Prefs {
         private val values = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        private val strings = java.util.concurrent.ConcurrentHashMap<String, String>()
         override fun get(key: String, default: Boolean) = values[key] ?: default
         override fun set(key: String, value: Boolean) { values[key] = value }
+        override fun getString(key: String, default: String) = strings[key] ?: default
+        override fun setString(key: String, value: String) { strings[key] = value }
     }
 
     /** A properties file, for the desktop. */
@@ -41,8 +47,12 @@ interface Prefs {
 
         @Synchronized override fun get(key: String, default: Boolean) = props.getProperty(key)?.toBoolean() ?: default
 
-        @Synchronized override fun set(key: String, value: Boolean) {
-            props.setProperty(key, value.toString())
+        @Synchronized override fun set(key: String, value: Boolean) = setString(key, value.toString())
+
+        @Synchronized override fun getString(key: String, default: String) = props.getProperty(key) ?: default
+
+        @Synchronized override fun setString(key: String, value: String) {
+            props.setProperty(key, value)
             runCatching {
                 file.parentFile?.mkdirs()
                 file.outputStream().use { props.store(it, "Talaria settings") }

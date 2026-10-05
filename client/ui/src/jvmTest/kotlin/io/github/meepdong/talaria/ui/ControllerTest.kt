@@ -191,6 +191,32 @@ class ControllerTest {
     }
 
     @Test
+    fun homeTileOrderIsKeptOnThisDevice() = runBlocking {
+        val key = keys.create()
+        store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
+        val prefs = Prefs.Memory()
+        val c = TalariaController(scope, keys, store, "linux", "Laptop", transport = unreachable, pairer = pairer,
+            networkCheck = { NetworkStatus(NetworkStatus.Kind.NONE, "off") }, prefs = prefs)
+        c.start()
+        assertEquals(HomeTile.entries, c.await<Screen.Chat>().home.order)
+        c.startArrangingHome()
+        c.await<Screen.Chat> { it.home.arranging }
+        c.moveHomeTile(HomeTile.RECENT, up = true)
+        c.moveHomeTile(HomeTile.RECENT, up = true)
+        val moved = listOf(HomeTile.DAY, HomeTile.NEXT, HomeTile.RECENT, HomeTile.AUTOMATIONS, HomeTile.TODOS)
+        c.await<Screen.Chat> { it.home.order == moved }
+        c.selectTab(Tab.CHATS)
+        assertTrue(c.await<Screen.Chat> { it.tab == Tab.CHATS }.home.arranging.not(), "leaving Home ends rearranging")
+        c.close()
+
+        val again = TalariaController(scope, keys, store, "linux", "Laptop", transport = unreachable, pairer = pairer,
+            networkCheck = { NetworkStatus(NetworkStatus.Kind.NONE, "off") }, prefs = prefs)
+        again.start()
+        assertEquals(moved, again.await<Screen.Chat>().home.order, "the order survives a restart")
+        again.close()
+    }
+
+    @Test
     fun tabsMenuAndTalk() = runBlocking {
         val key = keys.create()
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")

@@ -3,6 +3,8 @@ package io.github.meepdong.talaria.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -198,10 +200,13 @@ private fun ActionBar(voice: VoiceView, actions: TalariaActions) {
 
 /** A white card with a heading, as on Home. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun SectionCard(
     title: String,
     modifier: Modifier = Modifier,
     trailing: @Composable () -> Unit = {},
+    /** A long-press on the title, such as rearranging Home's tiles. */
+    onTitleLongClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -209,7 +214,11 @@ fun SectionCard(
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).padding(20.dp),
     ) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f).then(
+                    if (onTitleLongClick == null) Modifier
+                    else Modifier.combinedClickable(onLongClickLabel = "Rearrange", onLongClick = onTitleLongClick) {},
+                ))
             trailing()
         }
         content()
