@@ -14,7 +14,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,7 +29,6 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 
 /** What a swipe does: [label] shows behind the row as it moves ("Archive", "Mark read"). */
 class SwipeAction(val label: String, val color: Color, val run: () -> Unit)
@@ -40,7 +43,9 @@ object SwipeColors {
 
 /**
  * A row that does [left] when swiped left and [right] when swiped right (spec/README.md §18, UX1).
- * The row springs back after either; a row whose item goes away (archived, deleted) simply leaves the list.
+ * The row never stays swiped: past the threshold it does its action once, as the finger lifts, and springs back;
+ * a row whose item goes away (archived, deleted) then simply leaves the list. (Settling swiped and resetting
+ * afterwards made a row whose item stays, such as Mark read, fire again and again while it bounced.)
  * Both actions are also custom accessibility actions, and every place that uses this offers them in a long-press
  * menu too, so nothing needs the gesture.
  */
@@ -53,9 +58,28 @@ fun SwipeRow(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) = key(key) {
-    val state = rememberSwipeToDismissBoxState()
-    val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val current = rememberUpdatedState(left to right)
+    // set when the swipe acts, cleared once the row is back at rest: one action per swipe
+    val fired = remember { mutableStateOf(false) }
+    @Suppress("DEPRECATION")  // confirmValueChange: refusing the swiped position is what keeps the row from bouncing
+    val state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
+        val action = when (value) {
+            SwipeToDismissBoxValue.EndToStart -> current.value.first
+            SwipeToDismissBoxValue.StartToEnd -> current.value.second
+            SwipeToDismissBoxValue.Settled -> null
+        }
+        // once per swipe, even if the box asks again while it springs back
+        if (action != null && !fired.value) {
+            fired.value = true
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            action.run()
+        }
+        value == SwipeToDismissBoxValue.Settled
+    })
+    LaunchedEffect(state) {
+        snapshotFlow { state.dismissDirection }.collect { if (it == SwipeToDismissBoxValue.Settled) fired.value = false }
+    }
     SwipeToDismissBox(
         state = state,
         modifier = modifier.semantics {
@@ -63,12 +87,6 @@ fun SwipeRow(
         },
         enableDismissFromStartToEnd = right != null,
         enableDismissFromEndToStart = left != null,
-        onDismiss = { value ->
-            val action = if (value == SwipeToDismissBoxValue.EndToStart) left else right
-            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            action?.run()
-            scope.launch { state.reset() }
-        },
         backgroundContent = {
             val toLeft = state.dismissDirection == SwipeToDismissBoxValue.EndToStart
             val action = when (state.dismissDirection) {

@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -57,6 +59,27 @@ class SwipeTest {
         assertEquals(listOf("archive 0000000000aa 7", "read 0000000000aa 7 true", "read 0000000000bb 3 false"), actions.calls)
         onNodeWithTag("unread-0000000000aa", useUnmergedTree = true).assertExists()
         onNodeWithTag("unread-0000000000bb", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun aSwipeActsOnceAndTheRowComesBack() = runComposeUiTest {
+        // the phone showed a right swipe toggling read, unread, read… with the row stuck open
+        val actions = Recorder()
+        var home by androidx.compose.runtime.mutableStateOf(HomeView(day = listOf(unread)))
+        val recorder = object : TalariaActions by actions {
+            override fun markHomeRead(id: String, at: Long, read: Boolean) {
+                actions.markHomeRead(id, at, read)
+                home = HomeView(day = home.day.map { it.copy(read = read) })
+            }
+        }
+        setContent { TalariaTheme { Column { YourDayCard(home, recorder, androidx.compose.ui.Modifier) } } }
+        onNodeWithTag("day-0000000000aa").performTouchInput { swipeRight() }
+        mainClock.advanceTimeBy(3_000)
+        waitForIdle()
+        assertEquals(listOf("read 0000000000aa 7 true"), actions.calls)
+        val box = onNodeWithTag("day-open-0000000000aa", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val card = onNodeWithTag("day-0000000000aa").fetchSemanticsNode().boundsInRoot
+        assertEquals(card.left, box.left, "the row is back in place")
     }
 
     @Test
