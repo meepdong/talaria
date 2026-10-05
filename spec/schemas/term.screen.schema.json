@@ -52,6 +52,9 @@
         "text": {
           "type": "string",
           "maxLength": 262144
+        },
+        "alternate": {
+          "type": "boolean"
         }
       },
       "required": [

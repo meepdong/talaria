@@ -354,6 +354,13 @@ Operations in the catalogue:
   **grant** for the approving device and that session, and the result's `data` is
   `{grant, session, control, expires_at}`. A grant is `tg-` and 32 hex digits; it ends 30 minutes after it was last
   used, after 12 hours in any case, when the device is revoked, or with `term.close`. Only `control` grants may type.
+- `tmux.new {name, folder?, command?}` (tier 2): starts a root tmux session `name` (letters, digits, `_ . @ + -`, at
+  most 40) in `folder` (any existing absolute path, default `/root`) running `command` (any one-line command, at most
+  1000 characters; empty: a shell), and answers like `terminal.control`: a control grant for the approving device.
+- `tmux.kill {session}` (tier 2): ends a session and every grant to it.
+
+Apps ask for the device owner's fingerprint or screen lock before signing a terminal approval, unless they did in the
+last 5 minutes while the app stayed open (owner, 2026-10-05).
 
 talaria-ops also answers, for the bridge only:
 
@@ -362,6 +369,7 @@ talaria-ops also answers, for the bridge only:
 | `{"cmd": "term.screen", "grant", "device_id"}` | `{"screen": {session, cols, rows, cursor_x, cursor_y, command, control, text}}` |
 | `{"cmd": "term.keys", "grant", "device_id", "keys"}` | `{"ok": true}` |
 | `{"cmd": "term.close", "grant", "device_id"}` | `{"ok": true}` |
+| `{"cmd": "term.history", "grant", "device_id", "lines"}` | `{"history": {session, text}}` |
 
 A grant only answers for the device it was given to, and every `term.keys` is audited with what was typed.
 
@@ -372,17 +380,21 @@ Devices use them through the bridge:
 | `term.watch` | request | `{grant}` → `{grant, session, control}` |
 | `term.keys` | request | `{grant, keys}` → `{}` |
 | `term.stop` | request | `{grant}` → `{}` |
-| `term.screen` | notification | `{grant, session, cols, rows, cursor_x, cursor_y, command?, control, text}` |
+| `term.history` | request | `{grant, lines}` → `{session, text}` |
+| `term.screen` | notification | `{grant, session, cols, rows, cursor_x, cursor_y, command?, control, alternate?, text}` |
 | `term.closed` | notification | `{grant, reason}` |
 
 After `term.watch` the bridge sends the screen at once and then whenever it changes (it looks about 3 times a second,
-and right after keys), only to that device's session, until `term.stop`, the session ends, or the device disconnects.
+10 times a second for 3 seconds after keys), only to that device's session, until `term.stop`, the session ends, or the device disconnects.
 `text` is the screen's lines joined by `\n`, with SGR colour sequences (`ESC [ … m`) and nothing else. `keys` is a
-list of `{text}` (typed literally, at most 2000 characters) and `{key}` (one of `Enter`, `Escape`, `Tab`, `BTab`,
-`BSpace`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `C-c`, `C-d`, `C-z`, `C-l`, `C-r`,
-`C-o`). A grant that ended answers `CONFLICT`, and a watching device gets `term.closed`.
+list of `{text}` (typed literally, at most 2000 characters) and `{key}`: a tmux key name, i.e. `Enter`, `Escape`, `Tab`,
+`BSpace`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `DC`, `IC`, or a letter, digit or one of
+`@ [ ] \ ^ _ /`, each optionally after `C-`, `M-` or `C-M-` (so `C-b` reaches tmux itself), or `BTab`, or `F1`–`F12`.
+`term.history` returns up to `lines` (at most 3000) lines of scrollback above the screen, oldest first, same format.
+`alternate` is true while a full-screen program (Claude Code, vim, htop) draws in the terminal's alternate screen,
+which has no scrollback: apps scroll such a program with its own keys (`PPage`/`NPage`) instead. A grant that ended answers `CONFLICT`, and a watching device gets `term.closed`.
 
-Schemas: `term.watch`, `term.watch.result`, `term.keys`, `term.keys.result`, `term.stop`, `term.stop.result`,
+Schemas: `term.watch`, `term.watch.result`, `term.keys`, `term.keys.result`, `term.stop`, `term.stop.result`, `term.history`, `term.history.result`,
 `term.screen`, `term.closed`.
 
 ## 17. App updates

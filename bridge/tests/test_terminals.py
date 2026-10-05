@@ -35,14 +35,25 @@ class FakeTmux:
         self.screen = "\x1b[1mClaude Code\x1b[0m\n> Do you want to proceed?\n  1. Yes\n  2. No"
         self.alive = True
         self.sent: list[list[str]] = []
+        self.created: list[list[str]] = []
+        self.killed: list[str] = []
 
     async def __call__(self, argv, **kw) -> Run:
         if argv[:2] == ["tmux", "list-panes"]:
-            return Run(0, "claude\t1\t1\tclaude\t/root\t89\t33\t2\t1790000100\nclaude\t0\t1\tbash\t/root\t89\t33\t2\t1\n"
+            extra = "".join(f"{c[4]}\t1\t1\tbash\t{c[6]}\t80\t24\t0\t1790000200\n" for c in self.created)
+            return Run(0, "claude\t1\t1\tclaude\t/root\t89\t33\t2\t1790000100\nclaude\t0\t1\tbash\t/root\t89\t33\t2\t1\n" + extra
                        if self.alive else "no server running on /tmp/tmux-0/default\n")
+        if argv[:2] == ["tmux", "new-session"]:
+            self.created.append(list(argv))
+            return Run(0, "")
+        if argv[:2] == ["tmux", "kill-session"]:
+            self.killed.append(argv[3])
+            return Run(0, "")
+        if argv[:2] == ["tmux", "capture-pane"] and "-S" in argv:
+            return Run(0, "\x1b[2mearlier line 1\x1b[0m\nearlier line 2\n")
         if argv[:2] == ["tmux", "display-message"]:
-            assert argv[argv.index("-t") + 1] == "=claude:"
-            return Run(0, "89\t33\t2\t1\tclaude\n") if self.alive else Run(1, "can't find session: claude\n")
+            assert argv[argv.index("-t") + 1].startswith("=")
+            return Run(0, "89\t33\t2\t1\tclaude\t1\n") if self.alive else Run(1, "can't find session: claude\n")
         if argv[:2] == ["tmux", "capture-pane"]:
             return Run(0, self.screen + "\n\x1b]0;title\x07") if self.alive else Run(1, "")
         if argv[:2] == ["tmux", "send-keys"]:
@@ -205,3 +216,54 @@ async def test_grants_end_when_idle_too_old_or_the_device_is_revoked(tmp_path: P
     registry.db.commit()
     assert "revoked" in (await daemon.handle({"cmd": "term.screen", "grant": grant, "device_id": phone_id}))["error"]
     registry.close()
+
+
+async def test_new_session_scrollback_and_any_key(term_bridge, tmp_path: Path):
+    bridge, tmux, _, daemon = term_bridge
+    device = await paired_device(bridge)
+    phone = await device.authenticate(bridge.url)
+    params = {"name": "build", "folder": str(tmp_path), "command": "claude --continue"}
+    asked = check("ops.run.result", await request(phone, "n1", "ops.run", {"op": "tmux.new", "params": params}))["result"]
+    note = await notification(phone, "ops.approval.request")
+    assert note["tier"] == 2 and "claude --continue" in note["summary"] and str(tmp_path) in note["summary"]
+    await request(phone, "a1", "ops.approve", signed(device, note))
+    done = await notification(phone, "ops.result")
+    assert done["result"]["ok"], done
+    grant = done["result"]["data"]["grant"]
+    assert done["result"]["data"]["control"] is True, "one approval opens it for typing"
+    assert tmux.created == [["tmux", "new-session", "-d", "-s", "build", "-c", str(tmp_path), "claude --continue"]]
+
+    await request(phone, "w1", "term.watch", {"grant": grant})
+    await notification(phone, "term.screen")
+    hist = check("term.history.result", await request(phone, "h1", "term.history", {"grant": grant, "lines": 500}))["result"]
+    assert hist == {"session": "build", "text": "\x1b[2mearlier line 1\x1b[0m\nearlier line 2"}
+    keys = [{"key": "C-b"}, {"key": "M-x"}, {"key": "F5"}, {"key": "C-M-a"}, {"key": "DC"}, {"key": "BTab"}]
+    check("term.keys.result", await request(phone, "k1", "term.keys", {"grant": grant, "keys": keys}))
+    assert [k[0] for k in tmux.sent] == ["C-b", "M-x", "F5", "C-M-a", "DC", "BTab"]
+    for i, bad in enumerate(["rm -rf /", "C-", "F13", "M-Enter;ls", "C-B"]):
+        await phone.send(m.encode(m.request(f"x{i}", "term.keys", {"grant": grant, "keys": [{"key": bad}]})))
+        while (msg := m.decode(await asyncio.wait_for(phone.recv(), 5))).get("id") != f"x{i}":
+            pass
+        assert msg["error"]["code"] == m.INVALID_PARAMS, bad
+
+    for bad, why in [({"name": "build", "folder": str(tmp_path)}, "already"), ({"name": "x", "folder": "/no/such/dir"}, "isn't a folder"),
+                     ({"name": "a:b", "folder": "/root"}, "isn't valid"), ({"name": "y", "folder": "relative"}, "isn't valid"),
+                     ({"name": "z", "folder": "/root", "command": "ls\nrm -rf /"}, "isn't valid")]:
+        r = await request(phone, f"b-{why}", "ops.run", {"op": "tmux.new", "params": bad})
+        if "error" in r:
+            assert why in r["error"]["message"], (bad, r)
+        else:
+            note = await notification(phone, "ops.approval.request")
+            await request(phone, f"ab-{why}", "ops.approve", signed(device, note))
+            res = await notification(phone, "ops.result")
+            assert not res["result"]["ok"] and why in res["result"]["summary"], (bad, res)
+
+    asked = check("ops.run.result", await request(phone, "kill", "ops.run", {"op": "tmux.kill", "params": {"session": "build"}}))
+    note = await notification(phone, "ops.approval.request")
+    await request(phone, "ak", "ops.approve", signed(device, note))
+    assert (await notification(phone, "ops.result"))["result"]["ok"]
+    assert tmux.killed == ["=build"] and not any(g.session == "build" for g in daemon.terminals.grants.values())
+    for op in ("tmux.new", "tmux.kill"):
+        result, is_error = await bridge.server.ops.agent_call(op, {"name": "x"}, "hermes")
+        assert is_error and "only for the owner's devices" in result
+    await phone.close()

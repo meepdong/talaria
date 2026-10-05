@@ -21,8 +21,11 @@ MAX_GRANTS = 32
 MAX_TEXT = 2000
 MAX_KEYS = 50
 MAX_SCREEN = 256 * 1024
-KEYS = frozenset({"Enter", "Escape", "Tab", "BTab", "BSpace", "Space", "Up", "Down", "Left", "Right", "Home", "End",
-                  "PPage", "NPage", "C-c", "C-d", "C-z", "C-l", "C-r", "C-o"})
+MAX_HISTORY = 3000
+NAMED = "Enter|Escape|Tab|BSpace|Space|Up|Down|Left|Right|Home|End|PPage|NPage|DC|IC"
+# any named key, Ctrl and/or Alt with a letter, digit or named key, Shift-Tab, F1-F12 (tmux's key names, §16.1)
+KEY = re.compile(rf"(?:(?:C-|M-|C-M-)?(?:{NAMED}|[a-z0-9@\[\]\\^_/])|BTab|F(?:[1-9]|1[0-2]))")
+KEYS = frozenset(NAMED.split("|")) | {"BTab"}  # the plain ones, for messages
 SESSION_NAME = re.compile(r"^[A-Za-z0-9_.:@+-]{1,64}$")
 # anything but SGR (colour) sequences is dropped from the screen; capture-pane -e emits only those, this is a guard
 NOT_SGR = re.compile(r"\x1b(?!\[[0-9;:]*m)(\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|.)")
@@ -33,7 +36,8 @@ APPROVED_BY: ContextVar[str | None] = ContextVar("approved_by", default=None)
 PANE_FORMAT = "\t".join(["#{session_name}", "#{window_active}", "#{pane_active}", "#{pane_current_command}",
                          "#{pane_current_path}", "#{pane_width}", "#{pane_height}", "#{session_attached}",
                          "#{window_activity}"])
-SCREEN_FORMAT = "\t".join(["#{pane_width}", "#{pane_height}", "#{cursor_x}", "#{cursor_y}", "#{pane_current_command}"])
+SCREEN_FORMAT = "\t".join(["#{pane_width}", "#{pane_height}", "#{cursor_x}", "#{cursor_y}", "#{pane_current_command}",
+                           "#{alternate_on}"])
 
 
 @dataclass
@@ -109,6 +113,11 @@ class Terminals:
         for gid in [gid for gid, g in self.grants.items() if g.expires_at() <= now]:
             del self.grants[gid]
 
+    def forget(self, session: str) -> None:
+        """The session ended: its grants with it."""
+        for gid in [gid for gid, g in self.grants.items() if g.session == session]:
+            del self.grants[gid]
+
     def close(self, grant_id: object, device_id: object) -> Grant:
         g = self._use(grant_id, device_id)
         del self.grants[grant_id]
@@ -121,12 +130,24 @@ class Terminals:
         info = await self.run(["tmux", "display-message", "-p", "-t", _target(g.session), SCREEN_FORMAT], timeout=10)
         text = await self.run(["tmux", "capture-pane", "-p", "-e", "-t", _target(g.session)], timeout=10)
         f = info.output.strip().split("\t")
-        if info.exit_code != 0 or text.exit_code != 0 or len(f) != 5:
+        if info.exit_code != 0 or text.exit_code != 0 or len(f) != 6:
             del self.grants[grant_id]
             raise OpError(f"the session {g.session} has ended")
         return {"session": g.session, "cols": int(f[0]), "rows": int(f[1]), "cursor_x": int(f[2]),
-                "cursor_y": int(f[3]), "command": f[4][:64], "control": g.control,
+                "cursor_y": int(f[3]), "command": f[4][:64], "control": g.control, "alternate": f[5] == "1",
                 "text": NOT_SGR.sub("", text.output).rstrip("\n")[:MAX_SCREEN]}
+
+    async def history(self, grant_id: object, device_id: object, lines: object) -> dict:
+        """Up to [lines] lines of scrollback above the screen, oldest first, with colour (§16.1)."""
+        g = self._use(grant_id, device_id)
+        if not (isinstance(lines, int) and not isinstance(lines, bool) and 1 <= lines <= MAX_HISTORY):
+            raise OpError(f"lines must be 1 to {MAX_HISTORY}")
+        run = await self.run(["tmux", "capture-pane", "-p", "-e", "-S", f"-{lines}", "-E", "-1", "-t", _target(g.session)],
+                             timeout=20)
+        if run.exit_code != 0:
+            raise OpError(f"the session {g.session} has ended")
+        text = NOT_SGR.sub("", run.output).rstrip("\n")
+        return {"session": g.session, "text": text[-MAX_SCREEN * 4:]}
 
     async def keys(self, grant_id: object, device_id: object, keys: object) -> tuple[Grant, str]:
         """Type [keys] into the grant's session; returns the grant and what was typed, for the audit log."""
@@ -143,11 +164,11 @@ class Terminals:
                 if text:
                     steps.append(["-l", "--", text])
                     typed.append(text)
-            elif isinstance(k, dict) and set(k) == {"key"} and k["key"] in KEYS:
+            elif isinstance(k, dict) and set(k) == {"key"} and isinstance(k["key"], str) and KEY.fullmatch(k["key"]):
                 steps.append([k["key"]])
                 typed.append(f"<{k['key']}>")
             else:
-                raise OpError(f"keys are {{text}} (at most {MAX_TEXT} characters) or {{key}} (one of {', '.join(sorted(KEYS))})")
+                raise OpError(f"keys are {{text}} (at most {MAX_TEXT} characters) or {{key}} (a tmux key name such as Enter, C-c, M-x or F5)")
         for step in steps:
             run = await self.run(["tmux", "send-keys", "-t", _target(g.session), *step], timeout=10)
             if run.exit_code != 0:

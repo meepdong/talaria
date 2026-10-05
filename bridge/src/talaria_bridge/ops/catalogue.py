@@ -7,6 +7,7 @@ never a shell string, and parameters are checked against enums, bounds or live l
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -70,6 +71,8 @@ class Param:
     maximum: int | None = None
     default: object = None
     choices: Callable[["Context"], Awaitable[list[str]]] | None = None  # a live list, e.g. running containers
+    pattern: str | None = None  # a free string must match this (full match)
+    max_length: int | None = None
 
     def describe(self, live: list[str] | None) -> dict:
         out: dict = {"type": self.type}
@@ -82,6 +85,10 @@ class Param:
             out["maximum"] = self.maximum
         if self.default is not None:
             out["default"] = self.default
+        if self.pattern is not None:
+            out["pattern"] = self.pattern
+        if self.max_length is not None:
+            out["maxLength"] = self.max_length
         return out
 
 
@@ -134,6 +141,10 @@ async def check_params(op: Op, given: object, ctx: Context) -> dict:
             allowed = await spec.choices(ctx) if spec.choices else spec.enum
             if allowed is not None and value not in allowed:
                 raise OpError(f"{name} must be one of {', '.join(allowed) or '(none available)'}")
+            if spec.max_length is not None and len(value) > spec.max_length:
+                raise OpError(f"{name} must be at most {spec.max_length} characters")
+            if spec.pattern is not None and not re.fullmatch(spec.pattern, value):
+                raise OpError(f"{name} isn't valid here")
         out[name] = value
     return out
 
@@ -375,6 +386,30 @@ async def terminal_control(ctx: Context, p: dict) -> Outcome:
     return await _open_terminal(ctx, p, control=True)
 
 
+async def tmux_new(ctx: Context, p: dict) -> Outcome:
+    """A new root tmux session (any folder, any command), opened at once for typing on the approving device."""
+    from .terminal import APPROVED_BY
+
+    if p["name"] in await ctx.terminals.names():
+        return Outcome(False, f"There is already a session called {p['name']}")
+    if not os.path.isdir(p["folder"]):
+        return Outcome(False, f"{p['folder']} isn't a folder on the server")
+    argv = ["tmux", "new-session", "-d", "-s", p["name"], "-c", p["folder"]]
+    if p["command"].strip():
+        argv.append(p["command"])  # tmux runs it with the default shell, as typing it there would
+    run = await ctx.run(argv, timeout=20)
+    if run.exit_code != 0:
+        return _done(run, f"Couldn't start the session {p['name']}")
+    grant = ctx.terminals.grant(APPROVED_BY.get(), p["name"], control=True)
+    return Outcome(True, f"Started the tmux session {p['name']} in {p['folder']}", run.output, 0, grant)
+
+
+async def tmux_kill(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run(["tmux", "kill-session", "-t", f"={p['session']}"], timeout=20)
+    ctx.terminals.forget(p["session"])
+    return _done(run, f"Ended the tmux session {p['session']}")
+
+
 # Tier 2: disruptive
 
 async def system_reboot(ctx: Context, p: dict) -> Outcome:
@@ -413,7 +448,15 @@ OPS: dict[str, Op] = {op.name: op for op in [
        lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),
     Op("terminal.control", 2, "Type in a terminal", terminal_control, {"session": Param("string", choices=_tmux_names)},
        lambda p: f"Type in the tmux session {p['session']} from this device (as root) for up to 30 minutes"),
+    Op("tmux.new", 2, "New terminal session", tmux_new, {
+        "name": Param("string", pattern=r"[A-Za-z0-9_.@+-]{1,40}"),
+        "folder": Param("string", pattern=r"/[^\x00\n\r]{0,1023}", default="/root"),
+        "command": Param("string", pattern=r"[^\x00\n\r]*", max_length=1000, default=""),
+    }, lambda p: f"Start the tmux session {p['name']} as root in {p['folder']}"
+                 + (f", running: {p['command']}" if p["command"].strip() else ", with a shell") + ", and type in it from this device"),
+    Op("tmux.kill", 2, "End a terminal session", tmux_kill, {"session": Param("string", choices=_tmux_names)},
+       lambda p: f"End the tmux session {p['session']} and everything running in it"),
 ]}
 
 # ops the agent's server_op may never use (spec §16.1)
-DEVICE_ONLY = frozenset({"tmux.sessions", "terminal.watch", "terminal.control"})
+DEVICE_ONLY = frozenset({"tmux.sessions", "terminal.watch", "terminal.control", "tmux.new", "tmux.kill"})

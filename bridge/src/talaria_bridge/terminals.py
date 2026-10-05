@@ -11,14 +11,16 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
-from .ops.terminal import KEYS, MAX_KEYS, MAX_TEXT
+from .ops.terminal import KEY, MAX_KEYS, MAX_TEXT
 from .protocol import messages as m
 from .server_ops import OpsError, ServerOps
 
 log = logging.getLogger("talaria.terminals")
 
 POLL_S = 0.35
-TERM_METHODS = frozenset({"term.watch", "term.keys", "term.stop"})
+FAST_POLL_S = 0.1  # while the owner types, and for a few seconds after
+FAST_FOR_S = 3.0
+TERM_METHODS = frozenset({"term.watch", "term.keys", "term.stop", "term.history"})
 
 Send = Callable[[dict], Awaitable[None]]
 
@@ -26,9 +28,9 @@ Send = Callable[[dict], Awaitable[None]]
 def _keys(keys: object) -> list:
     ok = isinstance(keys, list) and 1 <= len(keys) <= MAX_KEYS and all(
         isinstance(k, dict) and ((set(k) == {"text"} and isinstance(k["text"], str) and 0 < len(k["text"]) <= MAX_TEXT)
-                                 or (set(k) == {"key"} and k["key"] in KEYS)) for k in keys)
+                                 or (set(k) == {"key"} and isinstance(k["key"], str) and KEY.fullmatch(k["key"]))) for k in keys)
     if not ok:
-        raise OpsError(m.INVALID_PARAMS, f"keys are 1 to {MAX_KEYS} of {{text}} or {{key}} ({', '.join(sorted(KEYS))})")
+        raise OpsError(m.INVALID_PARAMS, f"keys are 1 to {MAX_KEYS} of {{text}} or {{key}} (a tmux key name: Enter, C-c, M-x, F5, …)")
     return keys
 
 
@@ -36,6 +38,7 @@ class Watch:
     def __init__(self) -> None:
         self.task: asyncio.Task | None = None
         self.wake = asyncio.Event()
+        self.fast_until = 0.0
 
 
 class Terminals:
@@ -52,8 +55,12 @@ class Terminals:
         if method == "term.keys":
             await self.ops.terminal("term.keys", grant, self.device_id, keys=_keys(p.get("keys")))
             if grant in self.watches:
-                self.watches[grant].wake.set()  # show what the keys did straight away
+                w = self.watches[grant]
+                w.fast_until = asyncio.get_running_loop().time() + FAST_FOR_S
+                w.wake.set()  # show what the keys did straight away, then keep up while typing
             return {}
+        if method == "term.history":
+            return (await self.ops.terminal("term.history", grant, self.device_id, lines=p.get("lines")))["history"]
         if method == "term.stop":
             self._stop(grant)
             with contextlib.suppress(OpsError):
@@ -76,8 +83,9 @@ class Terminals:
                 if screen != last:
                     await self.send(m.notification("term.screen", {"grant": grant, **screen}))
                     last = screen
+                fast = asyncio.get_running_loop().time() < w.fast_until
                 with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(w.wake.wait(), self.poll_s)
+                    await asyncio.wait_for(w.wake.wait(), min(self.poll_s, FAST_POLL_S) if fast else self.poll_s)
                 w.wake.clear()
                 screen = (await self.ops.terminal("term.screen", grant, self.device_id))["screen"]
         except OpsError as exc:

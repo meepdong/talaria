@@ -98,7 +98,7 @@ class OpsDaemon:
             if cmd == "execute":
                 return {"result": await self.execute(req.get("request_id"), req.get("device_id"),
                                                      req.get("choice"), req.get("sig"), accepted)}
-            if cmd in ("term.screen", "term.keys", "term.close"):
+            if cmd in ("term.screen", "term.keys", "term.close", "term.history"):
                 return await self.terminal(cmd, req)
             raise OpError(f"unknown command {cmd!r}")
         except OpError as exc:
@@ -169,6 +169,8 @@ class OpsDaemon:
         self._device_key(device_id)  # unknown or revoked: refused, whatever the grant says
         if cmd == "term.screen":
             return {"screen": await self.terminals.screen(req.get("grant"), device_id)}
+        if cmd == "term.history":
+            return {"history": await self.terminals.history(req.get("grant"), device_id, req.get("lines"))}
         if cmd == "term.keys":
             grant, typed = await self.terminals.keys(req.get("grant"), device_id, req.get("keys"))
             self.audit.append({"ts": self.clock(), "op": "terminal.keys", "session": grant.session,

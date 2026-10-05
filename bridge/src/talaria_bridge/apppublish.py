@@ -1,7 +1,8 @@
 """talaria-publish-app: sign the newest app release for each channel and place it for the bridge (spec §17).
 
 Runs as root from a timer. It reads the repository's GitHub Releases (CI publishes an unsigned installer, its
-checksum and release.json for each `vX.Y.Z[-beta.N]` tag), checks the checksum, signs the installer with the release
+checksum and release.json for each `vX.Y.Z[-beta.N]` tag) from the releases feed and the release download URLs,
+not GitHub's API, whose 60 requests an hour per address other tools on the server use up too (issue 39), checks the checksum, signs the installer with the release
 key, which only root can read, checks the signature is that key's, and writes `<out>/<channel>/android.json` and the
 signed installer. The bridge only reads them. A channel never goes back to an older version.
 """
@@ -61,22 +62,26 @@ class Release:
         return f"talaria-android-{self.version}-unsigned.apk"
 
 
-def releases(listing: list) -> list[Release]:
-    """GitHub's release list → releases with a valid tag and the three assets CI publishes."""
-    out = []
-    for r in listing:
-        t = TAG.match(str(r.get("tag_name", "")))
-        if r.get("draft") or t is None:
+FEED_TAG = re.compile(r"/releases/tag/(v[0-9A-Za-z.+-]+)\"")
+
+
+def releases(feed: str, repo: str) -> list[Release]:
+    """The releases feed (releases.atom) → releases with a valid tag, and where CI put their three assets.
+    Drafts aren't in the feed; a beta is a `-beta.N` tag."""
+    out, seen = [], set()
+    for tag in FEED_TAG.findall(feed):
+        t = TAG.match(tag)
+        if t is None or tag in seen:
             continue
+        seen.add(tag)
         try:
             code = version_code(t["version"])
         except ValueError:
             continue
-        rel = Release(t["version"], code, bool(r.get("prerelease")) or t["beta"] is not None,
-                      {a["name"]: a["browser_download_url"] for a in r.get("assets", [])
-                       if isinstance(a, dict) and "name" in a and "browser_download_url" in a})
-        if {rel.apk_name, "release.json", "SHA256SUMS"} <= rel.assets.keys():
-            out.append(rel)
+        base = f"https://github.com/{repo}/releases/download/{tag}/"
+        rel = Release(t["version"], code, t["beta"] is not None, {})
+        rel.assets = {name: base + name for name in (rel.apk_name, "release.json", "SHA256SUMS")}
+        out.append(rel)
     return out
 
 
@@ -84,6 +89,10 @@ def pick(found: list[Release], channel: str) -> Release | None:
     """The newest release for a channel: betas and stable releases for `beta`, stable releases only for `stable`."""
     fit = [r for r in found if channel == "beta" or not r.prerelease]
     return max(fit, key=lambda r: r.version_code, default=None)
+
+
+class NotYet(Exception):
+    """A release whose files CI hasn't uploaded yet: the next run tries again."""
 
 
 class Publisher:
@@ -103,23 +112,33 @@ class Publisher:
 
     def publish(self) -> list[str]:
         """One pass over the channels; returns what was placed, as "channel version"."""
-        listing = json.loads(self.get(f"https://api.github.com/repos/{self.repo}/releases?per_page=30"))
-        found = releases(listing if isinstance(listing, list) else [])
+        found = releases(self.get(f"https://github.com/{self.repo}/releases.atom").decode("utf-8", "replace"), self.repo)
         signed: dict[str, tuple[Path, dict]] = {}
         placed = []
         with tempfile.TemporaryDirectory(prefix="talaria-publish-") as tmp:
             for channel in CHANNELS:
-                rel = pick(found, channel)
-                if rel is None or rel.version_code <= self.current(channel):
-                    continue
-                if rel.version not in signed:
-                    signed[rel.version] = self._sign(rel, Path(tmp))
-                self._place(channel, rel, *signed[rel.version])
-                placed.append(f"{channel} {rel.version}")
+                # newest first; one whose files CI hasn't uploaded yet waits for the next run, an older ready one goes now
+                fitting = sorted((r for r in found if (channel == "beta" or not r.prerelease)
+                                  and r.version_code > self.current(channel)), key=lambda r: -r.version_code)
+                for rel in fitting:
+                    if rel.version not in signed:
+                        try:
+                            signed[rel.version] = self._sign(rel, Path(tmp))
+                        except NotYet:
+                            log.info("%s: its files aren't published yet", rel.version)
+                            continue
+                    self._place(channel, rel, *signed[rel.version])
+                    placed.append(f"{channel} {rel.version}")
+                    break
         return placed
 
     def _sign(self, rel: Release, tmp: Path) -> tuple[Path, dict]:
-        apk = self.get(rel.assets[rel.apk_name])
+        try:
+            apk = self.get(rel.assets[rel.apk_name])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotYet(rel.version) from exc
+            raise
         if len(apk) > MAX_APK:
             raise RuntimeError(f"{rel.apk_name} is over {MAX_APK // 2**20} MiB")
         sums = {}
@@ -182,8 +201,7 @@ class Publisher:
 
 
 def _get(url: str) -> bytes:
-    r = httpx.get(url, follow_redirects=True, timeout=120, headers={"User-Agent": "talaria-publish-app",
-                                                                    "Accept": "application/vnd.github+json"})
+    r = httpx.get(url, follow_redirects=True, timeout=300, headers={"User-Agent": "talaria-publish-app"})
     r.raise_for_status()
     return r.content
 

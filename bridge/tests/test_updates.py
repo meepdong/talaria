@@ -116,40 +116,50 @@ def test_a_broken_release_file_is_ignored(tmp_path: Path):
         AppUpdates(tmp_path, "nightly")
 
 
-def gh_release(version: str, prerelease: bool, assets=("apk", "release.json", "SHA256SUMS"), draft=False) -> dict:
-    names = {"apk": f"talaria-android-{version}-unsigned.apk"}
-    return {"tag_name": f"v{version}", "prerelease": prerelease, "draft": draft,
-            "assets": [{"name": names.get(a, a), "browser_download_url": f"https://dl/{version}/{names.get(a, a)}"}
-                       for a in assets]}
+REPO = "meepdong/talaria"
+
+
+def feed(*tags: str) -> str:
+    """releases.atom with these tags, newest first, as GitHub writes it."""
+    entries = "".join(f'<entry><link rel="alternate" type="text/html" href="https://github.com/{REPO}/releases/tag/{t}"/>'
+                      f"<title>Talaria {t}</title></entry>" for t in tags)
+    return f'<?xml version="1.0"?><feed><link href="https://github.com/{REPO}/releases"/>{entries}</feed>'
+
+
+def url(version: str, name: str) -> str:
+    return f"https://github.com/{REPO}/releases/download/v{version}/{name}"
 
 
 def test_channels_pick_the_newest_fitting_release():
-    found = releases([gh_release("0.3.0-beta.1", True), gh_release("0.2.0", False), gh_release("0.2.0-beta.4", True),
-                      gh_release("0.4.0-beta.1", True, assets=("apk",)), gh_release("0.5.0", False, draft=True),
-                      {"tag_name": "nightly", "assets": []}])
+    found = releases(feed("v0.3.0-beta.1", "v0.2.0", "v0.2.0-beta.4", "nightly", "v0.2.0"), REPO)
     assert [r.version for r in found] == ["0.3.0-beta.1", "0.2.0", "0.2.0-beta.4"]
+    assert found[0].assets["SHA256SUMS"] == url("0.3.0-beta.1", "SHA256SUMS")
     assert pick(found, "beta").version == "0.3.0-beta.1"
     assert pick(found, "stable").version == "0.2.0"
     assert pick([], "stable") is None
 
 
 class FakeGitHub:
-    def __init__(self, listing: list, files: dict[str, bytes]):
-        self.listing, self.files, self.fetched = listing, files, []
+    def __init__(self, tags: list[str], files: dict[str, bytes]):
+        self.tags, self.files, self.fetched = tags, files, []
 
-    def get(self, url: str) -> bytes:
-        self.fetched.append(url)
-        if "api.github.com" in url:
-            return json.dumps(self.listing).encode()
-        return self.files[url]
+    def get(self, u: str) -> bytes:
+        self.fetched.append(u)
+        assert "api.github.com" not in u, "no API: its quota runs out (issue 39)"
+        if u.endswith("/releases.atom"):
+            return feed(*self.tags).encode()
+        if u not in self.files:
+            import httpx
+            raise httpx.HTTPStatusError("404", request=httpx.Request("GET", u), response=httpx.Response(404))
+        return self.files[u]
 
 
 def publish_files(version: str, apk: bytes, sums_apk: bytes | None = None, meta: dict | None = None) -> dict[str, bytes]:
     name = f"talaria-android-{version}-unsigned.apk"
     return {
-        f"https://dl/{version}/{name}": apk,
-        f"https://dl/{version}/SHA256SUMS": f"{hashlib.sha256(sums_apk or apk).hexdigest()}  {name}\n".encode(),
-        f"https://dl/{version}/release.json": json.dumps(
+        url(version, name): apk,
+        url(version, "SHA256SUMS"): f"{hashlib.sha256(sums_apk or apk).hexdigest()}  {name}\n".encode(),
+        url(version, "release.json"): json.dumps(
             meta or {"version": version, "version_code": version_code(version), "notes": "New: updates."}).encode(),
     }
 
@@ -176,7 +186,7 @@ def publisher(tmp_path: Path, gh: FakeGitHub, run) -> Publisher:
 
 
 def test_publisher_signs_and_places_each_channel(tmp_path: Path):
-    gh = FakeGitHub([gh_release("0.2.0-beta.1", True), gh_release("0.1.0", False)],
+    gh = FakeGitHub(["v0.2.0-beta.1", "v0.1.0"],
                     {**publish_files("0.2.0-beta.1", b"beta apk"), **publish_files("0.1.0", b"stable apk")})
     run, ran = fake_tools()
     pub = publisher(tmp_path, gh, run)
@@ -195,7 +205,9 @@ def test_publisher_signs_and_places_each_channel(tmp_path: Path):
     assert pub.publish() == [] and ran == []
 
     # a stable release reaches both channels, and the old installer goes
-    gh.listing.insert(0, gh_release("0.2.0", False))
+    gh.tags.insert(0, "v0.3.0-beta.1")  # CI hasn't uploaded its files yet: skipped, no error
+    assert pub.publish() == []
+    gh.tags.insert(0, "v0.2.0")
     gh.files.update(publish_files("0.2.0", b"stable 0.2"))
     assert pub.publish() == ["beta 0.2.0", "stable 0.2.0"]
     assert sum(1 for a in ran if a[1:2] == ["sign"]) == 1, "signed once for both channels"
@@ -208,7 +220,7 @@ def test_publisher_refuses_what_it_cant_trust(tmp_path: Path, problem: str):
                           sums_apk=b"other" if problem == "checksum" else None,
                           meta={"version": "0.2.0-beta.1", "version_code": 1} if problem == "meta" else None)
     run, _ = fake_tools(cert="cd" * 32 if problem == "cert" else CERT)
-    pub = publisher(tmp_path, FakeGitHub([gh_release("0.2.0-beta.1", True)], files), run)
+    pub = publisher(tmp_path, FakeGitHub(["v0.2.0-beta.1"], files), run)
     with pytest.raises(RuntimeError):
         pub.publish()
     assert not (tmp_path / "out" / "beta" / "android.json").exists()

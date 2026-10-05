@@ -51,28 +51,8 @@
                 "type": "object",
                 "properties": {
                   "key": {
-                    "enum": [
-                      "Enter",
-                      "Escape",
-                      "Tab",
-                      "BTab",
-                      "BSpace",
-                      "Space",
-                      "Up",
-                      "Down",
-                      "Left",
-                      "Right",
-                      "Home",
-                      "End",
-                      "PPage",
-                      "NPage",
-                      "C-c",
-                      "C-d",
-                      "C-z",
-                      "C-l",
-                      "C-r",
-                      "C-o"
-                    ]
+                    "type": "string",
+                    "pattern": "^(?:(?:C-|M-|C-M-)?(?:Enter|Escape|Tab|BSpace|Space|Up|Down|Left|Right|Home|End|PPage|NPage|DC|IC|[a-z0-9@\\[\\]\\\\^_/])|BTab|F(?:[1-9]|1[0-2]))$"
                   }
                 },
                 "required": [
