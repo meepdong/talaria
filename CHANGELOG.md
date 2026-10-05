@@ -9,6 +9,8 @@ release notes the app shows.
 ### Added
 - Hermes can send you files in a chat (its new send_file tool): a PDF, image or document it made shows up in the
   conversation with Open, on every device, and stays in the chat's history.
+- Files up to 2 GB, both ways: uploads and downloads stream from and to storage instead of memory, with
+  "Uploading 40%" on the message and "Opening 40%" on the file. The server keeps at least 10 GB free.
 
 ## [0.2.0-beta.4] - 2026-10-05
 

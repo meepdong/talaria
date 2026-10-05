@@ -95,7 +95,7 @@ fun FilesScreen(files: FilesView, actions: TalariaActions) {
             LazyColumn(Modifier.weight(1f)) {
                 items(files.entries, key = { it.path }) { f ->
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    FileRow(f, opening = files.opening == f.path, actions)
+                    FileRow(f, opening = files.opening == f.path, actions, files.openingProgress)
                 }
                 if (files.truncated) {
                     item {
@@ -109,7 +109,7 @@ fun FilesScreen(files: FilesView, actions: TalariaActions) {
 }
 
 @Composable
-private fun FileRow(f: FileItem, opening: Boolean, actions: TalariaActions) {
+private fun FileRow(f: FileItem, opening: Boolean, actions: TalariaActions, progress: Float? = null) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { actions.openFile(f.path) }
             .padding(horizontal = 16.dp, vertical = 8.dp).testTag("file-${f.path}"),
@@ -128,7 +128,12 @@ private fun FileRow(f: FileItem, opening: Boolean, actions: TalariaActions) {
             Text(f.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (!f.folder) {
-            if (opening) CircularProgressIndicator(Modifier.size(20.dp).testTag("opening"), strokeWidth = 2.dp)
+            if (opening) {
+                progress?.takeIf { it > 0f }?.let {
+                    Text("${(it * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 6.dp))
+                }
+                CircularProgressIndicator(Modifier.size(20.dp).testTag("opening"), strokeWidth = 2.dp)
+            }
             else TextButton(onClick = { actions.openFile(f.path) }, modifier = Modifier.testTag("open-${f.path}")) { Text("Open") }
             TextButton(onClick = { actions.askAboutFile(f.path) }, modifier = Modifier.testTag("ask-${f.path}")) { Text("Ask Hermes") }
         }

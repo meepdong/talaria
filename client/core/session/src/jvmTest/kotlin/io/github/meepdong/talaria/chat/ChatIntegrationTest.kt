@@ -100,7 +100,7 @@ class ChatIntegrationTest {
         }
         val sent = done.openMessages.first()
         assertEquals(listOf(Attachment.Kind.IMAGE, Attachment.Kind.FILE), sent.attachments.map { it.kind })
-        assertEquals(photo.bytes.toList(), sent.attachments[0].preview?.toList())
+        assertEquals(photo.preview!!.toList(), sent.attachments[0].preview?.toList())
 
         // the phone sees what was attached, without the photo's bytes
         val conv = done.openId!!
@@ -109,7 +109,7 @@ class ChatIntegrationTest {
         val asked = history.threads.getValue(conv).messages.first()
         assertEquals("Have a look", asked.text)
         // the photo is also a file in the agent's inbox, so history knows its name and size
-        assertEquals(listOf(Attachment(Attachment.Kind.IMAGE, "IMG_1.jpg", "image/jpeg", photo.bytes.size.toLong()),
-            Attachment(Attachment.Kind.FILE, "report.pdf", "application/pdf", report.bytes.size.toLong())), asked.attachments)
+        assertEquals(listOf(Attachment(Attachment.Kind.IMAGE, "IMG_1.jpg", "image/jpeg", photo.size),
+            Attachment(Attachment.Kind.FILE, "report.pdf", "application/pdf", report.size)), asked.attachments)
     }
 }

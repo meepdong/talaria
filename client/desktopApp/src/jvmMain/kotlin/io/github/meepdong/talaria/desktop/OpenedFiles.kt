@@ -1,5 +1,6 @@
 package io.github.meepdong.talaria.desktop
 
+import io.github.meepdong.talaria.ui.FileOpener
 import java.awt.Desktop
 import java.io.File
 
@@ -8,17 +9,20 @@ import java.io.File
  * `opened/`, emptied when Talaria starts. Program files are refused, since opening
  * one would run it.
  */
-class OpenedFiles(private val dir: File, private val windows: Boolean) {
+class OpenedFiles(private val dir: File, private val windows: Boolean) : FileOpener {
     init {
         dir.deleteRecursively()
     }
 
-    fun open(name: String, bytes: ByteArray) {
+    override fun target(name: String): File {
         val safe = safeName(name)
         require(!runs(safe)) { "Talaria doesn't open program files. Ask Hermes about it instead" }
         // a folder per open, so two files with the same name don't overwrite each other
-        val target = File(File(dir, System.nanoTime().toString()).apply { mkdirs() }, safe)
-        target.writeBytes(bytes)
+        return File(File(dir, System.nanoTime().toString()).apply { mkdirs() }, safe)
+    }
+
+    override fun open(file: File, mime: String) {
+        val target = file
         target.setReadOnly()
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
             Desktop.getDesktop().open(target)

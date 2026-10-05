@@ -96,11 +96,11 @@ async def test_only_files_in_shared_folders(service, tmp_path: Path):
     (tmp_path / "secret.txt").write_text("x")
     (tmp_path / "ws" / "big.bin").write_bytes(b"")
     with open(tmp_path / "ws" / "big.bin", "r+b") as f:
-        f.truncate(21 * 1024 * 1024)
+        f.truncate(2 * 1024 * 1024 * 1024 + 1)  # sparse: nothing is written
     (tmp_path / "ws" / "escape").symlink_to(tmp_path / "secret.txt")
     for path, why in [("/etc/shadow", "isn't in a folder"), ("/workspace/projects/.env", "No such file"),
                       ("/workspace/projects/../secret.txt", "outside"), ("/workspace/projects/escape", "outside"),
-                      ("/workspace/projects/big.bin", "over 20 MB"), ("/workspace/projects/missing.pdf", "No such file"),
+                      ("/workspace/projects/big.bin", "over 2 GB"), ("/workspace/projects/missing.pdf", "No such file"),
                       ("workspace/projects/x", "full path"), (None, "full path")]:
         text, is_error = result(await tools.call("send_file", {"path": path}, "hermes"))
         assert is_error and why in text, (path, text)

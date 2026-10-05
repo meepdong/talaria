@@ -17,11 +17,15 @@ object OpenedFiles {
         dir(activity).deleteRecursively()
     }
 
-    fun open(activity: Activity, name: String, mime: String, bytes: ByteArray) {
+    /** A new file named [name] under the cache's `opened/`, in a folder of its own. */
+    fun target(activity: Activity, name: String): File {
         val safe = name.substringAfterLast('/').replace(Regex("[\\u0000-\\u001f]"), "_").trim(' ', '.').take(120)
             .ifEmpty { "file" }
-        val target = File(File(dir(activity), System.nanoTime().toString()).apply { mkdirs() }, safe)
-        target.writeBytes(bytes)
+        return File(File(dir(activity), System.nanoTime().toString()).apply { mkdirs() }, safe)
+    }
+
+    fun open(activity: Activity, target: File, mime: String) {
+        val safe = target.name
         val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", target)
         val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         // the chooser itself says so when no app opens this kind of file

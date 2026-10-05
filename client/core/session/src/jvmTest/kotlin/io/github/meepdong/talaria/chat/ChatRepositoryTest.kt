@@ -44,6 +44,8 @@ private class FakeApi : ChatApi {
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatRepositoryTest {
+    private var repo0: ChatRepository? = null
+
     /** runTest, plus a scope for the repository that advanceUntilIdle drives and the end cancels. */
     private fun chatTest(body: suspend TestScope.(CoroutineScope) -> Unit) = runTest {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
@@ -134,6 +136,48 @@ class ChatRepositoryTest {
             "attachments":[{"kind":"file","name":"photos_signed.pdf","mime":"application/pdf","size":11,"root":"workspace","path":"photos_signed.pdf"}]}}""")
         advanceUntilIdle()
         assertEquals(3, repo.state.value.openMessages.size, "the same file isn't shown twice")
+    }
+
+    @Test
+    fun aBigFileStreamsUpInChunksWithProgress() = chatTest { scope ->
+        val api = FakeApi()
+        val size = 1_500_000L  // three chunks of up to 512 KiB, made on the fly: never one array
+        var opened = 0
+        val file = OutgoingFile("clip.mp4", "video/mp4", size, {
+            opened++
+            object : java.io.InputStream() {
+                var left = size
+                override fun read(): Int = if (left-- > 0) 7 else -1
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (left <= 0) return -1
+                    val n = minOf(len.toLong(), left).toInt()
+                    java.util.Arrays.fill(b, off, off + n, 7)
+                    left -= n
+                    return n
+                }
+            }
+        })
+        val progress = mutableListOf<Float?>()
+        api.answers["blob.begin"] = { json("""{"blob_id":"b-1","chunk_bytes":524288}""") }
+        api.answers["blob.put"] = { p ->
+            progress += repo0!!.state.value.draft.firstOrNull()?.progress
+            json("""{"blob_id":"b-1","received":0}""")
+        }
+        api.answers["blob.commit"] = { json("""{"blob_id":"b-1"}""") }
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"clip"}""") }
+        val repo = ChatRepository(scope, api, nowMs = { 1_000_000L }, newClientMsgId = { "m-1" },
+            io = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)).also { it.start() }
+        repo0 = repo
+        advanceUntilIdle()
+        repo.send("", listOf(file), conversationId = null)
+        advanceUntilIdle()
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(ByteArray(size.toInt()) { 7 })
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(digest, api.calls.first { it.first == "blob.begin" }.second["sha256"].toString().trim('"'))
+        assertEquals(listOf("0", "524288", "1048576"), api.calls.filter { it.first == "blob.put" }.map { it.second["offset"].toString() })
+        assertEquals(2, opened, "read twice from the source: the digest, then the chunks")
+        assertEquals(listOf(null, 524288f / size, 1048576f / size), progress, "the message says how far the upload got")
+        assertEquals(null, repo.state.value.threads["c-1"]?.messages?.firstOrNull()?.progress)
     }
 
     @Test

@@ -130,8 +130,10 @@ class FilesRepository(private val scope: CoroutineScope, private val api: ChatAp
     }
 
     /** The whole file, read in chunks. Throws [RpcException] or [TnpException] if it can't be read. */
-    suspend fun read(root: String, path: String): ByteArray {
-        val out = ByteArrayOutputStream()
+    suspend fun read(root: String, path: String): ByteArray = ByteArrayOutputStream().also { readTo(root, path, it) }.toByteArray()
+
+    /** A file in 512 KiB chunks, written to [out] as they come (a 2 GB file never sits in memory); [progress] hears 0..1. */
+    suspend fun readTo(root: String, path: String, out: java.io.OutputStream, progress: (Float) -> Unit = {}) {
         var offset = 0L
         while (true) {
             val r = api.request("files.read", buildJsonObject {
@@ -143,9 +145,9 @@ class FilesRepository(private val scope: CoroutineScope, private val api: ChatAp
             out.write(bytes)
             offset += bytes.size
             val size = r.long("size") ?: offset
+            progress(if (size > 0) (offset.toFloat() / size).coerceIn(0f, 1f) else 1f)
             if ((r["eof"] as? JsonPrimitive)?.booleanOrNull == true || bytes.isEmpty() || offset >= size) break
         }
-        return out.toByteArray()
     }
 
     /** A file to name in chat.send, so the agent reads it where it is. */

@@ -13,6 +13,8 @@ data class FilesView(
     val truncated: Boolean = false,
     /** The file being fetched to open, by path. */
     val opening: String? = null,
+    /** 0..1 while [opening] downloads. */
+    val openingProgress: Float? = null,
 )
 
 data class RootItem(val id: String, val name: String, val selected: Boolean, val error: String? = null)

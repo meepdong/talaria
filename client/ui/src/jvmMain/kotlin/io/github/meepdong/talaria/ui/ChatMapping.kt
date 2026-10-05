@@ -78,6 +78,7 @@ private fun ChatMessage.item(nowMs: Long, images: ImageCache) = MessageItem(
     },
     error = error,
     attachments = attachments.map { it.chip(images) },
+    progress = progress,
 )
 
 /** Turn the chat state into the chat screens (UI.md §3–4). */

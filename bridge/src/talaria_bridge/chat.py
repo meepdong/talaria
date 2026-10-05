@@ -686,7 +686,10 @@ class ChatService:
                 folder = inbox / conv.id
                 folder.mkdir(parents=True, exist_ok=True, mode=0o750)
                 target = folder / f"{blob.blob_id}-{safe_name(blob.name)}"
-                shutil.copyfile(blob.path, target)
+                try:
+                    os.replace(blob.path, target)  # moved, not copied: a 2 GB file needs no second 2 GB
+                except OSError:
+                    shutil.copyfile(blob.path, target)  # another filesystem
                 os.chmod(target, 0o640)  # the agent reads it through the inbox's group
                 lines.append(f"Attached file: {target} ({blob.mime}, {blob.size} bytes)")
         except OSError as exc:
@@ -1225,7 +1228,7 @@ class ChatService:
             if self.blobs is None:
                 raise RpcError(m.MODALITY_UNSUPPORTED, "This bridge takes no attachments")
             try:
-                # file work off the event loop: a chunk is up to 512 KiB, a commit hashes 20 MiB
+                # file work off the event loop: a chunk is up to 512 KiB, a commit hashes up to 2 GiB
                 return await asyncio.to_thread(self.blobs.handle, method, p), None
             except BlobError as exc:
                 raise RpcError(exc.code, exc.message) from None

@@ -27,9 +27,9 @@ class AttachmentsTest {
 
         val (files, problem) = Attachments.prepare(listOf(jpeg, pdf, heic))
         assertEquals(listOf("IMG_0001.jpg" to "image/jpeg", "report.pdf" to "application/pdf"), files.map { it.name to it.mime })
-        val photo = assertNotNull(ImageIO.read(ByteArrayInputStream(files[0].bytes)))
+        val photo = assertNotNull(ImageIO.read(ByteArrayInputStream(files[0].preview!!)))
         assertEquals(1568 to 1176, photo.width to photo.height)
-        assertFalse(String(files[0].bytes, Charsets.ISO_8859_1).contains("GPS-HERE"))
+        assertFalse(String(files[0].preview!!, Charsets.ISO_8859_1).contains("GPS-HERE"))
         assertTrue(problem!!.startsWith("Can't read x.heic"))
     }
 }

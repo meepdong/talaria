@@ -55,10 +55,10 @@ object Attachments {
                     out += photo(file.nameWithoutExtension, image)
                 } else {
                     if (file.length() > OutgoingFile.MAX_SIZE) {
-                        problem = "${file.name} is over 20 MB, too large to send"
+                        problem = "${file.name} is over 2 GB, too large to send"
                         continue
                     }
-                    out += OutgoingFile(file.name, mime, file.readBytes())
+                    out += OutgoingFile(file.name, mime, file.length(), { file.inputStream() })  // read as it uploads
                 }
             } catch (e: Exception) {
                 problem = "Couldn't read ${file.name}: ${e.message}"

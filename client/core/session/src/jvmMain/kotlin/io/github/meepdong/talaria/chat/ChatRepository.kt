@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -75,6 +77,8 @@ class ChatRepository(
     private val api: ChatApi,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val newClientMsgId: () -> String = { "m-" + UUID.randomUUID() },
+    /** Where files are read for uploading (a test passes its own). */
+    private val io: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
@@ -458,7 +462,13 @@ class ChatRepository(
     private suspend fun deliver(conv: String?, text: String, cmid: String) {
         try {
             // uploaded again on a retry: the bridge drops a blob once it is sent or an hour old
-            val blobs = outgoing[cmid].orEmpty().map { upload(it) }
+            val files = outgoing[cmid].orEmpty()
+            val total = files.sumOf { it.size }.coerceAtLeast(1)
+            var before = 0L
+            val blobs = files.map { f ->
+                upload(f) { sent -> setProgress(conv, cmid, (before + sent).toFloat() / total) }.also { before += f.size }
+            }
+            if (files.isNotEmpty()) setProgress(conv, cmid, null)
             val r = api.request("chat.send", buildJsonObject {
                 put("text", text)
                 conv?.let { put("conversation_id", it) }
@@ -484,29 +494,52 @@ class ChatRepository(
         }
     }
 
-    /** Upload one file in chunks; returns its blob_id. */
-    private suspend fun upload(file: OutgoingFile): String {
-        val sha = MessageDigest.getInstance("SHA-256").digest(file.bytes).joinToString("") { "%02x".format(it) }
+    /**
+     * Upload one file in chunks, read from its source as it goes (twice: the digest first, then the chunks), so
+     * its size doesn't matter for memory; [sent] hears the bytes sent so far. Returns its blob_id.
+     */
+    private suspend fun upload(file: OutgoingFile, sent: (Long) -> Unit = {}): String {
+        val sha = withContext(io) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.open().use { input ->
+                val buffer = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    digest.update(buffer, 0, n)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
         val begin = api.request("blob.begin", buildJsonObject {
             put("name", file.name)
             put("mime", file.mime)
-            put("size", file.bytes.size)
+            put("size", file.size)
             put("sha256", sha)
         })
         val id = begin.str("blob_id") ?: throw RpcException(0, "The bridge didn't start the upload")
         val chunk = (begin.long("chunk_bytes")?.toInt() ?: CHUNK_BYTES).coerceIn(1, CHUNK_BYTES)
-        var offset = 0
-        while (offset < file.bytes.size) {
-            val end = minOf(file.bytes.size, offset + chunk)
-            api.request("blob.put", buildJsonObject {
-                put("blob_id", id)
-                put("offset", offset)
-                put("data", Base64.getEncoder().encodeToString(file.bytes.copyOfRange(offset, end)))
-            }, SEND_TIMEOUT_MS)
-            offset = end
+        file.open().use { input ->
+            var offset = 0L
+            while (offset < file.size) {
+                val piece = withContext(io) { input.readNBytes(minOf(chunk.toLong(), file.size - offset).toInt()) }
+                if (piece.isEmpty()) throw RpcException(0, "${file.name} got shorter while it was sent")
+                api.request("blob.put", buildJsonObject {
+                    put("blob_id", id)
+                    put("offset", offset)
+                    put("data", Base64.getEncoder().encodeToString(piece))
+                }, SEND_TIMEOUT_MS)
+                offset += piece.size
+                sent(offset)
+            }
         }
         api.request("blob.commit", buildJsonObject { put("blob_id", id) }, SEND_TIMEOUT_MS)
         return id
+    }
+
+    private fun setProgress(conv: String?, cmid: String, progress: Float?) = _state.update { s ->
+        val update = { list: List<ChatMessage> -> list.map { if (it.clientMsgId == cmid) it.copy(progress = progress) else it } }
+        s.withMessages(conv, f = update).let { st -> st.threads.keys.fold(st) { acc, id -> acc.withMessages(id, f = update) } }
     }
 
     private fun markNotSent(conv: String?, cmid: String, error: String) = _state.update { s ->

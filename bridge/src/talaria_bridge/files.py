@@ -22,7 +22,7 @@ from pathlib import Path
 from .protocol import messages as m
 
 CHUNK = 512 * 1024
-MAX_READ = 20 * 1024 * 1024
+MAX_READ = 2 * 1024 * 1024 * 1024  # 2 GiB, read in 512 KiB chunks (files.read)
 MAX_ENTRIES = 500
 MAX_SCANNED = 20_000  # a search gives up after this many folder entries
 INBOX = "inbox"
@@ -215,7 +215,7 @@ class FilesService:
             raise FilesError(m.INVALID_PARAMS, "That is a folder, not a file")
         size = real.stat().st_size
         if size > MAX_READ:
-            raise FilesError(m.INVALID_PARAMS, "That file is over 20 MB")
+            raise FilesError(m.INVALID_PARAMS, "That file is over 2 GB")
         return Found(root, "/".join(parts), real, size, _mime(real.name))
 
     def read(self, p: dict) -> dict:

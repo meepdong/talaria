@@ -3,7 +3,7 @@ package io.github.meepdong.talaria.ui
 import io.github.meepdong.talaria.files.FilesState
 
 /** The Files page from the browsing state. [opening] is the file being fetched; [notice] why opening failed. */
-fun filesView(state: FilesState?, nowMs: Long, opening: String? = null, notice: String? = null): FilesView {
+fun filesView(state: FilesState?, nowMs: Long, opening: String? = null, notice: String? = null, progress: Float? = null): FilesView {
     val s = state ?: FilesState(loading = true)
     val root = s.roots.firstOrNull { it.id == s.root }
     val location = buildString {
@@ -37,6 +37,7 @@ fun filesView(state: FilesState?, nowMs: Long, opening: String? = null, notice: 
         message = message,
         truncated = s.truncated,
         opening = opening,
+        openingProgress = progress?.takeIf { opening != null },
     )
 }
 

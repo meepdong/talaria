@@ -23,6 +23,6 @@ class OpenedFilesTest {
         assertFalse(OpenedFiles.runs("notes.pdf"))
         assertFalse(OpenedFiles.runs("README"))
         val opened = OpenedFiles(Files.createTempDirectory("opened").toFile(), windows = true)
-        assertFailsWith<IllegalArgumentException> { opened.open("run.bat", ByteArray(1)) }
+        assertFailsWith<IllegalArgumentException> { opened.target("run.bat") }  // refused before anything is downloaded
     }
 }

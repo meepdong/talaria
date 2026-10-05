@@ -393,7 +393,7 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                 }
             }
             items(view.messages, key = { it.key }) { m ->
-                WithMessageMenu(m, view, actions) { MessageBubble(m, view.voice, actions) }
+                WithMessageMenu(m, view, actions) { MessageBubble(m, view.voice, actions, view.openingFile, view.openingProgress) }
             }
             items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
             // server operations (PROTOCOL §10.8): where the owner is looking, below the newest message
@@ -404,7 +404,7 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
 }
 
 @Composable
-private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActions) {
+private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActions, opening: String? = null, openingProgress: Float? = null) {
     if (m.fromUser) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
             m.attachments.forEach { a ->
@@ -417,7 +417,7 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
                 }
             }
             val footer = when (m.state) {
-                ItemState.SENDING -> "Sending…"
+                ItemState.SENDING -> m.progress?.let { "Uploading ${(it * 100).toInt()}%" } ?: "Sending…"
                 ItemState.QUEUED -> "Queued: sends when the reply ends"
                 ItemState.CANCELLED -> "Removed from the queue"
                 ItemState.NOT_SENT -> "Not sent: ${m.error ?: "try again"}"
@@ -455,7 +455,9 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
                 color = Brand.Brass, modifier = Modifier.testTag("approval"))
         }
         if (m.text.isNotEmpty()) MarkdownText(m.text)
-        m.attachments.forEach { a -> AgentFile(a, actions, Modifier.testTag("agent-file-${m.key}")) }
+        m.attachments.forEach { a ->
+            AgentFile(a, actions, Modifier.testTag("agent-file-${m.key}"), openingProgress.takeIf { a.path != null && a.path == opening } ?: -1f)
+        }
         when (m.state) {
             ItemState.STREAMING -> if (m.text.isEmpty() && m.tools.isEmpty() && m.commentary == null) {
                 Text("Thinking…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -502,7 +504,7 @@ private fun AsideCard(a: AsideItem, actions: TalariaActions) {
 /** A photo as a thumbnail when its bytes are here, otherwise a chip with its name. */
 /** A file the agent sent: its name and size, and Open (which also lets the system share it). */
 @Composable
-private fun AgentFile(a: AttachmentChip, actions: TalariaActions, modifier: Modifier = Modifier) {
+private fun AgentFile(a: AttachmentChip, actions: TalariaActions, modifier: Modifier = Modifier, opening: Float = -1f) {
     val root = a.root
     val path = a.path
     Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = modifier.widthIn(max = 420.dp)) {
@@ -511,7 +513,9 @@ private fun AgentFile(a: AttachmentChip, actions: TalariaActions, modifier: Modi
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (root != null && path != null) {
                 TextButton(onClick = { actions.openAttachment(root, path, a.name, a.mime ?: "application/octet-stream") },
-                    modifier = Modifier.testTag("open-file")) { Text("Open") }
+                    enabled = opening < 0f, modifier = Modifier.testTag("open-file")) {
+                    Text(if (opening < 0f) "Open" else "Opening ${(opening * 100).toInt()}%")
+                }
             }
         }
     }

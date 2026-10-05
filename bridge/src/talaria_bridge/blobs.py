@@ -19,9 +19,10 @@ from pathlib import Path
 
 from .protocol import messages as m
 
-MAX_BLOB = 20 * 1024 * 1024
+MAX_BLOB = 2 * 1024 * 1024 * 1024  # 2 GiB per file (owner, 2026-10-05)
 CHUNK_BYTES = 512 * 1024
-MAX_PENDING_BYTES = 1024 * 1024 * 1024  # all uploads not yet sent, so a device can't fill the disk
+MAX_PENDING_BYTES = 8 * 1024 * 1024 * 1024  # all uploads not yet sent
+MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024  # an upload never leaves the server with less free than this
 BLOB_TTL_S = 3600
 IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 MAX_INLINE_IMAGE = 5 * 1024 * 1024
@@ -96,8 +97,12 @@ class BlobStore:
             raise BlobError(m.INVALID_PARAMS, f"size must be 1 to {MAX_BLOB} bytes")
         if not (isinstance(digest, str) and _SHA256.match(digest)):
             raise BlobError(m.INVALID_PARAMS, "sha256 must be 64 lowercase hex characters")
+        waiting = sum(b.size - b.received for b in self._blobs.values())
         if sum(b.size for b in self._blobs.values()) + size > MAX_PENDING_BYTES:
             raise BlobError(m.CONFLICT, "Too many uploads waiting to be sent; try again later")
+        if self.free_bytes() - waiting - size < MIN_FREE_BYTES:
+            raise BlobError(m.CONFLICT, f"Not enough space on the server for this file: it keeps at least "
+                                        f"{MIN_FREE_BYTES // 2**30} GB free")
         blob_id = "b-" + secrets.token_hex(12)
         path = self.folder / blob_id
         path.touch(mode=0o600)
@@ -149,6 +154,9 @@ class BlobStore:
 
     def release(self, blob: Blob) -> None:
         blob.claimed = False
+
+    def free_bytes(self) -> int:
+        return shutil.disk_usage(self.folder).free
 
     def discard(self, blob_id: str) -> None:
         blob = self._blobs.pop(blob_id, None)

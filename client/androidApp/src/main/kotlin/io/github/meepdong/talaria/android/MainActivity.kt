@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import io.github.meepdong.talaria.protocol.PairingPayload
+import io.github.meepdong.talaria.ui.FileOpener
 import io.github.meepdong.talaria.ui.Screen
 import io.github.meepdong.talaria.ui.Tab
 import io.github.meepdong.talaria.ui.TalariaApp
@@ -102,7 +103,10 @@ class MainActivity : ComponentActivity() {
 
             // Open on the Files page: a copy lent to the app that opens it
             DisposableEffect(controller) {
-                controller.setFileOpener { name, mime, bytes -> OpenedFiles.open(this@MainActivity, name, mime, bytes) }
+                controller.setFileOpener(object : FileOpener {
+                    override fun target(name: String) = OpenedFiles.target(this@MainActivity, name)
+                    override fun open(file: java.io.File, mime: String) = OpenedFiles.open(this@MainActivity, file, mime)
+                })
                 onDispose { controller.setFileOpener(null) }
             }
 

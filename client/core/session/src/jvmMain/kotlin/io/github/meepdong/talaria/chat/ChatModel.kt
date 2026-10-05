@@ -87,18 +87,30 @@ data class Attachment(
     enum class Kind { IMAGE, FILE }
 }
 
-/** A photo or file picked to send, already downscaled and stripped of location if it is a photo. */
-class OutgoingFile(val name: String, val mime: String, val bytes: ByteArray) {
-    val kind: Attachment.Kind
-        get() = if (mime in INLINE_IMAGE_MIMES && bytes.size <= MAX_INLINE_IMAGE) Attachment.Kind.IMAGE else Attachment.Kind.FILE
+/**
+ * A photo or file picked to send, already downscaled and stripped of location if it is a photo. Its bytes are read
+ * from [source] when it is uploaded, a chunk at a time, so a 2 GB video is never held in memory; [preview] is the
+ * photo itself, for small photos only.
+ */
+class OutgoingFile(
+    val name: String, val mime: String, val size: Long,
+    private val source: () -> java.io.InputStream, val preview: ByteArray? = null,
+) {
+    /** A file already in memory: photos, shared text. */
+    constructor(name: String, mime: String, bytes: ByteArray) : this(name, mime, bytes.size.toLong(), { bytes.inputStream() }, bytes)
 
-    fun toAttachment() = Attachment(kind, name, mime, bytes.size.toLong(), bytes.takeIf { kind == Attachment.Kind.IMAGE })
+    fun open(): java.io.InputStream = source()
+
+    val kind: Attachment.Kind
+        get() = if (mime in INLINE_IMAGE_MIMES && size <= MAX_INLINE_IMAGE) Attachment.Kind.IMAGE else Attachment.Kind.FILE
+
+    fun toAttachment() = Attachment(kind, name, mime, size, preview?.takeIf { kind == Attachment.Kind.IMAGE })
 
     companion object {
         /** What the bridge passes to the agent as a photo; anything else goes to its inbox as a file. */
         val INLINE_IMAGE_MIMES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
         const val MAX_INLINE_IMAGE = 5 * 1024 * 1024
-        const val MAX_SIZE = 20 * 1024 * 1024
+        const val MAX_SIZE = 2L * 1024 * 1024 * 1024  // 2 GB (owner, 2026-10-05)
         const val MAX_PER_MESSAGE = 128
     }
 }
@@ -128,6 +140,8 @@ data class ChatMessage(
     val approval: PendingApproval? = null,
     val error: String? = null,
     val attachments: List<Attachment> = emptyList(),
+    /** 0..1 while this message's files upload. */
+    val progress: Float? = null,
 )
 
 /** An approval a running reply waits for (§9): answer it with one of [choices] through [ChatRepository.approve]. */

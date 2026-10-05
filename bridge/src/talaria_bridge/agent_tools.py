@@ -92,7 +92,7 @@ SEND_FILE = {
                    " you are replying in: it appears there with Open and Share on their phone and laptop. Use it"
                    " whenever the result of a task is a file, instead of saying you can't send files or asking them"
                    " to look in a folder. Save the file in your workspace (/workspace/projects) first; files the owner"
-                   " sent you (the inbox) work too. At most 20 MB.",
+                   " sent you (the inbox) work too. At most 2 GB.",
     "inputSchema": {"type": "object", "properties": {
         "path": {"type": "string", "description": "The file's full path as you see it, e.g. /workspace/projects/report.pdf."},
         "caption": {"type": "string", "description": "A short line shown with the file, e.g. \"Signed PDF\"."}},

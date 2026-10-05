@@ -145,11 +145,11 @@ class TalariaController(
     private val pendingServer = MutableStateFlow<List<ServerFile>>(emptyList())
 
     /** A server file being fetched to open, and why the last one couldn't be. */
-    private data class FileTask(val opening: String? = null, val notice: String? = null)
+    private data class FileTask(val opening: String? = null, val notice: String? = null, val progress: Float? = null)
     private val fileTask = MutableStateFlow(FileTask())
 
-    /** Opens fetched file bytes with the device's own app; set by the platform. */
-    private var fileOpener: ((name: String, mime: String, bytes: ByteArray) -> Unit)? = null
+    /** Opens a fetched file with the device's own app; set by the platform. */
+    private var fileOpener: FileOpener? = null
     @Volatile private var installer: AppUpdater? = null
     private var textSharer: ((String) -> Unit)? = null
 
@@ -501,7 +501,7 @@ class TalariaController(
     // Files (§12)
 
     /** How the platform opens a fetched server file (a temp copy and the system's viewer). */
-    fun setFileOpener(open: ((name: String, mime: String, bytes: ByteArray) -> Unit)?) {
+    fun setFileOpener(open: FileOpener?) {
         fileOpener = open
     }
 
@@ -530,40 +530,43 @@ class TalariaController(
             return
         }
         val root = f.state.value.root ?: return
-        val open = fileOpener ?: run {
+        download(root, path, entry.name, entry.mime ?: "application/octet-stream")
+    }
+
+    override fun openAttachment(root: String, path: String, name: String, mime: String) {
+        download(root, path, name, mime)
+    }
+
+    /** Fetch a file to a file of its own, a chunk at a time (up to 2 GB), then open it; [FileTask] shows how far it got. */
+    private fun download(root: String, path: String, name: String, mime: String) {
+        val f = files ?: return
+        val opener = fileOpener ?: run {
             fileTask.value = FileTask(notice = "This device can't open files from here yet")
+            chat?.notice("This device can't open files yet")
             return
         }
         if (fileTask.value.opening != null) return
-        fileTask.value = FileTask(opening = path)
+        fileTask.value = FileTask(opening = path, progress = 0f)
         scope.launch(io) {
             val notice = try {
-                val bytes = f.read(root, path)
-                open(entry.name, entry.mime ?: "application/octet-stream", bytes)
+                val target = opener.target(name)
+                try {
+                    target.outputStream().buffered().use { out ->
+                        f.readTo(root, path, out) { p -> fileTask.update { it.copy(progress = p) } }
+                    }
+                } catch (e: Exception) {
+                    target.delete()
+                    throw e
+                }
+                opener.open(target, mime)
                 null
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                "Couldn't open ${entry.name}: ${e.message ?: e::class.simpleName}"
+                "Couldn't open $name: ${e.message ?: e::class.simpleName}"
             }
             fileTask.value = FileTask(notice = notice)
-        }
-    }
-
-    override fun openAttachment(root: String, path: String, name: String, mime: String) {
-        val f = files ?: return
-        val open = fileOpener ?: run {
-            chat?.notice("This device can't open files yet")
-            return
-        }
-        scope.launch(io) {
-            try {
-                open(name, mime, f.read(root, path))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                chat?.notice("Couldn't open $name: ${e.message ?: e::class.simpleName}")
-            }
+            notice?.let { chat?.notice(it) }
         }
     }
 
@@ -729,9 +732,9 @@ class TalariaController(
      * removed). [problem] says why some couldn't be added.
      */
     fun addAttachments(files: List<OutgoingFile>, problem: String? = null) {
-        val (fit, tooBig) = files.partition { it.bytes.size <= OutgoingFile.MAX_SIZE }
+        val (fit, tooBig) = files.partition { it.size <= OutgoingFile.MAX_SIZE }
         val room = OutgoingFile.MAX_PER_MESSAGE - pending.value.size
-        (problem ?: tooBig.firstOrNull()?.let { "${it.name} is over 20 MB, too large to send" }
+        (problem ?: tooBig.firstOrNull()?.let { "${it.name} is over 2 GB, too large to send" }
             ?: if (fit.size > room) "A message can carry ${OutgoingFile.MAX_PER_MESSAGE} files; the rest were left out" else null)
             ?.let { chat?.notice(it) }
         pending.update { (it + fit).take(OutgoingFile.MAX_PER_MESSAGE) }
@@ -1041,7 +1044,8 @@ class TalariaController(
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val view = chatView(l.chat ?: ChatState(), x.page.conversationOpen,
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
-                    x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare)
+                    x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare,
+                        openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
                 Screen.Chat(
                     view, withBalance,
                     tab = x.page.tab,
@@ -1050,7 +1054,7 @@ class TalariaController(
                         update = l.updates?.takeIf { installer != null }?.let(::updateBanner)).withSchedule(l.schedule, now),
                     menu = menuView(view, withBalance, l.chat?.models, VERSION).withUpdate(l.updates, installer != null),
                     menuOpen = x.page.menuOpen,
-                    files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
+                    files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice, x.fileTask.progress),
                     schedule = scheduleView(l.schedule, now),
                     todos = todosView(l.todos, view, now),
                 )

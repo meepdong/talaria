@@ -25,11 +25,20 @@ object AndroidAttachments {
                 if (mime.startsWith("image/")) {
                     val photo = photo(context, uri, name.substringBeforeLast('.'))
                     if (photo == null) problem = "Can't read $name as a photo" else out += photo
-                } else if (size != null && size > OutgoingFile.MAX_SIZE) {
-                    problem = "$name is over 20 MB, too large to send"
                 } else {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    if (bytes == null) problem = "Couldn't open $name" else out += OutgoingFile(name, mime, bytes)
+                    // read as it uploads, so a 2 GB video never sits in memory; count it when the picker didn't say
+                    val resolver = context.contentResolver
+                    val length = size ?: resolver.openInputStream(uri)?.use { input ->
+                        var n = 0L
+                        val buffer = ByteArray(1 shl 16)
+                        while (true) { val r = input.read(buffer); if (r < 0) break; n += r }
+                        n
+                    }
+                    when {
+                        length == null -> problem = "Couldn't open $name"
+                        length > OutgoingFile.MAX_SIZE -> problem = "$name is over 2 GB, too large to send"
+                        else -> out += OutgoingFile(name, mime, length, { resolver.openInputStream(uri) ?: error("Couldn't open $name") })
+                    }
                 }
             } catch (e: Exception) {
                 problem = "Couldn't read $name: ${e.message}"

@@ -42,6 +42,8 @@ data class MessageItem(
     val approval: ApprovalItem? = null,
     val error: String? = null,
     val attachments: List<AttachmentChip> = emptyList(),
+    /** 0..1 while this message's files upload. */
+    val progress: Float? = null,
 )
 
 /** An approval card: [choices] are (choice, button label), in Hermes's order. */
@@ -71,6 +73,9 @@ data class ChatView(
     val connectionSummary: String,
     /** Photos and files picked for the next message. */
     val pending: List<AttachmentChip> = emptyList(),
+    /** The server file being fetched to open (a file the agent sent), and how far it got. */
+    val openingFile: String? = null,
+    val openingProgress: Float? = null,
     /** Whether this app can pick files (the 📎 button). */
     val canAttach: Boolean = false,
     /** False once the next message holds as many files as one can carry. */

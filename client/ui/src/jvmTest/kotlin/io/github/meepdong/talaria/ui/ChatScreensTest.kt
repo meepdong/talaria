@@ -31,6 +31,7 @@ import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ToolStep
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.test.assertNull
 
 @OptIn(ExperimentalTestApi::class)
@@ -185,6 +186,29 @@ class ChatScreensTest {
         onNodeWithText("📄 photos_signed.pdf", substring = true).assertExists()
         onNodeWithTag("open-file").performClick()
         assertEquals("file workspace/photos_signed.pdf application/pdf", actions.calls.last())
+    }
+
+    @Test
+    fun bigTransfersSayHowFarTheyGot() = runComposeUiTest {
+        val actions = Recorder()
+        val file = io.github.meepdong.talaria.chat.Attachment(io.github.meepdong.talaria.chat.Attachment.Kind.FILE,
+            "clip.mp4", "video/mp4", 1_500_000_000, root = "workspace", path = "clip.mp4")
+        val s = state().let { st ->
+            st.copy(threads = st.threads + ("c-1" to st.threads.getValue("c-1").let { t ->
+                t.copy(messages = t.messages + listOf(
+                    ChatMessage("h:f-2", Role.ASSISTANT, "Your video", 1_700_000_002_000, attachments = listOf(file)),
+                    ChatMessage("local:m-9", Role.USER, "Here's another", null, MessageState.SENDING, clientMsgId = "m-9", progress = 0.4f)))
+            }))
+        }
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) {
+                ChatHome(view(s).copy(openingFile = "clip.mp4", openingProgress = 0.4f), actions)
+            }
+        }
+        onNodeWithText("Uploading 40%").assertExists()
+        onNodeWithText("Opening 40%").assertExists()
+        onNodeWithTag("open-file").performClick()
+        assertTrue(actions.calls.none { it.startsWith("file ") }, "no second download while one runs")
     }
 
     @Test

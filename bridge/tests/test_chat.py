@@ -540,7 +540,7 @@ async def test_upload_errors(chat_bridge):
     data = b"hello world"
     digest = hashlib.sha256(data).hexdigest()
     bad_begins = [
-        {"name": "a", "mime": "text/plain", "size": 21 * 1024 * 1024, "sha256": digest},
+        {"name": "a", "mime": "text/plain", "size": 2 * 1024 * 1024 * 1024 + 1, "sha256": digest},
         {"name": "a", "mime": "not a type", "size": 11, "sha256": digest},
         {"name": "a", "mime": "text/plain", "size": 11, "sha256": "ABC"},
     ]
@@ -565,6 +565,28 @@ async def test_upload_errors(chat_bridge):
     assert send["error"]["code"] == m.NOT_FOUND
     await ws.close()
 
+
+
+async def test_big_uploads_keep_space_free_and_move_into_the_inbox(chat_bridge, tmp_path: Path, monkeypatch):
+    bridge, hermes = chat_bridge
+    ws = await connected(bridge)
+    blobs = bridge.server.chat.blobs
+    monkeypatch.setattr(blobs, "free_bytes", lambda: 11 * 2**30)  # 11 GB free: room for 1 GB, not 1.5
+    digest = "0" * 64
+    ok = await call(ws, "b1", "blob.begin", {"name": "video.mp4", "mime": "video/mp4", "size": 2**30 - 1, "sha256": digest})
+    assert "blob_id" in ok["result"]
+    full = await call(ws, "b2", "blob.begin", {"name": "more.mp4", "mime": "video/mp4", "size": 2**29, "sha256": digest})
+    assert full["error"]["code"] == m.CONFLICT and "10 GB free" in full["error"]["message"], "the first upload counts too"
+    monkeypatch.setattr(blobs, "free_bytes", lambda: 50 * 2**30)
+
+    data = b"x" * 700_000
+    doc = await upload(ws, "clip.mov", "video/quicktime", data)
+    blob_path = blobs._blobs[doc["blob_id"]].path
+    res = (await call(ws, "s1", "chat.send", {"text": "", "attachments": [{"blob_id": doc["blob_id"]}]}))["result"]
+    await until_done(ws, res["turn_id"])
+    saved = tmp_path / "inbox" / res["conversation_id"] / f"{doc['blob_id']}-clip.mov"
+    assert saved.read_bytes() == data and not blob_path.exists(), "moved, not copied"
+    await ws.close()
 
 async def test_files_need_an_inbox_and_a_failed_send_keeps_the_blob(chat_bridge):
     bridge, hermes = chat_bridge
