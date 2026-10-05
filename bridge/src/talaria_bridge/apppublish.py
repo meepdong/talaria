@@ -153,9 +153,11 @@ class Publisher:
     def _place(self, channel: str, rel: Release, apk: Path, release: dict) -> None:
         folder = self.out / channel
         folder.mkdir(parents=True, exist_ok=True)
-        import grp  # Unix only, like the publisher itself; imported here so the tests run anywhere
+        gid = -1
+        if self.group:
+            import grp  # Unix only, like the publisher itself; here so the tests (group=None) run anywhere
 
-        gid = grp.getgrnam(self.group).gr_gid if self.group else -1
+            gid = grp.getgrnam(self.group).gr_gid
         for path, mode in ((self.out, 0o750), (folder, 0o750)):
             os.chmod(path, mode)
             if gid >= 0:
