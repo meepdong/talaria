@@ -4,6 +4,11 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [0.2.0-beta.2] - 2026-10-05
+
+### Changed
+- The first update installed from inside the app: nothing else changes.
+
 ## [0.2.0-beta.1] - 2026-10-05
 
 ### Added
