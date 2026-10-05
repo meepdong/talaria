@@ -21,7 +21,7 @@ from .protocol import messages as m
 
 MAX_BLOB = 20 * 1024 * 1024
 CHUNK_BYTES = 512 * 1024
-MAX_PENDING_BYTES = 200 * 1024 * 1024  # all uploads not yet sent, so a device can't fill the disk
+MAX_PENDING_BYTES = 1024 * 1024 * 1024  # all uploads not yet sent, so a device can't fill the disk
 BLOB_TTL_S = 3600
 IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 MAX_INLINE_IMAGE = 5 * 1024 * 1024

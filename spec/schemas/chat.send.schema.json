@@ -47,7 +47,7 @@
         "attachments": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 10,
+          "maxItems": 128,
           "description": "Committed blobs (§10). Each blob can be sent once.",
           "items": {
             "type": "object",
@@ -104,7 +104,7 @@
             ]
           },
           "minItems": 1,
-          "maxItems": 10
+          "maxItems": 128
         },
         "todo_id": {
           "type": "string",

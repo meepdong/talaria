@@ -69,6 +69,8 @@ data class ChatView(
     val pending: List<AttachmentChip> = emptyList(),
     /** Whether this app can pick files (the 📎 button). */
     val canAttach: Boolean = false,
+    /** False once the next message holds as many files as one can carry. */
+    val canAttachMore: Boolean = true,
     val voice: VoiceView = VoiceView(),
     /** The model chip in the header: the conversation's, or the agent's default. Null hides it. */
     val model: String? = null,

@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { onPicked(it) }
+            // as many as the system picker allows (often 100); the controller keeps the first 128
+            val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { onPicked(it) }
             val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { onPicked(it) }
             DisposableEffect(controller) {
                 controller.setFilePicker { photos ->

@@ -499,6 +499,37 @@ async def test_photo_and_file_reach_the_agent(chat_bridge, tmp_path: Path):
     await ws.close()
 
 
+
+async def test_a_batch_of_photos_reaches_the_agent_as_files(chat_bridge, tmp_path: Path):
+    bridge, hermes = chat_bridge
+    ws = await connected(bridge)
+    photos = [await upload(ws, f"IMG_{i}.jpg", "image/jpeg", b"\xff\xd8jpeg%d" % i) for i in range(129)]
+    await ws.send(m.encode(m.request("s0", "chat.send", {"text": "x", "attachments": [{"blob_id": p["blob_id"]} for p in photos]})))
+    assert (await recv(ws))["error"]["code"] == m.INVALID_PARAMS  # 129: the schema allows 128
+
+    params = {"text": "Make these a PDF", "attachments": [{"blob_id": p["blob_id"]} for p in photos[:128]]}
+    check("chat.send", m.request("s1", "chat.send", params))
+    res = check("chat.send.result", await call(ws, "s1", "chat.send", params))["result"]
+    events = await until_done(ws, res["turn_id"])
+    assert len(check("chat.started", events[0])["params"]["attachments"]) == 128
+    sent = hermes.messages[-1]
+    assert isinstance(sent, str), "more than 10 photos: none inline"
+    lines = sent.split("\n\n")
+    assert lines[0] == "Make these a PDF" and len(lines) == 129
+    first = tmp_path / "inbox" / res["conversation_id"] / f"{photos[0]['blob_id']}-IMG_0.jpg"
+    assert lines[1] == f"Attached file: {first} (image/jpeg, {len(b'\xff\xd8jpeg0')} bytes)"
+    assert first.read_bytes() == b"\xff\xd8jpeg0"
+
+    # without an inbox the bridge can't hand them over, and says so
+    bridge.server.chat.inboxes.clear()
+    more = [await upload(ws, f"B_{i}.png", "image/png", b"png%d" % i) for i in range(11)]
+    refused = await call(ws, "s2", "chat.send", {"text": "x", "attachments": [{"blob_id": p["blob_id"]} for p in more]})
+    assert refused["error"]["code"] == m.INVALID_PARAMS
+    ok = await call(ws, "s3", "chat.send", {"text": "x", "attachments": [{"blob_id": p["blob_id"]} for p in more[:10]]})
+    await until_done(ws, ok["result"]["turn_id"])
+    assert sum(1 for part in hermes.messages[-1] if part["type"] == "input_image") == 10
+    await ws.close()
+
 async def test_upload_errors(chat_bridge):
     bridge, hermes = chat_bridge
     ws = await connected(bridge)

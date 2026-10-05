@@ -75,7 +75,7 @@
               "mime"
             ]
           },
-          "maxItems": 10
+          "maxItems": 128
         }
       },
       "required": [

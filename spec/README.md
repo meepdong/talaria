@@ -160,7 +160,7 @@ Photos and files travel over the session in chunks, so no second port or URL is 
 
 **Uploading.** `size` is at most 20 MiB and `sha256` is the lowercase hex digest of the whole file. The device sends chunks in order: `offset` is the number of bytes sent so far and `data` is base64 (standard alphabet, with padding) of at most `chunk_bytes` bytes (512 KiB). A chunk at the wrong offset fails with `CONFLICT`. `blob.commit` checks the size and digest; a mismatch fails with `INVALID_PARAMS` and drops the blob. An upload that fails part way is started again with a new `blob.begin`.
 
-**Sending.** `chat.send` takes `attachments: [{blob_id}]`, up to 10. Each committed blob can be sent once, by any device past `ready`; the bridge drops blobs not sent within an hour. `kind` is `image` for `image/jpeg`, `image/png`, `image/webp` and `image/gif` up to 5 MiB, and `file` for anything else.
+**Sending.** `chat.send` takes `attachments: [{blob_id}]`, up to 128. Each committed blob can be sent once, by any device past `ready`; the bridge drops blobs not sent within an hour. `kind` is `image` for `image/jpeg`, `image/png`, `image/webp` and `image/gif` up to 5 MiB, and `file` for anything else. Images go to the agent inline when a message has at most 10 of them, together at most 7 MiB; otherwise they are saved to the agent's inbox like files, so a batch of photos ("make these 40 pages a PDF") reaches the agent as files. Without an inbox, such a message is refused with `INVALID_PARAMS`. Uploads not yet sent may hold up to 1 GiB per bridge.
 
 **What the agent gets.** Images go to the agent inline with the message, at most 7 MiB of them per message. Hermes's API takes no other files, so the bridge saves a `file` to an inbox folder the agent can read and adds a line to the message: `Attached file: <path> (<mime>, <size> bytes)`. An agent with no inbox configured refuses files with `MODALITY_UNSUPPORTED`.
 
@@ -219,7 +219,7 @@ Devices can browse, open and reuse the files that live next to the agent: the in
 
 **Reading.** `files.read` returns a file in chunks: `data` is base64 (standard alphabet, with padding) of at most 512 KiB starting at `offset` (default 0), `size` is the whole file's size and `eof` says whether this chunk ends it. A device reads the next chunk from `offset + decoded length`. Files over 20 MiB fail with `INVALID_PARAMS`.
 
-**Asking about a file.** `chat.send` takes `files: [{root, path}]` (together with `attachments`, at most 10 per message). The bridge adds an `Attached file:` line for each, with the path where the agent sees it, as for a file sent from the device (§10), and `chat.started`, snapshots and history list it in `attachments` with `kind: file`. The file stays where it is.
+**Asking about a file.** `chat.send` takes `files: [{root, path}]` (together with `attachments`, at most 128 per message). The bridge adds an `Attached file:` line for each, with the path where the agent sees it, as for a file sent from the device (§10), and `chat.started`, snapshots and history list it in `attachments` with `kind: file`. The file stays where it is.
 
 **Errors.** `NOT_FOUND` for an unknown root or a missing path; `INVALID_PARAMS` for a path outside the root, a folder passed to `files.read`, or a file that is too large.
 

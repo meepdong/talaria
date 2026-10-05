@@ -132,6 +132,7 @@ fun chatView(
         connectionSummary = status.summary,
         pending = pending.map { it.toAttachment().chip(images) } + serverPending.map { it.toAttachment().chip(images) },
         canAttach = canAttach,
+        canAttachMore = pending.size + serverPending.size < OutgoingFile.MAX_PER_MESSAGE,
         model = state.effectiveModel?.shortName,
         modelGroups = state.models?.providers.orEmpty().map { p ->
             ModelGroup(p.id, p.name, p.models.map { m ->

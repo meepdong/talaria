@@ -96,7 +96,7 @@ class OutgoingFile(val name: String, val mime: String, val bytes: ByteArray) {
         val INLINE_IMAGE_MIMES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
         const val MAX_INLINE_IMAGE = 5 * 1024 * 1024
         const val MAX_SIZE = 20 * 1024 * 1024
-        const val MAX_PER_MESSAGE = 10
+        const val MAX_PER_MESSAGE = 128
     }
 }
 

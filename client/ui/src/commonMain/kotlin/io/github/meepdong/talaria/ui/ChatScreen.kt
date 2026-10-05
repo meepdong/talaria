@@ -583,7 +583,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                     if (view.canAttach) {
                         var menu by remember { mutableStateOf(false) }
                         Box {
-                            IconButton(onClick = { menu = true }, enabled = view.pending.size < 10,
+                            IconButton(onClick = { menu = true }, enabled = view.canAttachMore,
                                 modifier = Modifier.padding(vertical = 4.dp).testTag("attach")) { Text("📎") }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("Photo") }, modifier = Modifier.testTag("attach-photo"),

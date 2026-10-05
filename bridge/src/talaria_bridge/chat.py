@@ -40,7 +40,8 @@ LAST_MESSAGE_LEN = 200
 KEPT_TURNS = 50
 CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
-MAX_ATTACHMENTS = 10
+MAX_ATTACHMENTS = 128
+MAX_INLINE_COUNT = 10  # more photos than this go to the agent's inbox as files (§10)
 MAX_QUEUED = 5
 GROUP_DELAY_S = 3.0  # how long new to-dos wait for more before they are grouped (§13)
 MAX_NOTE = 4000
@@ -355,6 +356,12 @@ def history_messages(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _inline(blobs: list[Blob]) -> bool:
+    """A message's photos go inline when Hermes can take them in one request; otherwise all go to the inbox."""
+    images = [b for b in blobs if b.kind == "image"]
+    return len(images) <= MAX_INLINE_COUNT and sum(b.size for b in images) <= MAX_INLINE_IMAGES
+
+
 class ChatService:
     def __init__(self, store: ChatStore, agents: dict[str, HermesClient], broadcast: Broadcast,
                  *, default_agent: str | None = None, blobs: BlobStore | None = None,
@@ -593,8 +600,6 @@ class ChatService:
         try:
             for blob_id in ids:
                 blobs.append(self.blobs.take(blob_id))
-            if sum(b.size for b in blobs if b.kind == "image") > MAX_INLINE_IMAGES:
-                raise RpcError(m.INVALID_PARAMS, "Photos too large for one message; send fewer or smaller ones")
         except (BlobError, RpcError) as exc:
             for blob in blobs:
                 self.blobs.release(blob)
@@ -602,8 +607,12 @@ class ChatService:
         return blobs
 
     def _check_files(self, agent_id: str | None, blobs: list[Blob]) -> None:
-        if any(b.kind == "file" for b in blobs) and self.inboxes.get(agent_id) is None:
+        if self.inboxes.get(agent_id) is not None:
+            return
+        if any(b.kind == "file" for b in blobs):
             raise RpcError(m.MODALITY_UNSUPPORTED, "This agent can only receive photos, not files")
+        if not _inline(blobs):
+            raise RpcError(m.INVALID_PARAMS, "Photos too large for one message; send fewer or smaller ones")
 
     def _content(self, conv: Conversation, text: str, blobs: list[Blob], found: list[Found] = ()) -> str | list:
         """The message for the agent: images inline, files saved to its inbox with a line each.
@@ -611,8 +620,9 @@ class ChatService:
         lines = [text] if text.strip() else []
         images = []
         try:
+            inline = _inline(blobs)
             for blob in blobs:
-                if blob.kind == "image":
+                if blob.kind == "image" and inline:
                     data = base64.b64encode(blob.path.read_bytes()).decode("ascii")
                     images.append({"type": "input_image", "image_url": f"data:{blob.mime};base64,{data}"})
                     continue

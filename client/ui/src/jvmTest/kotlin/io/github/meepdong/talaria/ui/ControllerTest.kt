@@ -260,10 +260,11 @@ class ControllerTest {
         c.start()
         c.await<Screen.Chat>()
         val pdf = io.github.meepdong.talaria.chat.OutgoingFile("statement.pdf", "application/pdf", ByteArray(3))
-        c.receiveShare(List(11) { pdf }, "  What did I spend on food? ")
-        val view = c.await<Screen.Chat> { it.view.conversationOpen && it.view.pending.size == 10 && it.view.voice.dictation != null }.view
+        c.receiveShare(List(130) { pdf }, "  What did I spend on food? ")
+        val view = c.await<Screen.Chat> { it.view.conversationOpen && it.view.pending.size == 128 && it.view.voice.dictation != null }.view
         assertNull(view.openId, "a new chat")
-        assertEquals(10, view.pending.size)
+        assertEquals(128, view.pending.size, "a message carries up to 128 files")
+        assertEquals(false, view.canAttachMore)
         assertEquals("What did I spend on food?", view.voice.dictation?.text)
         assertEquals(false, view.voice.dictation?.send)
         c.close()
