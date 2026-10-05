@@ -19,6 +19,9 @@ import io.github.meepdong.talaria.schedule.ScheduleState
 import io.github.meepdong.talaria.schedule.When
 import io.github.meepdong.talaria.updates.UpdateRepository
 import io.github.meepdong.talaria.updates.UpdateState
+import io.github.meepdong.talaria.terminal.TermKey
+import io.github.meepdong.talaria.terminal.TerminalRepository
+import io.github.meepdong.talaria.terminal.TerminalState
 import io.github.meepdong.talaria.todos.TodosRepository
 import io.github.meepdong.talaria.todos.TodosState
 import io.github.meepdong.talaria.chat.asChatApi
@@ -107,7 +110,7 @@ class TalariaController(
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
             val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
-            val updates: UpdateRepository,
+            val updates: UpdateRepository, val terminals: TerminalRepository,
         ) : Mode
     }
 
@@ -116,6 +119,8 @@ class TalariaController(
         val status: Boolean = false,
         /** The Server page, from the ☰ menu. */
         val server: Boolean = false,
+        /** The Terminals page, from the ☰ menu (§16.1). */
+        val terminal: Boolean = false,
         val conversationOpen: Boolean = false,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
@@ -172,7 +177,7 @@ class TalariaController(
     private data class Live(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
         val todos: TodosState? = null, val schedule: ScheduleState? = null, val ops: OpsState? = null,
-        val updates: UpdateState? = null,
+        val updates: UpdateState? = null, val terminal: TerminalState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -180,8 +185,9 @@ class TalariaController(
         if (m is Mode.Connected) {
             combine(
                 combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Triple(st, c, f) },
-                m.todos.state, m.schedule.state, m.ops.state, m.updates.state,
-            ) { (st, c, f), t, sc, o, u -> Live(m, st, c, f, t, sc, o, u) }
+                m.todos.state, m.schedule.state,
+                combine(m.ops.state, m.updates.state, m.terminals.state) { o, u, tm -> Triple(o, u, tm) },
+            ) { (st, c, f), t, sc, (o, u, tm) -> Live(m, st, c, f, t, sc, o, u, tm) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -218,6 +224,7 @@ class TalariaController(
     private val schedule: ScheduleRepository? get() = (mode.value as? Mode.Connected)?.schedule
     private val ops: OpsRepository? get() = (mode.value as? Mode.Connected)?.ops
     private val updates: UpdateRepository? get() = (mode.value as? Mode.Connected)?.updates
+    private val terminals: TerminalRepository? get() = (mode.value as? Mode.Connected)?.terminals
 
     /** Server operations waiting for approval, for a notification each (PROTOCOL §10.8). */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -664,6 +671,37 @@ class TalariaController(
         page.update { it.copy(arrangingHome = false) }
     }
 
+    override fun showTerminals() {
+        page.update { it.copy(terminal = true, server = false, status = false, menuOpen = false) }
+        terminals?.refresh()
+    }
+
+    override fun refreshTerminals() {
+        terminals?.refresh()
+    }
+
+    override fun openTerminal(session: String) {
+        terminals?.open(session)
+    }
+
+    override fun closeTerminal() {
+        terminals?.close()
+        terminals?.refresh()
+    }
+
+    override fun terminalTakeControl() {
+        val t = terminals ?: return
+        t.state.value.session?.let { t.open(it, control = true) }
+    }
+
+    override fun terminalKey(key: String) {
+        terminals?.keys(listOf(TermKey.Key(key)))
+    }
+
+    override fun terminalText(text: String, enter: Boolean) {
+        terminals?.keys(listOfNotNull(TermKey.Text(text), TermKey.Key("Enter").takeIf { enter }))
+    }
+
     /** The platform's file picker: set while the app can show it, null otherwise. */
     fun setFilePicker(pick: ((photos: Boolean) -> Unit)?) {
         picker.value = pick
@@ -792,7 +830,7 @@ class TalariaController(
     }
 
     override fun showServer() {
-        page.update { it.copy(server = true, status = false, menuOpen = false) }
+        page.update { it.copy(server = true, terminal = false, status = false, menuOpen = false) }
         ops?.refresh()
     }
 
@@ -867,7 +905,7 @@ class TalariaController(
     }
 
     override fun showChats() {
-        page.value = page.value.copy(status = false, server = false)
+        page.value = page.value.copy(status = false, server = false, terminal = false)
     }
 
     override fun checkForUpdates() {
@@ -959,7 +997,8 @@ class TalariaController(
         val schedule = ScheduleRepository(scope, client.asChatApi()).also { it.start() }
         val ops = OpsRepository(scope, client.asChatApi()).also { it.start() }
         val updates = UpdateRepository(scope, client.asChatApi(), versionCodeOf(TALARIA_VERSION) ?: 0).also { it.start() }
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates)
+        val terminals = TerminalRepository(scope, client.asChatApi(), bridge.deviceId).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates, terminals)
         client.start()
     }
 
@@ -977,6 +1016,8 @@ class TalariaController(
             val opsState = l.ops ?: OpsState()
             if (x.page.status) {
                 Screen.Status(status.copy(canGoBack = true, balances = balanceItems(l.chat?.balances.orEmpty())))
+            } else if (x.page.terminal) {
+                Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now), status)
             } else if (x.page.server) {
                 Screen.Server(serverView(opsState, m.bridge.deviceId), status)
             } else {

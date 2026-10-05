@@ -28,6 +28,7 @@ from ..protocol import keys
 from ..protocol import messages as m
 from .audit import AuditLog
 from .catalogue import OPS, OUTPUT_LIMIT, Context, OpError, Outcome, Run, Runner, check_params, params_json
+from .terminal import APPROVED_BY, Terminals
 
 log = logging.getLogger("talaria.ops")
 
@@ -76,7 +77,8 @@ class OpsDaemon:
         self.registry_db = registry_db
         self.audit = audit
         self.clock = clock
-        self.ctx = Context(run=runner, audit_tail=audit.tail, **context)
+        self.terminals = Terminals(runner, clock)
+        self.ctx = Context(run=runner, audit_tail=audit.tail, terminals=self.terminals, **context)
         self.prepared: dict[str, Prepared] = {}
 
     # Requests
@@ -96,6 +98,8 @@ class OpsDaemon:
             if cmd == "execute":
                 return {"result": await self.execute(req.get("request_id"), req.get("device_id"),
                                                      req.get("choice"), req.get("sig"), accepted)}
+            if cmd in ("term.screen", "term.keys", "term.close"):
+                return await self.terminal(cmd, req)
             raise OpError(f"unknown command {cmd!r}")
         except OpError as exc:
             return {"error": str(exc)}
@@ -157,17 +161,40 @@ class OpsDaemon:
             await accepted()
         return await self._execute(p.op, p.params, p.requested_by, approved_by=device_id, request_id=request_id)
 
+    async def terminal(self, cmd: str, req: dict) -> dict:
+        """term.screen / term.keys / term.close for a grant (§16.1); the device must still be paired."""
+        device_id = req.get("device_id")
+        if not isinstance(device_id, str):
+            raise OpError("device_id is required")
+        self._device_key(device_id)  # unknown or revoked: refused, whatever the grant says
+        if cmd == "term.screen":
+            return {"screen": await self.terminals.screen(req.get("grant"), device_id)}
+        if cmd == "term.keys":
+            grant, typed = await self.terminals.keys(req.get("grant"), device_id, req.get("keys"))
+            self.audit.append({"ts": self.clock(), "op": "terminal.keys", "session": grant.session,
+                               "device_id": device_id, "typed": typed[:500], "outcome": "ok"})
+            return {"ok": True}
+        grant = self.terminals.close(req.get("grant"), device_id)
+        self.audit.append({"ts": self.clock(), "op": "terminal.close", "session": grant.session,
+                           "device_id": device_id, "outcome": "ok"})
+        return {"ok": True}
+
     # Internals
 
     async def _execute(self, name: str, params: dict, by: str, approved_by: str | None,
                        request_id: str | None = None) -> dict:
         op = OPS[name]
         started = self.clock()
+        approver = APPROVED_BY.set(approved_by)  # terminal grants belong to the device that approved them
         try:
             outcome = await op.do(self.ctx, params)
+        except OpError as exc:
+            outcome = Outcome(False, f"{name}: {exc}", "", None)
         except Exception as exc:  # an op's bug must not take the daemon down
             log.exception("%s failed", name)
             outcome = Outcome(False, f"{name} failed: {exc}", "", None)
+        finally:
+            APPROVED_BY.reset(approver)
         result = outcome.as_dict(name, started, self.clock())
         self.audit.append({"ts": started, "request_id": request_id, "op": name, "params": params, "tier": op.tier,
                            "requested_by": by, "approved_by": approved_by,

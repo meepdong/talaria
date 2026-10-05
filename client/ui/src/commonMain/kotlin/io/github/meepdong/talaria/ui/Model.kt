@@ -25,6 +25,9 @@ sealed interface Screen {
     /** The Server page, from the ☰ menu (PROTOCOL §10.8). [status] keeps the tray icon right. */
     data class Server(val view: ServerView, val status: StatusView) : Screen
 
+    /** Terminals (spec §16.1): root's tmux sessions, from the ☰ menu. */
+    data class Terminal(val view: TerminalView, val status: StatusView) : Screen
+
     /**
      * Paired: the main app, with its menu bar. [tab] picks the page; [menu] is the ☰ panel
      * (running work, balance, connection), shown while [menuOpen].
@@ -82,6 +85,34 @@ data class HomeView(
 
 /** Home's "Update available" card (§17). [status] is the download's progress or what went wrong. */
 data class UpdateBanner(val version: String, val notes: String? = null, val status: String? = null, val busy: Boolean = false)
+
+/** The Terminals page (spec §16.1): the session list, or one session's screen. */
+data class TerminalView(
+    /** False when the bridge has no server operations. */
+    val available: Boolean = true,
+    val sessions: List<TerminalItem> = emptyList(),
+    val loading: Boolean = false,
+    /** The open session, or null on the list. */
+    val open: String? = null,
+    /** The approval this device has to give first. */
+    val approval: TerminalApproval? = null,
+    /** The screen: lines with SGR colour sequences, or null until the first one arrives. */
+    val text: String? = null,
+    val cols: Int = 80,
+    /** (column, row) of the cursor, shown while typing. */
+    val cursor: Pair<Int, Int>? = null,
+    /** Typing allowed (a control grant). */
+    val control: Boolean = false,
+    /** "Watching · claude · 89×33". */
+    val status: String = "",
+    val closed: String? = null,
+    val error: String? = null,
+)
+
+/** A row in the session list: "claude" with "Claude Code · /root · 2 attached" and "2 min ago". */
+data class TerminalItem(val name: String, val detail: String, val active: String)
+
+data class TerminalApproval(val requestId: String, val summary: String, val control: Boolean, val answering: Boolean = false)
 
 /** A to-do on Home (spec/README.md §13). */
 data class TodoItem(
@@ -239,6 +270,21 @@ interface TalariaActions {
 
     /** Dismiss a finished server operation's card. */
     fun opsDismiss(requestId: String) {}
+
+    // Terminals (spec §16.1)
+
+    fun showTerminals() {}
+    fun refreshTerminals() {}
+    /** Ask to watch a tmux session: an approval on this device opens it. */
+    fun openTerminal(session: String) {}
+    /** Back to the list; ends the grant. */
+    fun closeTerminal() {}
+    /** Ask to type in the open session (tier 2: typing acts as root). */
+    fun terminalTakeControl() {}
+    /** A named key: Enter, Escape, Tab, Up, Down, Left, Right, C-c, … */
+    fun terminalKey(key: String) {}
+    /** Literal text, then Enter when [enter]. */
+    fun terminalText(text: String, enter: Boolean) {}
     fun loadOlder() {}
     fun renameConversation(id: String, title: String) {}
     fun deleteConversation(id: String) {}
@@ -340,6 +386,7 @@ val Screen.overall: Health
     get() = when (this) {
         is Screen.Status -> view.overall
         is Screen.Server -> status.overall
+        is Screen.Terminal -> status.overall
         is Screen.Chat -> status.overall
         else -> Health.UNKNOWN
     }
@@ -351,9 +398,10 @@ val Screen.summary: String
         is Screen.Confirm -> "Pairing"
         is Screen.Status -> view.summary
         is Screen.Server -> status.summary
+        is Screen.Terminal -> status.summary
         is Screen.Chat -> status.summary
     }
 
 /** Paired with a server, whichever page is showing. */
 val Screen.paired: Boolean
-    get() = this is Screen.Status || this is Screen.Server || this is Screen.Chat
+    get() = this is Screen.Status || this is Screen.Server || this is Screen.Terminal || this is Screen.Chat

@@ -91,6 +91,7 @@ class Context:
     audit_tail: Callable[[int], list[dict]] = lambda n: []
     proc: Path = Path("/proc")
     hermes_log: Path = Path(HERMES_LOG)
+    terminals: object = None  # terminal.Terminals: root's tmux sessions and the grants to them (§16.1)
 
 
 @dataclass
@@ -348,6 +349,32 @@ async def apt_upgrade(ctx: Context, p: dict) -> Outcome:
     return out
 
 
+# Terminals (§16.1): devices only; the agent's server_op refuses them
+
+async def tmux_sessions(ctx: Context, p: dict) -> Outcome:
+    sessions = await ctx.terminals.sessions()
+    return Outcome(True, f"{len(sessions)} tmux session{'' if len(sessions) == 1 else 's'}", data={"sessions": sessions})
+
+
+async def _tmux_names(ctx: Context) -> list[str]:
+    return await ctx.terminals.names() if ctx.terminals is not None else []
+
+
+async def _open_terminal(ctx: Context, p: dict, control: bool) -> Outcome:
+    from .terminal import APPROVED_BY
+
+    grant = ctx.terminals.grant(APPROVED_BY.get(), p["session"], control)
+    return Outcome(True, f"{'Typing in' if control else 'Watching'} the tmux session {p['session']}", data=grant)
+
+
+async def terminal_watch(ctx: Context, p: dict) -> Outcome:
+    return await _open_terminal(ctx, p, control=False)
+
+
+async def terminal_control(ctx: Context, p: dict) -> Outcome:
+    return await _open_terminal(ctx, p, control=True)
+
+
 # Tier 2: disruptive
 
 async def system_reboot(ctx: Context, p: dict) -> Outcome:
@@ -381,4 +408,12 @@ OPS: dict[str, Op] = {op.name: op for op in [
        lambda p: "Trim the system journal to 200 MB and delete unused Docker images"),
     Op("apt.upgrade", 1, "Upgrade packages", apt_upgrade, {}, lambda p: "Install all pending package updates"),
     Op("system.reboot", 2, "Reboot the server", system_reboot, {}, lambda p: "Reboot the server now"),
+    Op("tmux.sessions", 0, "Terminal sessions", tmux_sessions),
+    Op("terminal.watch", 1, "Watch a terminal", terminal_watch, {"session": Param("string", choices=_tmux_names)},
+       lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),
+    Op("terminal.control", 2, "Type in a terminal", terminal_control, {"session": Param("string", choices=_tmux_names)},
+       lambda p: f"Type in the tmux session {p['session']} from this device (as root) for up to 30 minutes"),
 ]}
+
+# ops the agent's server_op may never use (spec §16.1)
+DEVICE_ONLY = frozenset({"tmux.sessions", "terminal.watch", "terminal.control"})

@@ -19,6 +19,7 @@ from websockets.http11 import Request
 from . import __version__
 from .agents import AgentMonitor
 from .chat import CHAT_METHODS, ChatService, RpcError
+from .terminals import TERM_METHODS, Terminals
 from .updates import UPDATE_METHODS, AppUpdates, UpdateError
 from .protocol import keys
 from .protocol import messages as m
@@ -54,6 +55,7 @@ class _Session:
     ready: bool = False
     latency_ms: int | None = None  # from the bridge's own heartbeat pings
     pings: dict[str, float] = field(default_factory=dict)
+    terminals: Terminals | None = None  # the terminal grants this device watches (§16.1)
 
 
 OPS_METHODS = frozenset({"ops.catalogue", "ops.run", "ops.approve"})
@@ -158,6 +160,24 @@ class BridgeServer:
             return
         with contextlib.suppress(ConnectionClosed):
             await self._send(ws, m.result(msg_id, result) if result is not None else m.error(msg_id, *error))
+
+    async def _term_request(self, ws: ServerConnection, session: _Session, method: str, msg_id, params: dict) -> None:
+        if not session.ready:
+            answer = m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first")
+        elif self.ops is None:
+            answer = m.error(msg_id, m.METHOD_NOT_FOUND, "Server operations are not set up on this bridge")
+        else:
+            if session.terminals is None:
+                async def send(msg: dict) -> None:
+                    with contextlib.suppress(ConnectionClosed):
+                        await self._send(ws, msg)
+                session.terminals = Terminals(self.ops, session.device_id, send)
+            try:
+                answer = m.result(msg_id, await session.terminals.handle(method, params))
+            except OpsError as exc:
+                answer = m.error(msg_id, exc.code, exc.message)
+        with contextlib.suppress(ConnectionClosed):
+            await self._send(ws, answer)
 
     async def _update_request(self, session: _Session, method: str, msg_id, params) -> dict:
         if not session.ready:
@@ -356,7 +376,9 @@ class BridgeServer:
         try:
             await self._session(ws, device_id)
         finally:
-            del self._sessions[ws]
+            session = self._sessions.pop(ws)
+            if session.terminals is not None:
+                session.terminals.close()
         log.info("session %s closed (%s)", session_id, ws.close_code)
 
     async def _session(self, ws: ServerConnection, device_id: str) -> None:
@@ -433,6 +455,12 @@ class BridgeServer:
             await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND if self.ops is None else m.INVALID_REQUEST,
                                          "Server operations are not set up on this bridge" if self.ops is None
                                          else "Send capabilities.announce first"))
+        elif method in TERM_METHODS and msg_id is not None:
+            params = msg.get("params")
+            task = asyncio.ensure_future(self._term_request(ws, session, method, msg_id,
+                                                            params if isinstance(params, dict) else {}))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         elif method in UPDATE_METHODS and msg_id is not None:
             await self._send(ws, await self._update_request(session, method, msg_id, msg.get("params")))
         elif method in CHAT_METHODS and not session.ready:

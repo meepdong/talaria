@@ -422,6 +422,17 @@ The owner manages the server that runs the bridge from any paired device, and th
 
 The agent reaches the same catalogue through the MCP tool `server_op` (spec README §15). Its tier 1–2 requests appear on the owner's devices as approval cards.
 
+
+**Terminals (spec §16.1).** The owner runs their agent sessions (Claude Code, opencode) in root's tmux and can follow
+and answer them from a device. Opening one is an operation like any other: watching is tier 1, typing is tier 2,
+because typing into a root session is as powerful as a root shell. An approval yields a grant bound to the approving
+device and that one session, which ends 30 minutes after its last use (12 hours at most) or when the device is
+revoked; talaria-ops checks the grant and the device on every screen read and every key, and audits every key. The
+bridge only relays screens and keys for a grant a device presents, and the agent can't open terminals at all, so a
+prompt that tricks the agent can never type into the owner's sessions. Rationale for screen reads instead of a PTY:
+no terminal emulator in the apps, no resizing of sessions the owner also has open elsewhere, and the same small
+surface (`capture-pane`, `send-keys`) for every client.
+
 ## 11. Relayed devices (watch, glasses)
 
 A node MAY relay sub-devices it is connected to, e.g. a Wear OS watch over the Data Layer API, or glasses through the vendor SDK.

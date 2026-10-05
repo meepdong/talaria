@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from .ops.catalogue import DEVICE_ONLY
 from .ops.client import OpsClient, OpsRefused, OpsUnavailable  # noqa: F401 (re-exported for cli)
 from .protocol import messages as m
 from .protocol.encoding import now
@@ -20,6 +22,7 @@ from .protocol.encoding import now
 log = logging.getLogger("talaria.server_ops")
 
 AGENT_LIMIT_PER_MIN = 5  # tier 1-2 requests the agent may make per minute
+GRANT = re.compile(r"^tg-[0-9a-f]{32}$")
 
 
 class OpsError(Exception):
@@ -91,6 +94,17 @@ class ServerOps:
         return [m.notification("ops.approval.request", p.notification)
                 for p in self.pending.values() if not p.decided.done()]
 
+    async def terminal(self, cmd: str, grant: object, device_id: str, **extra) -> dict:
+        """term.screen / term.keys / term.close (§16.1). A grant that ended, or isn't this device's, is CONFLICT."""
+        if not isinstance(grant, str) or not GRANT.match(grant):
+            raise OpsError(m.INVALID_PARAMS, "grant must be a terminal grant (tg-…)")
+        try:
+            return await self.client.terminal(cmd, grant, device_id, **extra)
+        except OpsRefused as exc:
+            raise OpsError(m.CONFLICT, str(exc)) from exc
+        except OpsUnavailable as exc:
+            raise OpsError(m.AGENT_UNAVAILABLE, "Server operations are unavailable: talaria-ops is not running") from exc
+
     # Agent
 
     async def agent_call(self, op: object, params: object, agent_id: str) -> tuple[dict | str, bool]:
@@ -98,6 +112,8 @@ class ServerOps:
         try:
             if not isinstance(op, str):
                 return "op is required", True
+            if op in DEVICE_ONLY:  # terminals: the owner's sessions are never the agent's to read or type in (§16.1)
+                return f"{op} is only for the owner's devices", True
             if await self._tier(op) == 0:
                 return await self._call(self.client.run(op, params if params is not None else {}, f"agent:{agent_id}")), False
             if not self._agent_allowed(agent_id):

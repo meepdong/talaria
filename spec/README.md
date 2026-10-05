@@ -335,6 +335,52 @@ PROTOCOL §10.8 describes them. `talaria-ops` (root, `bridge/src/talaria_bridge/
 
 Any failure is `{"error": "<sentence>"}`. `params_json` is `json.dumps(params, sort_keys=True, separators=(",", ":"))`. A prepared request lives 120 s and is used at most once. Every run, of any tier, is appended to `/var/log/talaria-ops/audit.jsonl`.
 
+### 16.1 Terminals
+
+The owner can follow and answer the agent sessions they run in **root's tmux** (Claude Code, opencode) from a device.
+This is not a terminal emulator: talaria-ops reads the session's rendered screen (`tmux capture-pane -p -e`, with
+colour) and types with `tmux send-keys`. Sessions are never resized, so other attached clients are left as they are.
+**Terminals are for devices only: the agent's `server_op` refuses every `tmux.*` and `terminal.*` operation.**
+
+Operations in the catalogue:
+
+- `tmux.sessions` (tier 0): `data.sessions` is a list of `{name, command, path, cols, rows, attached, activity}`
+  for the active pane of each session (`activity` in Unix seconds). It shows no screen content.
+- `terminal.watch {session}` (tier 1) and `terminal.control {session}` (tier 2): once approved, talaria-ops creates a
+  **grant** for the approving device and that session, and the result's `data` is
+  `{grant, session, control, expires_at}`. A grant is `tg-` and 32 hex digits; it ends 30 minutes after it was last
+  used, after 12 hours in any case, when the device is revoked, or with `term.close`. Only `control` grants may type.
+
+talaria-ops also answers, for the bridge only:
+
+| Request | Answer |
+|---|---|
+| `{"cmd": "term.screen", "grant", "device_id"}` | `{"screen": {session, cols, rows, cursor_x, cursor_y, command, control, text}}` |
+| `{"cmd": "term.keys", "grant", "device_id", "keys"}` | `{"ok": true}` |
+| `{"cmd": "term.close", "grant", "device_id"}` | `{"ok": true}` |
+
+A grant only answers for the device it was given to, and every `term.keys` is audited with what was typed.
+
+Devices use them through the bridge:
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `term.watch` | request | `{grant}` → `{grant, session, control}` |
+| `term.keys` | request | `{grant, keys}` → `{}` |
+| `term.stop` | request | `{grant}` → `{}` |
+| `term.screen` | notification | `{grant, session, cols, rows, cursor_x, cursor_y, command?, control, text}` |
+| `term.closed` | notification | `{grant, reason}` |
+
+After `term.watch` the bridge sends the screen at once and then whenever it changes (it looks about 3 times a second,
+and right after keys), only to that device's session, until `term.stop`, the session ends, or the device disconnects.
+`text` is the screen's lines joined by `\n`, with SGR colour sequences (`ESC [ … m`) and nothing else. `keys` is a
+list of `{text}` (typed literally, at most 2000 characters) and `{key}` (one of `Enter`, `Escape`, `Tab`, `BTab`,
+`BSpace`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PPage`, `NPage`, `C-c`, `C-d`, `C-z`, `C-l`, `C-r`,
+`C-o`). A grant that ended answers `CONFLICT`, and a watching device gets `term.closed`.
+
+Schemas: `term.watch`, `term.watch.result`, `term.keys`, `term.keys.result`, `term.stop`, `term.stop.result`,
+`term.screen`, `term.closed`.
+
 ## 17. App updates
 
 The apps update themselves from the bridge they're paired with, so no device needs a computer, a store or a public

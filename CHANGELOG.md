@@ -6,6 +6,11 @@ release notes the app shows.
 
 ## [Unreleased]
 
+### Added
+- Terminals (☰ → Terminals): follow and answer the agent sessions in root's tmux (Claude Code, opencode) from the
+  phone. Watching needs one approval; typing needs a second (it acts as root). Keys for agent prompts: ⏎, 1–3, y/n,
+  Esc, Ctrl-C, arrows. Hermes can never open terminals (spec §16.1).
+
 ### Changed
 - Update says "Installing…" as soon as it's tapped, through the download, until Android answers.
 

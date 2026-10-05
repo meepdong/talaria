@@ -63,6 +63,10 @@ class OpsClient:
     async def prepare(self, op: str, params: dict, requested_by: str) -> dict:
         return await self.request({"cmd": "prepare", "op": op, "params": params, "requested_by": requested_by}, 60)
 
+    async def terminal(self, cmd: str, grant: str, device_id: str, **extra) -> dict:
+        """term.screen / term.keys / term.close for a grant (§16.1)."""
+        return await self.request({"cmd": cmd, "grant": grant, "device_id": device_id, **extra}, 20)
+
     async def execute(self, request_id: str, device_id: str, choice: str, sig: str, accepted=None) -> dict | None:
         """Run an approved operation; [accepted] is awaited as soon as talaria-ops has checked the signature."""
         # apt.upgrade may take up to 30 min; bridge.update runs the test suite

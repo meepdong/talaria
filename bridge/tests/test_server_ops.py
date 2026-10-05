@@ -33,6 +33,8 @@ TOKEN = "t" * 40
 async def ops_bridge(tmp_path: Path, settings: ServerSettings):
     import os
 
+    _seen.clear()  # buffers are keyed by id(ws), and ids are reused: never carry one over from another test
+
     registry = Registry(tmp_path / "bridge.db")
     runner = FakeRunner({("docker", "ps", "--format", "{{.Names}}"): Run(0, "web\n")})
     daemon = OpsDaemon(tmp_path / "bridge.db", AuditLog(tmp_path / "audit.jsonl"), runner)

@@ -25,6 +25,7 @@ fun TalariaApp(
                 is Screen.Confirm -> ConfirmScreen(screen, actions)
                 is Screen.Status -> StatusScreen(screen.view, actions, statusExtras)
                 is Screen.Server -> ServerScreen(screen.view, actions)
+                is Screen.Terminal -> TerminalScreen(screen.view, actions)
                 is Screen.Chat -> MainScreen(screen, actions)
             }
         }

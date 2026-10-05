@@ -131,6 +131,9 @@ class MainActivity : ComponentActivity() {
             }
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
             BackHandler(enabled = current is Screen.Server) { controller.showChats() }
+            BackHandler(enabled = current is Screen.Terminal) {
+                if ((current as Screen.Terminal).view.open != null) controller.closeTerminal() else controller.showChats()
+            }
             BackHandler(enabled = current is Screen.Chat && current.menuOpen) { controller.setMenuOpen(false) }
 
             Box(Modifier.fillMaxSize().safeDrawingPadding()) {

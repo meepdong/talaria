@@ -311,6 +311,9 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                 TextButton(onClick = actions::showServer, modifier = Modifier.testTag("server")) {
                     Text("Manage the server")
                 }
+                TextButton(onClick = actions::showTerminals, modifier = Modifier.testTag("terminals")) {
+                    Text("Terminals")
+                }
             }
 
             // App version and update

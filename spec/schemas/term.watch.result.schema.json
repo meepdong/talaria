@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/term.watch.result.schema.json",
+  "title": "term.watch.result",
+  "description": "Result of term.watch: the first screen follows as term.screen.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "string",
+          "pattern": "^tg-[0-9a-f]{32}$"
+        },
+        "session": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "control": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "grant",
+        "session",
+        "control"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}
