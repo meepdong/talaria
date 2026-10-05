@@ -268,6 +268,8 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 | `automations.changed` | notification | `{automations}` |
 | `calendar.day` | request | `{date?}` → `{date, events}` or `{date, events: [], error}` |
 | `home.get` | request | `{}` → `{date, results}` |
+| `home.dismiss` | request | `{id, at}` → `{}` |
+| `home.changed` | notification | `{date, results}` |
 
 **An automation** is `{id, name, when, task, result_to, made_in, state, next_run_at?, last_run_at?, last_status?, last_error?, schedule_text}`:
 - `when` is one of
@@ -293,9 +295,11 @@ An automation is work the agent does on its own: **when**, **what to do** and **
 
 **Home.** `home.get` returns today's `results`: the latest run today of each automation with `result_to: home`, and of any other automation whose latest run today is `blocked`, each `{id, name, run}`, newest first, so a device that was off sees the morning summary, or that it was blocked, when it opens.
 
+`home.dismiss` takes one run (`id` of the automation, `at` of the run) off Home for good, and every device gets `home.changed` with what `home.get` now returns. Only that run goes: a later run of the same job that belongs on Home shows again. When `automations.run_in_chat` is used on a job whose latest run was `blocked`, and the chat turn ends `completed`, the bridge dismisses that blocked run the same way. Dismissing an unknown or already dismissed run is not an error.
+
 **Errors.** `AGENT_UNAVAILABLE` when the agent's jobs can't be reached; `NOT_FOUND` for an unknown automation; `INVALID_PARAMS` for a bad schedule, window or day; `CONFLICT` when changing the `when` of a `kind: other` job.
 
-Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`.
+Schemas: `automations.list`, `automations.list.result`, `automations.add`, `automations.describe`, `automations.describe.result`, `automations.update`, `automations.run`, `automations.result`, `automations.run_in_chat` (result: `chat.send.result`), `automations.delete`, `automations.delete.result`, `automations.runs`, `automations.runs.result`, `automations.ran`, `automations.changed`, `calendar.day`, `calendar.day.result`, `home.get`, `home.get.result`, `home.dismiss`, `home.dismiss.result`, `home.changed`.
 
 ## 15. Tools for the agent (M2)
 

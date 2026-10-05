@@ -141,4 +141,33 @@ class ScheduleRepositoryTest {
         assertEquals("Invalid schedule", outcome)
         scope.cancel()
     }
+
+    @Test
+    fun dismissTakesARunOffHomeHereAndOnOtherDevices() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        api.answers["automations.list"] = { json("""{"automations":[$MORNING]}""") }
+        api.answers["calendar.day"] = { json("""{"date":"2026-10-05","events":[]}""") }
+        api.answers["home.get"] = { json("""{"date":"2026-10-05","results":[
+            {"id":"0000000000cc","name":"Tidy downloads","run":{"at":1600,"status":"blocked","blocked":"recursive delete"}},
+            {"id":"00000000000a","name":"Morning summary","run":{"at":1500,"status":"ok","text":"Ship Friday."}}]}""") }
+        api.answers["home.dismiss"] = { json("{}") }
+        val repo = ScheduleRepository(scope, api)
+        repo.start()
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        assertEquals(listOf("Tidy downloads", "Morning summary"), repo.state.value.today.map { it.name })
+
+        repo.dismissHomeItem("0000000000cc", 1600)
+        assertEquals(listOf("Morning summary"), repo.state.value.today.map { it.name }, "gone before the bridge answers")
+        advanceUntilIdle()
+        assertEquals("home.dismiss" to json("""{"id":"0000000000cc","at":1600}"""), api.calls.last())
+
+        // another device dismissed the summary: the bridge tells everyone
+        api.notifications.emit(json("""{"method":"home.changed","params":{"date":"2026-10-05","results":[]}}"""))
+        advanceUntilIdle()
+        assertEquals(emptyList(), repo.state.value.today)
+        scope.cancel()
+    }
 }

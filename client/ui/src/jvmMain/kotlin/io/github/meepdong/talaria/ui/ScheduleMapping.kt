@@ -143,9 +143,10 @@ fun HomeView.withSchedule(state: ScheduleState?, nowMs: Long, zone: ZoneId = Zon
     }
     return copy(
         day = s.today.map { r ->
-            DayResult(r.name, r.run.text ?: r.run.error.orEmpty(), HM.format(Instant.ofEpochSecond(r.run.at).atZone(zone)),
+            val at = r.run.at
+            DayResult(r.name, r.run.text ?: r.run.error.orEmpty(), HM.format(Instant.ofEpochSecond(at).atZone(zone)),
                 failed = r.run.status == "error", conversationId = r.run.conversationId, id = r.id,
-                blocked = if (r.run.status == "blocked") r.run.blocked ?: "something" else null)
+                blocked = if (r.run.status == "blocked") r.run.blocked ?: "something" else null, at = at)
         },
         nextUp = (events + runs).sortedBy { it.second }.take(NEXT_UP).map { it.first },
         automationsOn = s.automations.filter { !it.paused && it.state != "completed" }.map { automationItem(it, nowMs, zone) },

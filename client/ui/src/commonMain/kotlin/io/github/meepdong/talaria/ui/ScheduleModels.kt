@@ -50,7 +50,7 @@ data class AutomationItem(
 /** What "Your day" shows: a result from today. [blocked] is what the agent wasn't allowed to do on its own. */
 data class DayResult(
     val name: String, val text: String, val time: String, val failed: Boolean = false, val conversationId: String? = null,
-    val id: String = "", val blocked: String? = null,
+    val id: String = "", val blocked: String? = null, val at: Long = 0,
 )
 
 /** A line in "Next up": a calendar event or an automation about to run. */

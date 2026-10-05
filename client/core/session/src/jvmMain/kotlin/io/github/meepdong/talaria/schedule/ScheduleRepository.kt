@@ -120,6 +120,7 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
                             if (r.forHome) _state.update { s -> s.copy(today = listOf(r) + s.today.filterNot { it.id == r.id }) }
                             _ran.tryEmit(r)
                         }
+                        "home.changed" -> _state.update { it.copy(today = homeResults(p)) }
                     }
                 }
             }
@@ -139,18 +140,19 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
             val events = (r["events"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::event) }
             _state.update { it.copy(events = events, calendarError = r.str("error")) }
         }
-        call("home.get", JsonObject(emptyMap())) { r ->
-            val today = (r["results"] as? JsonArray).orEmpty().mapNotNull { e ->
-                (e as? JsonObject)?.let { o -> ran(buildJsonObject {
-                    o["id"]?.let { put("id", it) }
-                    o["name"]?.let { put("name", it) }
-                    put("result_to", "home")
-                    o["run"]?.let { put("run", it) }
-                }) }
-            }
-            _state.update { it.copy(today = today) }
-        }
+        call("home.get", JsonObject(emptyMap())) { r -> _state.update { it.copy(today = homeResults(r)) } }
     }
+
+    /** `home.get`'s result or `home.changed`'s params: Home's runs for today. */
+    private fun homeResults(r: JsonObject): List<AutomationRan> =
+        (r["results"] as? JsonArray).orEmpty().mapNotNull { e ->
+            (e as? JsonObject)?.let { o -> ran(buildJsonObject {
+                o["id"]?.let { put("id", it) }
+                o["name"]?.let { put("name", it) }
+                put("result_to", "home")
+                o["run"]?.let { put("run", it) }
+            }) }
+        }
 
     fun add(name: String, `when`: When, task: String, resultTo: String = "home", done: (String?) -> Unit = {}) {
         call("automations.add", buildJsonObject {
@@ -206,6 +208,15 @@ class ScheduleRepository(private val scope: CoroutineScope, private val api: Cha
     fun delete(id: String) {
         _state.update { s -> s.copy(automations = s.automations.filterNot { it.id == id }) }
         call("automations.delete", buildJsonObject { put("id", id) }) {}
+    }
+
+    /** Take one run off Home on every device (`home.dismiss`); this device drops it at once. */
+    fun dismissHomeItem(id: String, at: Long) {
+        _state.update { s -> s.copy(today = s.today.filterNot { it.id == id && it.run.at == at }) }
+        call("home.dismiss", buildJsonObject {
+            put("id", id)
+            put("at", at)
+        }) {}
     }
 
     private fun upsert(a: Automation) = _state.update { s ->

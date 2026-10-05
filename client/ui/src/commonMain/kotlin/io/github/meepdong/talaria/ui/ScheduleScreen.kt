@@ -269,8 +269,13 @@ fun DayCards(home: HomeView, actions: TalariaActions, wide: Boolean) {
                 }
                 Text("Hermes needed your approval for ${d.blocked}, and nobody was there to give it.",
                     color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp).testTag("blocked-${d.id}"))
-                Button(onClick = { actions.runAutomationInChat(d.id) }, modifier = Modifier.padding(top = 8.dp).testTag("run-in-chat-${d.id}")) {
-                    Text("Run in chat")
+                Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { actions.runAutomationInChat(d.id) }, modifier = Modifier.testTag("run-in-chat-${d.id}")) {
+                        Text("Run in chat")
+                    }
+                    OutlinedButton(onClick = { actions.dismissHomeItem(d.id, d.at) }, modifier = Modifier.testTag("dismiss-${d.id}")) {
+                        Text("Dismiss")
+                    }
                 }
             }
         }

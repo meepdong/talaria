@@ -635,6 +635,10 @@ class TalariaController(
         schedule?.delete(id)
     }
 
+    override fun dismissHomeItem(id: String, at: Long) {
+        schedule?.dismissHomeItem(id, at)
+    }
+
     /** The platform's file picker: set while the app can show it, null otherwise. */
     fun setFilePicker(pick: ((photos: Boolean) -> Unit)?) {
         picker.value = pick

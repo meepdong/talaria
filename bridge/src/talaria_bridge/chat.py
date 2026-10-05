@@ -235,6 +235,7 @@ class Turn:
     attachments: list[dict] = field(default_factory=list)
     content: str | list | None = None  # what goes to the agent, when it differs from user_text
     run_id: str | None = None
+    resolves: tuple[str, int] | None = None  # (job id, at): the blocked run this turn retries
     task: asyncio.Task | None = None
 
     def snapshot(self) -> dict:
@@ -406,7 +407,7 @@ class ChatService:
 
     # chat.send
 
-    async def send(self, p: dict) -> tuple[dict, Turn | None]:
+    async def send(self, p: dict, resolves: tuple[str, int] | None = None) -> tuple[dict, Turn | None]:
         """Validate and register a turn. The caller sends the result, then calls `start`.
         Returns (result, None) for a retried client_msg_id."""
         text = p.get("text", "")
@@ -444,7 +445,7 @@ class ChatService:
         found = await asyncio.to_thread(self._server_files, p, file_refs or [])
         blobs = self._blobs(refs or [])
         try:
-            result, turn = await self._send(p, text, blobs, client_msg_id, found)
+            result, turn = await self._send(p, text, blobs, client_msg_id, found, resolves)
         except BaseException:
             for blob in blobs:
                 self.blobs.release(blob)  # not sent: the device may retry with the same blobs
@@ -511,7 +512,7 @@ class ChatService:
             raise RpcError(exc.code, exc.message) from None
 
     async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None,
-                    found: list[Found] = ()) -> tuple[dict, Turn]:
+                    found: list[Found] = (), resolves: tuple[str, int] | None = None) -> tuple[dict, Turn]:
         model = _model(p["model"]) if p.get("model") is not None else None
         conv_id = p.get("conversation_id")
         if conv_id is not None:
@@ -548,7 +549,8 @@ class ChatService:
                     attachments=[b.meta() for b in blobs] + [
                         {"kind": "file", "name": f.name, "mime": f.mime, "size": f.size} for f in found],
                     content=content,
-                    status="queued" if queued else "running")
+                    status="queued" if queued else "running",
+                    resolves=resolves)
         if queued:
             self._queues.setdefault(conv_id, []).append(turn)
         else:
@@ -796,6 +798,9 @@ class ChatService:
             with contextlib.suppress(Exception):
                 await asyncio.shield(self._emit(turn, "chat.done", done))
             log.info("turn %s in %s: %s", turn.turn_id, turn.conversation_id, turn.status)
+            if turn.resolves is not None and turn.status == "completed" and self.automations is not None:
+                with contextlib.suppress(Exception):  # the blocked run worked in a chat: Home lets it go (§14)
+                    await asyncio.shield(self.automations.dismiss_run(*turn.resolves))
             if following is not None:
                 following.status, following.started_at = "running", int(time.time())
                 self.start(following)
@@ -1129,10 +1134,10 @@ class ChatService:
             if self.automations is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
             try:
-                agent_id, text = await self.automations.chat_task(p)
+                agent_id, text, blocked = await self.automations.chat_task(p)
             except AutomationError as exc:
                 raise RpcError(exc.code, exc.message) from None
-            return await self.send({"agent_id": agent_id, "text": text})
+            return await self.send({"agent_id": agent_id, "text": text}, resolves=blocked)
         if method in AUTOMATION_METHODS:
             if self.automations is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")

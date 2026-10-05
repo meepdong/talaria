@@ -259,6 +259,77 @@ async def test_blocked_runs_reach_home_once_and_run_in_chat(tmp_path: Path):
     chat.store.close()
 
 
+
+async def test_home_dismiss_takes_one_run_off_home(tmp_path: Path):
+    autos, hermes, sent = setup(tmp_path)
+    tidy = (await autos.add({"name": "Tidy downloads", "when": {"kind": "time", "schedule": "*/10 * * * *"},
+                             "task": "Delete old files.", "result_to": "log"}))["automation"]
+    summary = (await autos.add({"name": "Morning summary", "when": MORNING, "task": "Summarise."}))["automation"]
+    now = int(time.time())
+    hermes.ran(tidy["id"], now - 180, "Blocked earlier.", tool=REFUSED)
+    await autos.poll_once()
+    hermes.ran(summary["id"], now - 120, "Ship Friday.")
+    hermes.ran(tidy["id"], now - 60, "Blocked.", tool=REFUSED)
+    await autos.poll_once()
+    home = result("home.get.result", autos.home({}))["results"]
+    assert [r["name"] for r in home] == ["Tidy downloads", "Morning summary"]
+    blocked_at = home[0]["run"]["at"]
+
+    sent.clear()
+    req = check("home.dismiss", m.request("2", "home.dismiss", {"id": tidy["id"], "at": blocked_at}))
+    assert result("home.dismiss.result", await autos.handle("home.dismiss", req["params"])) == {}
+    changed = [check("home.changed", x)["params"] for x in sent if x["method"] == "home.changed"]
+    assert [[r["name"] for r in c["results"]] for c in changed] == [["Morning summary"]]
+    assert [r["name"] for r in autos.home({})["results"]] == ["Morning summary"]
+
+    # an older run of the dismissed job doesn't take its place; dismissing again is fine
+    await autos.dismiss({"id": tidy["id"], "at": blocked_at})
+    assert [r["name"] for r in autos.home({})["results"]] == ["Morning summary"]
+    await autos.dismiss({"id": summary["id"], "at": home[1]["run"]["at"]})
+    assert autos.home({})["results"] == []
+
+    # a new blocked run of the same job shows again
+    hermes.ran(tidy["id"], now - 10, "Blocked again.", tool=REFUSED)
+    await autos.poll_once()
+    assert [(r["name"], r["run"]["text"]) for r in autos.home({})["results"]] == [("Tidy downloads", "Blocked again.")]
+
+    for bad in ({"id": tidy["id"]}, {"at": blocked_at}, {"id": "../x", "at": 1}, {"id": tidy["id"], "at": -1},
+                {"id": tidy["id"], "at": True}, {"id": tidy["id"], "at": "1"}):
+        with pytest.raises(AutomationError) as err:
+            await autos.handle("home.dismiss", bad)
+        assert err.value.code == m.INVALID_PARAMS
+
+
+async def test_run_in_chat_resolves_the_blocked_run(tmp_path: Path):
+    autos, hermes, sent = setup(tmp_path)
+    tidy = (await autos.add({"name": "Tidy downloads", "when": {"kind": "time", "schedule": "*/10 * * * *"},
+                             "task": "Delete old files.", "result_to": "log"}))["automation"]
+    hermes.ran(tidy["id"], int(time.time()) - 60, "Blocked.", tool=REFUSED)
+    await autos.poll_once()
+    assert len(autos.home({})["results"]) == 1
+
+    async def unused(msg: dict) -> None:
+        pass
+
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), dict(autos.clients), unused, automations=autos)
+    autos.notify = lambda msg: unused(sent.append(msg))  # ChatService rewires it to broadcast
+    script, hermes.script = hermes.script, [("run.failed", {"error": "boom"}), ("done", {})]  # the turn fails
+    _, turn = await chat.handle("automations.run_in_chat", {"id": tidy["id"]})
+    chat.start(turn)
+    await turn.task
+    assert turn.status == "failed"
+    assert len(autos.home({})["results"]) == 1, "a failed chat leaves the card"
+    hermes.script = script
+    sent.clear()
+    _, turn = await chat.handle("automations.run_in_chat", {"id": tidy["id"]})
+    chat.start(turn)
+    await turn.task
+    assert turn.status == "completed"
+    assert autos.home({})["results"] == []
+    assert [check("home.changed", x)["params"]["results"] for x in sent if x["method"] == "home.changed"] == [[]]
+    chat.store.close()
+
+
 async def test_describe_asks_hermes_and_lists_what_it_made(tmp_path: Path):
     autos, hermes, _ = setup(tmp_path)
     hermes.final = "Done: “Unread email” runs weekdays at 8:00."

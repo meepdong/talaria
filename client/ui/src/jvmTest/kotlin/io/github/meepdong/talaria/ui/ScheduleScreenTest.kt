@@ -49,6 +49,7 @@ class ScheduleScreenTest {
         override fun runAutomation(id: String) { calls += "run $id" }
         override fun runAutomationInChat(id: String) { calls += "chat $id" }
         override fun deleteAutomation(id: String) { calls += "delete $id" }
+        override fun dismissHomeItem(id: String, at: Long) { calls += "dismiss $id $at" }
     }
 
     private val utc = ZoneOffset.UTC
@@ -200,4 +201,22 @@ class ScheduleScreenTest {
         onNodeWithTag("your-day").assertExists()
     }
 
+    @Test
+    fun dismissSendsTheRunToDismiss() = runComposeUiTest {
+        val tidy = Automation("0000000000cc", "Tidy downloads", When.Time("*/10 * * * *"), "Tidy.", "log", "talaria",
+            "scheduled", "*/10 * * * *", lastRunAt = at(9, 30), lastStatus = "blocked")
+        val blocked = state.copy(automations = listOf(tidy), today = listOf(
+            AutomationRan(tidy.id, tidy.name, "log", AutomationRun(at(9, 30), "blocked", blocked = "recursive delete"))))
+
+        val actions = Recorder()
+        setContent {
+            TalariaTheme {
+                Box(Modifier.size(1200.dp, 2400.dp)) {
+                    DayCards(HomeView().withSchedule(blocked, now, utc), actions, wide = true)
+                }
+            }
+        }
+        onNodeWithTag("dismiss-0000000000cc").performClick()
+        assertEquals(listOf("dismiss 0000000000cc 1791192600"), actions.calls)
+    }
 }

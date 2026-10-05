@@ -301,6 +301,9 @@ interface TalariaActions {
     /** Run its task now in a new chat, where an approval it needs can be answered. */
     fun runAutomationInChat(id: String) {}
     fun deleteAutomation(id: String) {}
+
+    /** Dismiss a blocked automation run from Home's "Needs you" card. */
+    fun dismissHomeItem(id: String, at: Long) {}
 }
 
 /** The tray icon's colour. */
