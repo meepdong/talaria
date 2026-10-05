@@ -316,8 +316,11 @@ fun YourDayCard(home: HomeView, actions: TalariaActions, m: Modifier, tile: Tile
                 Text(d.time, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (d.text.isNotBlank()) {
-                Text(d.text, color = if (d.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 4.dp))
+                if (d.failed) {
+                    Text(d.text, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+                } else {
+                    ResultText(d.text, Modifier.padding(top = 4.dp).testTag("result-${d.id}"))
+                }
             }
             d.conversationId?.let { c -> TextButton(onClick = { actions.openConversation(c) }) { Text("Open chat") } }
         }
@@ -357,6 +360,24 @@ fun AutomationsOnCard(home: HomeView, actions: TalariaActions, m: Modifier, tile
         }
     }
 }
+
+/** An automation's result as the agent wrote it (Markdown), the first [RESULT_LINES] lines until Show more. */
+@Composable
+fun ResultText(text: String, modifier: Modifier = Modifier) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    val lines = text.trim().lines()
+    val long = lines.size > RESULT_LINES
+    Column(modifier) {
+        MarkdownText(if (long && !expanded) lines.take(RESULT_LINES).joinToString("\n") else text.trim())
+        if (long) {
+            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("result-more")) {
+                Text(if (expanded) "Show less" else "Show more")
+            }
+        }
+    }
+}
+
+private const val RESULT_LINES = 8
 
 /** Where an automation's results go (§14). */
 private val RESULT_CHOICES = listOf("home" to "Home", "chat" to "A new chat", "log" to "Log only")

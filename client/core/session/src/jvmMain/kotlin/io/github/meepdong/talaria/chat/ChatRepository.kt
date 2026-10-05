@@ -587,7 +587,10 @@ class ChatRepository(
                     if (before == null && changes[conv] != version && ++attempt < STALE_RETRIES) return@withLock false
                     _state.update { s ->
                         val old = s.threads[conv] ?: ConversationThread()
-                        val messages = if (before == null) withPreviews(page, old.messages) + liveTail(old.messages, page) else page + old.messages
+                        val messages = if (before == null) {
+                            val tail = liveTail(old.messages, page)
+                            withPreviews(withoutPending(page, tail), old.messages) + tail
+                        } else page + old.messages
                         s.copy(threads = s.threads + (conv to old.copy(messages = messages, nextBefore = next, loaded = true, loading = false)))
                     }
                     true
@@ -606,6 +609,23 @@ class ChatRepository(
      * What the newest history page doesn't have yet: unsent and streaming messages, and the
      * question of a reply still streaming unless history already ends with it.
      */
+    /**
+     * The page without its newest user messages that this device still shows as its own, still sending: Hermes
+     * records a message as its turn starts, so history reloaded after a reconnect can hold one that the send's
+     * answer hasn't reached yet, and it would show twice (issue 29). The device's copy stays; the next page settles it.
+     */
+    private fun withoutPending(page: List<ChatMessage>, tail: List<ChatMessage>): List<ChatMessage> {
+        val pending = tail.filter { it.role == Role.USER && (it.state == MessageState.SENDING || it.state == MessageState.QUEUED) }
+            .map { it.text }.toMutableList()
+        var trimmed = page
+        while (true) {
+            val last = trimmed.lastOrNull() ?: break
+            if (last.role != Role.USER || !pending.remove(last.text)) break
+            trimmed = trimmed.dropLast(1)
+        }
+        return trimmed
+    }
+
     private fun liveTail(old: List<ChatMessage>, page: List<ChatMessage>): List<ChatMessage> {
         val streaming = old.filter { it.state == MessageState.STREAMING }.mapNotNull { it.turnId }.toSet()
         val lastAsked = page.lastOrNull { it.role == Role.USER }?.text

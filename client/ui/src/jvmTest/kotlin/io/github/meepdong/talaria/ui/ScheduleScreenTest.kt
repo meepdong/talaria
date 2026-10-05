@@ -195,6 +195,18 @@ class ScheduleScreenTest {
     }
 
     @Test
+    fun resultsShowAsMarkdownAndLongOnesFold() = runComposeUiTest {
+        val long = "**Tick complete** — no alert.\n\nHere's what I found:\n" + (1..12).joinToString("\n") { "- source $it checked" }
+        val home = HomeView(day = listOf(DayResult("Flight watch", long, "19:40", id = "0000000000aa", at = 1)))
+        setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(home, Recorder(), wide = false) } } }
+        onNodeWithText("Tick complete", substring = true).assertExists()
+        onNodeWithText("**Tick complete**", substring = true).assertDoesNotExist()
+        onNodeWithText("source 12", substring = true).assertDoesNotExist()
+        onNodeWithTag("result-more").performClick()
+        onNodeWithText("source 12", substring = true).assertExists()
+    }
+
+    @Test
     fun noNeedsYouWhenNothingWaits() = runComposeUiTest {
         setContent { TalariaTheme { androidx.compose.foundation.layout.Column { DayCards(HomeView(), Recorder(), wide = false) } } }
         onNodeWithTag("needs-you").assertDoesNotExist()

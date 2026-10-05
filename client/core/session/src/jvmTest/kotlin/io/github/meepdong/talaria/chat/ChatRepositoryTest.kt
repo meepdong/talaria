@@ -181,6 +181,35 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun aMessageSentWhileReconnectingShowsOnce() = chatTest { scope ->
+        // issue 29: history reloaded after a reconnect can already hold a message this device is still sending
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Hi","created_at":1,"updated_at":2}]}""") }
+        var history = """[{"id":"1","role":"user","text":"Hi","ts":1},{"id":"2","role":"assistant","text":"Hello","ts":2}]"""
+        api.answers["chat.history"] = { json("""{"messages":$history,"next_before":null}""") }
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-2","title":"Hi"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.open("c-1")
+        advanceUntilIdle()
+
+        api.gates["chat.send"] = CompletableDeferred()
+        repo.send("And again")
+        advanceUntilIdle()
+        assertEquals(MessageState.SENDING, repo.state.value.openMessages.last().state)
+        history = history.dropLast(1) + """,{"id":"3","role":"user","text":"And again","ts":3}]"""
+        api.sessions.emit("s-2")  // reconnected: the page already has it
+        advanceUntilIdle()
+        assertEquals(listOf("Hi", "Hello", "And again"), repo.state.value.openMessages.map { it.text })
+
+        api.gates.remove("chat.send")!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("Hi", "Hello", "And again"), repo.state.value.openMessages.filter { it.role == Role.USER || it.text.isNotEmpty() }.map { it.text })
+    }
+
+    @Test
     fun aLiveMessageIsHiddenByItsHistoryId() = chatTest { scope ->
         val api = FakeApi()
         api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }
