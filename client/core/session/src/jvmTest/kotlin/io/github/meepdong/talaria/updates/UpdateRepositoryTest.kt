@@ -79,6 +79,20 @@ class UpdateRepositoryTest {
         assertTrue(api.calls.filter { it.first == "app.read" }.all { it.second["version_code"]!!.jsonPrimitive.long == 20002L })
         assertNull(repo.state.value.progress)
         assertNull(repo.state.value.error)
+
+        // a second tap uses the checked download instead of fetching 30 MB again
+        val reads = api.calls.count { it.first == "app.read" }
+        assertContentEquals(apk, repo.download())
+        assertEquals(reads, api.calls.count { it.first == "app.read" })
+
+        repo.installStarted()
+        assertTrue(repo.state.value.installing)
+        repo.installFailed(null)  // the user closed Android's dialog
+        assertFalse(repo.state.value.installing)
+        assertNull(repo.state.value.error)
+        repo.installStarted()
+        repo.installFailed("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+        assertEquals("Couldn't update: INSTALL_FAILED_UPDATE_INCOMPATIBLE", repo.state.value.error)
         scope.cancel()
     }
 

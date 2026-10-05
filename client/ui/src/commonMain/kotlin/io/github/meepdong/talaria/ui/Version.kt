@@ -1,7 +1,7 @@
 package io.github.meepdong.talaria.ui
 
 /** This build's version. Equal to `talaria.version` in client/gradle.properties: the ui build checks. */
-const val TALARIA_VERSION = "0.2.0-beta.2"
+const val TALARIA_VERSION = "0.2.0-beta.3"
 
 private val RELEASE = Regex("""^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$""")
 

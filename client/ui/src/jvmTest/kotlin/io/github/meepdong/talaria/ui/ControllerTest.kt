@@ -217,6 +217,31 @@ class ControllerTest {
     }
 
     @Test
+    fun anUpdateAsksForTheInstallPermissionFirst() = runBlocking {
+        val key = keys.create()
+        store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")
+        val c = controller()
+        c.start()
+        c.await<Screen.Chat>()
+        var allowed = false
+        val asked = mutableListOf<String>()
+        c.setInstaller(object : AppUpdater {
+            override fun canInstall() = allowed
+            override fun askPermission() { asked += "settings" }
+            override fun install(apk: ByteArray) { asked += "install" }
+        })
+        c.installUpdate()
+        assertEquals(listOf("settings"), asked, "asked before anything is downloaded")
+        c.resumeUpdate()
+        assertEquals(listOf("settings"), asked, "still not allowed: nothing happens")
+        allowed = true
+        c.resumeUpdate()  // back from the settings screen
+        c.resumeUpdate()  // a second resume doesn't start another
+        assertEquals(listOf("settings"), asked, "nothing to download here (no release), so nothing to install")
+        c.close()
+    }
+
+    @Test
     fun tabsMenuAndTalk() = runBlocking {
         val key = keys.create()
         store.saved = PairedBridge("wss://vps.example", "b-1", "pk", key.deviceId, "Laptop")

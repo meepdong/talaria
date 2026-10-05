@@ -137,17 +137,20 @@ fun MenuView.withUpdate(u: UpdateState?, canInstall: Boolean): MenuView {
         updateVersion = u.release?.version.orEmpty(),
         updateNotes = u.release?.notes?.takeIf { u.available },
         updateStatus = updateStatus(u) ?: if (u.upToDate) "Up to date" else null,
+        updateBusy = u.progress != null || u.installing,
     )
 }
 
 /** Home's card while a newer release waits. */
 fun updateBanner(u: UpdateState): UpdateBanner? {
     val release = u.release?.takeIf { u.available && u.supported } ?: return null
-    return UpdateBanner(release.version, release.notes, updateStatus(u), busy = u.progress != null)
+    return UpdateBanner(release.version, release.notes, updateStatus(u), busy = u.progress != null || u.installing)
 }
 
 private fun updateStatus(u: UpdateState): String? = when (val progress = u.progress) {
     null -> when {
+        u.installing -> "Installing…"
+        u.awaitingPermission -> "Allow Talaria to install apps, then come back: the update carries on by itself"
         u.error != null -> u.error
         u.checking -> "Checking…"
         else -> null

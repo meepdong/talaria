@@ -64,6 +64,11 @@ class UpdateUiTest {
         assertEquals("Faster sync.", m.updateNotes)
         assertEquals("Downloading 40%", menu.withUpdate(newer.copy(progress = 0.4f), true).updateStatus)
         assertEquals("Up to date", menu.withUpdate(UpdateState(upToDate = true), true).updateStatus)
+        val installing = menu.withUpdate(newer.copy(installing = true), true)
+        assertEquals("Installing…", installing.updateStatus)
+        assertTrue(installing.updateBusy)
+        assertTrue(updateBanner(newer.copy(installing = true))!!.busy)
+        assertTrue(menu.withUpdate(newer.copy(awaitingPermission = true), true).updateStatus!!.startsWith("Allow Talaria to install apps"))
         assertNull(updateBanner(UpdateState(release = newer.release, available = false)))
         assertEquals(UpdateBanner("0.2.0-beta.2", "Faster sync.", "Downloading 40%", busy = true),
             updateBanner(newer.copy(progress = 0.4f)))

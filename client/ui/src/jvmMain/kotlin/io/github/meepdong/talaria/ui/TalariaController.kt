@@ -145,7 +145,7 @@ class TalariaController(
 
     /** Opens fetched file bytes with the device's own app; set by the platform. */
     private var fileOpener: ((name: String, mime: String, bytes: ByteArray) -> Unit)? = null
-    @Volatile private var installer: ((apk: ByteArray) -> Unit)? = null
+    @Volatile private var installer: AppUpdater? = null
     private var textSharer: ((String) -> Unit)? = null
 
     /**
@@ -876,20 +876,38 @@ class TalariaController(
 
     override fun installUpdate() {
         val repo = updates ?: return
-        val install = installer ?: return
+        val platform = installer ?: return
+        val now = repo.state.value
+        if (now.installing || now.progress != null) return  // one update at a time; the button says so
+        if (!platform.canInstall()) {
+            // ask first, so nothing is downloaded twice; resumeUpdate carries on when the user is back
+            repo.awaitPermission(true)
+            platform.askPermission()
+            return
+        }
+        repo.awaitPermission(false)
         scope.launch(io) {
             val apk = repo.download() ?: return@launch
-            runCatching { install(apk) }.onFailure { repo.installFailed(it.message ?: it::class.simpleName.orEmpty()) }
+            repo.installStarted()
+            runCatching { platform.install(apk) }.onFailure { repo.installFailed(it.message ?: it::class.simpleName.orEmpty()) }
+            delay(INSTALL_WAIT_MS)
+            repo.installTimedOut()  // still here and no answer: let Update be tapped again
         }
     }
 
-    /** The platform's installer for an update (Android); null where the app can't update itself. */
-    fun setInstaller(install: ((apk: ByteArray) -> Unit)?) {
-        installer = install
+    /** Back in the app: carry on with an update that was waiting for the permission to install apps. */
+    fun resumeUpdate() {
+        val repo = updates ?: return
+        if (repo.state.value.awaitingPermission && installer?.canInstall() == true) installUpdate()
     }
 
-    /** The system installer refused the update; [message] says why. */
-    fun updateFailed(message: String) {
+    /** How this platform installs updates (Android); null where the app can't update itself. */
+    fun setInstaller(updater: AppUpdater?) {
+        installer = updater
+    }
+
+    /** The system installer refused the update ([message] says why), or the user cancelled it (null). */
+    fun updateFailed(message: String?) {
         updates?.installFailed(message)
     }
 
@@ -985,6 +1003,9 @@ class TalariaController(
     companion object {
         /** The countdown on Confirm code: the bridge gives its operator 120 s to approve. */
         const val APPROVAL_WINDOW_MS = 120_000L
+
+        /** How long Update stays busy after the installer has it, if Android never answers. */
+        const val INSTALL_WAIT_MS = 120_000L
 
         /** This build's version (Version.kt). */
         const val VERSION = TALARIA_VERSION

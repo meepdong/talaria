@@ -43,6 +43,10 @@ data class UpdateState(
     val upToDate: Boolean = false,
     /** 0..1 while the installer downloads. */
     val progress: Float? = null,
+    /** Handed to the system installer; waiting for its answer (or for this app to be replaced). */
+    val installing: Boolean = false,
+    /** Waiting for the user to allow this app to install apps (Android's "Install unknown apps"). */
+    val awaitingPermission: Boolean = false,
     val error: String? = null,
     /** False when the bridge has no app updates (an older bridge). */
     val supported: Boolean = true,
@@ -58,6 +62,8 @@ class UpdateRepository(
     private val _state = MutableStateFlow(UpdateState())
     val state: StateFlow<UpdateState> = _state.asStateFlow()
     private var job: Job? = null
+    /** The last installer downloaded and checked, by version code, so a second tap doesn't fetch it again. */
+    @Volatile private var downloaded: Pair<Long, ByteArray>? = null
 
     fun start() {
         if (job != null) return
@@ -107,6 +113,7 @@ class UpdateRepository(
      */
     suspend fun download(): ByteArray? {
         val release = _state.value.release?.takeIf { _state.value.available } ?: return null
+        downloaded?.takeIf { it.first == release.versionCode }?.let { return it.second }
         _state.update { it.copy(progress = 0f, error = null) }
         val error = try {
             val out = ByteArrayOutputStream(release.size.toInt())
@@ -127,6 +134,7 @@ class UpdateRepository(
                 bytes.size.toLong() != release.size -> "The download was incomplete"
                 sha256(bytes) != release.sha256 -> "The download didn't match its checksum"
                 else -> {
+                    downloaded = release.versionCode to bytes
                     _state.update { it.copy(progress = null) }
                     return bytes
                 }
@@ -143,10 +151,22 @@ class UpdateRepository(
         return null
     }
 
-    /** The installer was handed to the system, or it said why it couldn't install it. */
-    fun installFailed(message: String) = _state.update { it.copy(progress = null, error = "Couldn't update: $message") }
+    /** Waiting for (or no longer waiting for) the permission to install apps. */
+    fun awaitPermission(waiting: Boolean) = _state.update { it.copy(awaitingPermission = waiting, error = if (waiting) null else it.error) }
+
+    /** The checked installer went to the system installer. */
+    fun installStarted() = _state.update { it.copy(installing = true, awaitingPermission = false, error = null) }
+
+    /** The system installer refused it ([message] says why), or the user cancelled it (null). */
+    fun installFailed(message: String?) = _state.update {
+        it.copy(progress = null, installing = false, error = message?.let { m -> "Couldn't update: $m" })
+    }
+
+    /** No answer from the system installer for a while: let Update be tapped again. */
+    fun installTimedOut() = _state.update { it.copy(installing = false) }
 
     private fun offer(channel: String?, release: AppRelease?) = _state.update {
+        if (downloaded?.first != release?.versionCode) downloaded = null
         it.copy(channel = channel ?: it.channel, release = release, available = release != null && release.versionCode > currentCode,
             supported = true)
     }

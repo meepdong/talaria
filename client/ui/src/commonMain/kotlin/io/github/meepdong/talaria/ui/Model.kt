@@ -141,8 +141,10 @@ data class MenuView(
     val updateVersion: String = "",
     /** False where the app can't update itself (desktop, or an older bridge): no update controls. */
     val canUpdate: Boolean = false,
-    /** "Checking…", "Downloading 40%", "Up to date", or why it failed. */
+    /** "Checking…", "Downloading 40%", "Installing…", "Up to date", or why it failed. */
     val updateStatus: String? = null,
+    /** Downloading or installing: Update can't be tapped again. */
+    val updateBusy: Boolean = false,
     /** What's new in [updateVersion]. */
     val updateNotes: String? = null,
 )

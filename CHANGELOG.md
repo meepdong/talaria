@@ -4,6 +4,12 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [0.2.0-beta.3] - 2026-10-05
+
+### Fixed
+- Update asks for the "install apps" permission before downloading, carries on by itself when you come back,
+  never downloads the same update twice, and shows "Installing…" until Android answers.
+
 ## [0.2.0-beta.2] - 2026-10-05
 
 ### Changed

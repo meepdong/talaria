@@ -8,21 +8,24 @@ import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import io.github.meepdong.talaria.ui.AppUpdater
 
 /**
  * Installs an update the bridge offered (spec §17) through Android's session installer. Android checks that it's
  * signed with the same key as this app. On Android 12+ a self-update needs no system prompt; older versions, and
  * the first update, show Android's own confirmation.
  */
-object AppInstaller {
+class AppInstaller(private val context: Context) : AppUpdater {
+    override fun canInstall() = context.packageManager.canRequestPackageInstalls()
+
+    /** Once: Android's "Install unknown apps" switch for Talaria. MainActivity.onResume carries on. */
+    override fun askPermission() {
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     /** Hands [apk] to the system installer; the result arrives in [InstallReceiver]. */
-    fun install(context: Context, apk: ByteArray) {
-        if (!context.packageManager.canRequestPackageInstalls()) {
-            // once: Android's "Install unknown apps" switch for Talaria
-            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            throw IllegalStateException("Allow Talaria to install apps, then tap Update again")
-        }
+    override fun install(apk: ByteArray) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -53,6 +56,8 @@ class InstallReceiver : BroadcastReceiver() {
                 context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
             PackageInstaller.STATUS_SUCCESS -> Unit  // this process ends; UpdatedReceiver starts the new one
+            // the user closed Android's dialog: Update simply works again
+            PackageInstaller.STATUS_FAILURE_ABORTED -> (context.applicationContext as TalariaApplication).controller.updateFailed(null)
             else -> {
                 val why = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "the installer refused it"
                 (context.applicationContext as TalariaApplication).controller.updateFailed(why)

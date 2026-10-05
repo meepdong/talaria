@@ -162,6 +162,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumed++
+        app.controller.resumeUpdate()  // back from "Install unknown apps": the update carries on
     }
 
     override fun onStart() {
