@@ -1,4 +1,4 @@
-# Roadmap (draft v0.4)
+# Roadmap (draft v0.5)
 
 The rule: **one shared codebase, two platforms from the start.** From M1 on, the Android and Windows/Linux desktop clients are built together on Kotlin Multiplatform, sharing protocol, security and UI code. Each milestone is usable on its own and ships on both platforms unless it is marked Android-only. iOS follows after v1.
 
@@ -10,17 +10,32 @@ v1 is deliberately small: reliable Android and Windows/Linux apps that replace T
 |---|---|
 | M−1 Validate | Confirmation that people want it (or a clear signal to keep it personal) |
 | M0 Bridge + secure pairing ✅ | QR code / link / short code pairing with terminal confirmation |
-| M1 Connection status | Pairing and clear health of network, bridge and agent, with fixes, on Android and desktop |
-| M2 Chat | Streaming chat with voice input, spoken replies, photo/PDF attachments, on Android and desktop |
+| M1 Connection status ✅ | Pairing and clear health of network, bridge and agent, with fixes, on Android and desktop |
+| M2 Chat ✅ | Streaming chat with voice input, spoken replies, photo/PDF attachments, on Android and desktop |
 | M2b Voice replies (basic, Android) | "Reply to Asha on WhatsApp: …" with confirmation |
 | M2c Default assistant (Android) | Long-press power → your agent; instant on-device phone commands |
 | M6 Notifications and background | Agent alerts on both platforms, reliable background connection, full assistant overlay on Android |
 
 **v1 is done when** you have used it daily for a month instead of Telegram and Gemini, on your phone and your laptop, and at least a few other Hermes users run it.
 
+**Releases and updates are part of v1:** versioned beta and stable releases signed with a private key, and updates installed from inside the app (see the build order below). Nothing reaches the stable channel before it has been tested as a beta.
+
 **Test setup:** the bridge runs on the same always-on VPS as Hermes Agent (for the author, a Hostinger VPS). Clients reach it over Tailscale. A laptop-hosted bridge is fine for local development, but every milestone's exit test runs against the VPS.
 
 Everything else (multiple agents, group chats, workflows, automation rules and schedules, phone data, desktop scripting and automation, wearables, iOS, hardware) is **Later**. It gets built only after v1 is in real use, ordered by what v1 users actually ask for.
+
+## Build order (owner, 2026-10-05)
+
+M0, M1 (validated 2026-10-05) and M2 are done. From here, in order. The working list with dependencies is kept with the deployment notes, outside the repo.
+
+| Stage | Work |
+|---|---|
+| Immediate | **Release process** (version scheme, private release key, beta/stable GitHub Releases, changelog) · **In-app updates** (the bridge offers the release for its channel; tap Update in the app); top priority once it works · **M2b Voice replies** |
+| Next | **M2c Default assistant** · **M6 Notifications and background** |
+| Then | A second, separate instance for a family member (own agent, capped cheap models) · **M8 Phone data** · **Agent integration hardening** (the agent knows every Talaria capability and acts without asking how; measured with an eval set) · **Location and natural-language events and rules** (M7 + M10: rules are created only by asking the agent) |
+| After the features | **UI revamp**: calm, beginner-friendly, advanced options out of the way · **Quick install** for a VPS, if still needed |
+| Staged for later | Safe bridge/agent updates with rollback · temporary devices · public share page · M9 desktop actuator |
+| Later, unordered | Terminal over TNP · M3 · M4 · M5 · M7b · M8b · M8c · M11 · M12 · hardware |
 
 ## v1 milestones
 
@@ -85,7 +100,7 @@ Everything else (multiple agents, group chats, workflows, automation rules and s
 
 ## Later (after v1 is in real use)
 
-Not committed and not ordered by priority yet; numbering is kept for reference. Hardware tracks: [RING.md](hardware/RING.md), [BAND.md](hardware/BAND.md).
+Not committed and not ordered by priority yet, except where the build order above pulls an item forward (M7 + M10 as location and natural-language rules, M8); numbering is kept for reference. Hardware tracks: [RING.md](hardware/RING.md), [BAND.md](hardware/BAND.md).
 
 ### M3 — Multiple agents
 - Bridge agent registry (`agents.yaml`): Hermes profiles and OpenAI-compatible endpoints, with roles, modalities and cost tiers.
