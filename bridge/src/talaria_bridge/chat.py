@@ -41,6 +41,8 @@ KEPT_TURNS = 50
 CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
 MAX_ATTACHMENTS = 128
+MAX_FILE_CAPTION = 1000
+RECENT_CHAT_S = 30 * 60  # send_file with no reply running: the agent's latest conversation, if this recent
 MAX_INLINE_COUNT = 10  # more photos than this go to the agent's inbox as files (§10)
 MAX_QUEUED = 5
 GROUP_DELAY_S = 3.0  # how long new to-dos wait for more before they are grouped (§13)
@@ -116,6 +118,17 @@ CREATE TABLE IF NOT EXISTS hidden_messages (
     message_id TEXT NOT NULL,
     PRIMARY KEY (conversation_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS agent_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    root TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    caption TEXT NOT NULL
+);
 """
 COLUMNS = ("id", "agent_id", "hermes_session_id", "title", "created_at", "updated_at", "last_role", "last_text",
            "model_provider", "model_name", "pinned")
@@ -176,6 +189,17 @@ class ChatStore:
         self.db.execute(
             "UPDATE conversations SET updated_at = ?, last_role = ?, last_text = ? WHERE id = ?",
             (at, role, text[:LAST_MESSAGE_LEN], conversation_id))
+
+    def add_file(self, conversation_id: str, at: int, root: str, path: str, name: str, mime: str, size: int,
+                 caption: str) -> int:
+        cur = self.db.execute("INSERT INTO agent_files (conversation_id, at, root, path, name, mime, size, caption)"
+                              " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (conversation_id, at, root, path, name, mime, size, caption))
+        return int(cur.lastrowid)
+
+    def agent_files(self, conversation_id: str) -> list[dict]:
+        """The files the agent sent into a conversation (send_file, §15), as assistant messages, oldest first."""
+        rows = self.db.execute("SELECT * FROM agent_files WHERE conversation_id = ? ORDER BY at, id", (conversation_id,))
+        return [file_message(r) for r in rows]
 
     def set_model(self, conversation_id: str, provider: str, model: str) -> None:
         self.db.execute("UPDATE conversations SET model_provider = ?, model_name = ? WHERE id = ?",
@@ -328,6 +352,32 @@ def _tool_names(tool_calls) -> list[str]:
         if isinstance(name, str) and name:
             names.append(name)
     return names
+
+
+def file_message(r) -> dict:
+    """An agent_files row as the assistant message devices show (§9 chat.file)."""
+    kind = "image" if r["mime"].startswith("image/") else "file"
+    return {"id": f"f-{r['id']}", "role": "assistant", "text": r["caption"], "ts": r["at"],
+            "attachments": [{"kind": kind, "name": r["name"], "mime": r["mime"], "size": r["size"],
+                             "root": r["root"], "path": r["path"]}]}
+
+
+def page_start(messages: list[dict]) -> int | None:
+    times = [x["ts"] for x in messages if isinstance(x.get("ts"), int)]
+    return min(times) if times else None
+
+
+def with_files(messages: list[dict], files: list[dict], upper: int | None, oldest: bool) -> list[dict]:
+    """A history page with the agent's files at their time: those from its first message's time (or any, on the
+    oldest page) up to [upper], the first time of the newer page (none on the newest). So pages split the files
+    with no gap and nothing twice."""
+    lo = page_start(messages)
+    page = [f for f in files if (upper is None or f["ts"] < upper) and (oldest or (lo is not None and f["ts"] >= lo))]
+    if not page:
+        return messages
+    merged = messages + page
+    # stable: a file sent while a reply ran sorts before the reply that finished after it
+    return sorted(merged, key=lambda x: (x["ts"] if isinstance(x.get("ts"), int) else 0, 0 if x["id"].startswith("f-") else 1))
 
 
 def history_messages(rows: list[dict]) -> list[dict]:
@@ -871,11 +921,14 @@ class ChatService:
         if not (isinstance(limit, int) and not isinstance(limit, bool) and 1 <= limit <= HISTORY_MAX):
             raise RpcError(m.INVALID_PARAMS, f"limit must be 1 to {HISTORY_MAX}")
         before = p.get("before")
-        offset = 0
+        offset, upper = 0, None
         if before is not None:
-            if not (isinstance(before, str) and before.isdigit() and len(before) <= 9):
+            # "<offset>" or "<offset>:<the newer page's first time>" (for the agent's files, §9); opaque to devices
+            found = re.fullmatch(r"(\d{1,9})(?::(\d{1,12}))?", before) if isinstance(before, str) else None
+            if found is None:
                 raise RpcError(m.INVALID_PARAMS, "before must be a cursor from next_before")
-            offset = int(before)
+            offset = int(found[1])
+            upper = int(found[2]) if found[2] else None
         try:
             rows = await self._client(conv.agent_id).messages(conv.hermes_session_id, limit=limit, offset=offset)
         except HermesError as exc:
@@ -885,8 +938,44 @@ class ChatService:
         except HermesUnavailable as exc:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
         hidden = self.store.hidden(conv.id)
-        return {"messages": [x for x in history_messages(rows) if x["id"] not in hidden],
-                "next_before": str(offset + len(rows)) if len(rows) >= limit else None}
+        page = history_messages(rows)
+        messages = with_files(page, self.store.agent_files(conv.id), upper=upper, oldest=len(rows) < limit)
+        start = page_start(page)
+        cursor = f"{offset + len(rows)}" + (f":{start}" if start is not None else "")
+        return {"messages": [x for x in messages if x["id"] not in hidden],
+                "next_before": cursor if len(rows) >= limit else None}
+
+    async def agent_file(self, agent_id: str, path: object, caption: object = None) -> dict:
+        """send_file (§15): a file the agent made, into the conversation it is replying in, on every device."""
+        if caption is not None and not (isinstance(caption, str) and len(caption) <= MAX_FILE_CAPTION):
+            raise RpcError(m.INVALID_PARAMS, f"caption must be text of at most {MAX_FILE_CAPTION} characters")
+        if self.files is None:
+            raise RpcError(m.NOT_FOUND, "This bridge shares no folders, so it can't send files")
+        try:
+            found = await asyncio.to_thread(self.files.find, agent_id, path)
+        except FilesError as exc:
+            raise RpcError(exc.code, exc.message) from None
+        conv = self._replying_in(agent_id)
+        if conv is None:
+            raise RpcError(m.CONFLICT, "No Talaria chat with you is going on, so there's nowhere to send it")
+        at = int(time.time())
+        text = (caption or "").strip()
+        fid = self.store.add_file(conv.id, at, found.root.id, found.rel, found.name, found.mime, found.size, text)
+        message = file_message({"id": fid, "conversation_id": conv.id, "at": at, "root": found.root.id,
+                                "path": found.rel, "name": found.name, "mime": found.mime, "size": found.size,
+                                "caption": text})
+        self.store.touch(conv.id, "assistant", text or f"📎 {found.name}", at)
+        await self.broadcast(m.notification("chat.file", {"conversation_id": conv.id, "message": message}))
+        return {"conversation_id": conv.id, "name": found.name, "size": found.size}
+
+    def _replying_in(self, agent_id: str) -> Conversation | None:
+        """The conversation the agent is replying in now (the latest started), or else its latest of the last 30 min."""
+        running = [(t.started_at, conv_id) for conv_id, turn_id in self._active.items()
+                   if (t := self._turns.get(turn_id)) is not None and t.agent_id == agent_id]
+        if running:
+            return self.store.get(max(running)[1])
+        recent = [c for c in self.store.all() if c.agent_id == agent_id and c.updated_at >= time.time() - RECENT_CHAT_S]
+        return max(recent, key=lambda c: c.updated_at) if recent else None
 
     def list(self) -> dict:
         out = []

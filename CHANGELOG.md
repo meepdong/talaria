@@ -4,6 +4,12 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Hermes can send you files in a chat (its new send_file tool): a PDF, image or document it made shows up in the
+  conversation with Open, on every device, and stays in the chat's history.
+
 ## [0.2.0-beta.4] - 2026-10-05
 
 ### Added

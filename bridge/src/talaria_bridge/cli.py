@@ -132,7 +132,7 @@ def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, ops: S
                   file=sys.stderr)
             continue
         tokens[token] = agent.id
-    return AgentTools(chat.todos, tokens, chat.todos_changed, ops, chat.automations) if tokens else None
+    return AgentTools(chat.todos, tokens, chat.todos_changed, ops, chat.automations, chat) if tokens else None
 
 
 def file_roots(agent: AgentConfig) -> list[FileRoot]:

@@ -112,6 +112,31 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun aFileFromTheAgentArrivesInItsChat() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"PDF","created_at":1,"updated_at":2}]}""") }
+        api.answers["chat.history"] = { json("""{"messages":[{"id":"1","role":"user","text":"Sign it","ts":1},
+            {"id":"2","role":"assistant","text":"Done","ts":2}],"next_before":null}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.open("c-1")
+        advanceUntilIdle()
+        api.push("chat.file", """{"conversation_id":"c-1","message":{"id":"f-1","role":"assistant","text":"Signed PDF","ts":3,
+            "attachments":[{"kind":"file","name":"photos_signed.pdf","mime":"application/pdf","size":11,"root":"workspace","path":"photos_signed.pdf"}]}}""")
+        advanceUntilIdle()
+        val last = repo.state.value.openMessages.last()
+        assertEquals("Signed PDF", last.text)
+        assertEquals(Attachment(Attachment.Kind.FILE, "photos_signed.pdf", "application/pdf", 11, root = "workspace", path = "photos_signed.pdf"),
+            last.attachments.single())
+        api.push("chat.file", """{"conversation_id":"c-1","message":{"id":"f-1","role":"assistant","text":"Signed PDF","ts":3,
+            "attachments":[{"kind":"file","name":"photos_signed.pdf","mime":"application/pdf","size":11,"root":"workspace","path":"photos_signed.pdf"}]}}""")
+        advanceUntilIdle()
+        assertEquals(3, repo.state.value.openMessages.size, "the same file isn't shown twice")
+    }
+
+    @Test
     fun aLiveMessageIsHiddenByItsHistoryId() = chatTest { scope ->
         val api = FakeApi()
         api.answers["chat.send"] = { json("""{"conversation_id":"c-1","turn_id":"t-1","title":"Hi"}""") }

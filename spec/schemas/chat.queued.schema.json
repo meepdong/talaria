@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://talaria.invalid/tnp/v0/chat.queued.schema.json",
   "title": "chat.queued",
-  "description": "Bridge to every device (notification): a message waits for the running turn to end (\u00a711).",
+  "description": "Bridge to every device (notification): a message waits for the running turn to end (§11).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -63,6 +63,16 @@
               "size": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
               }
             },
             "required": [

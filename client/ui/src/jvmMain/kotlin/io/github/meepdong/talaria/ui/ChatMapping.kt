@@ -56,7 +56,7 @@ fun sizeLabel(bytes: Long): String = when {
 }
 
 private fun Attachment.chip(images: ImageCache) =
-    AttachmentChip(name, kind == Attachment.Kind.IMAGE, size?.let(::sizeLabel), images[preview])
+    AttachmentChip(name, kind == Attachment.Kind.IMAGE, size?.let(::sizeLabel), images[preview], root, path, mime.takeIf { root != null })
 
 private val APPROVAL_LABELS = mapOf(
     "once" to "Allow once", "session" to "Allow for this chat", "always" to "Always allow", "deny" to "Deny",

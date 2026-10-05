@@ -550,6 +550,23 @@ class TalariaController(
         }
     }
 
+    override fun openAttachment(root: String, path: String, name: String, mime: String) {
+        val f = files ?: return
+        val open = fileOpener ?: run {
+            chat?.notice("This device can't open files yet")
+            return
+        }
+        scope.launch(io) {
+            try {
+                open(name, mime, f.read(root, path))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                chat?.notice("Couldn't open $name: ${e.message ?: e::class.simpleName}")
+            }
+        }
+    }
+
     override fun askAboutFile(path: String) {
         val f = files ?: return
         val file = f.state.value.entries.firstOrNull { it.path == path }?.let(f::serverFile) ?: return

@@ -44,6 +44,7 @@ class ChatScreensTest {
         override fun reconnectNow() {}
         override fun forgetServer() {}
         override fun openConversation(id: String) { calls += "open $id" }
+        override fun openAttachment(root: String, path: String, name: String, mime: String) { calls += "file $root/$path $mime" }
         override fun newConversation() { calls += "new" }
         override fun closeConversation() { calls += "close" }
         override fun sendMessage(text: String) { calls += "send $text" }
@@ -168,6 +169,22 @@ class ChatScreensTest {
         onNodeWithTag("send").performClick()
         onNodeWithTag("back").performClick()
         assertEquals(listOf("open c-2", "new", "retry local:m-1", "send Thanks", "close"), actions.calls)
+    }
+
+    @Test
+    fun aFileFromHermesOpens() = runComposeUiTest {
+        val actions = Recorder()
+        val file = io.github.meepdong.talaria.chat.Attachment(io.github.meepdong.talaria.chat.Attachment.Kind.FILE,
+            "photos_signed.pdf", "application/pdf", 3_080_503, root = "workspace", path = "photos_signed.pdf")
+        val s = state().let { st ->
+            st.copy(threads = st.threads + ("c-1" to st.threads.getValue("c-1").let { t ->
+                t.copy(messages = t.messages + ChatMessage("h:f-1", Role.ASSISTANT, "Signed PDF", 1_700_000_002_000, attachments = listOf(file)))
+            }))
+        }
+        setContent { androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) { ChatHome(view(s), actions) } }
+        onNodeWithText("📄 photos_signed.pdf", substring = true).assertExists()
+        onNodeWithTag("open-file").performClick()
+        assertEquals("file workspace/photos_signed.pdf application/pdf", actions.calls.last())
     }
 
     @Test

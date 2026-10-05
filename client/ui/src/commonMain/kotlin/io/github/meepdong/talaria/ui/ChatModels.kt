@@ -22,6 +22,10 @@ data class AttachmentChip(
     val isImage: Boolean,
     val detail: String?,
     val image: androidx.compose.ui.graphics.ImageBitmap? = null,
+    /** On the server (a file the agent sent): Open fetches it with files.read. */
+    val root: String? = null,
+    val path: String? = null,
+    val mime: String? = null,
 )
 
 data class MessageItem(

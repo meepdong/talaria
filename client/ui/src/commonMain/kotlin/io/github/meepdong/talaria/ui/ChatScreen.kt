@@ -455,6 +455,7 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
                 color = Brand.Brass, modifier = Modifier.testTag("approval"))
         }
         if (m.text.isNotEmpty()) MarkdownText(m.text)
+        m.attachments.forEach { a -> AgentFile(a, actions, Modifier.testTag("agent-file-${m.key}")) }
         when (m.state) {
             ItemState.STREAMING -> if (m.text.isEmpty() && m.tools.isEmpty() && m.commentary == null) {
                 Text("Thinking…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -499,6 +500,23 @@ private fun AsideCard(a: AsideItem, actions: TalariaActions) {
 }
 
 /** A photo as a thumbnail when its bytes are here, otherwise a chip with its name. */
+/** A file the agent sent: its name and size, and Open (which also lets the system share it). */
+@Composable
+private fun AgentFile(a: AttachmentChip, actions: TalariaActions, modifier: Modifier = Modifier) {
+    val root = a.root
+    val path = a.path
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = modifier.widthIn(max = 420.dp)) {
+        Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text((if (a.isImage) "🖼 " else "📄 ") + a.name + (a.detail?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (root != null && path != null) {
+                TextButton(onClick = { actions.openAttachment(root, path, a.name, a.mime ?: "application/octet-stream") },
+                    modifier = Modifier.testTag("open-file")) { Text("Open") }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AttachmentView(a: AttachmentChip, modifier: Modifier = Modifier) {
     val image = a.image

@@ -118,6 +118,7 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.pin` | request | `{conversation_id, pinned}` → `{conversation_id, pinned}` |
 | `chat.hide` | request | `{conversation_id, message_ids}` → `{conversation_id, message_ids}` |
 | `chat.hidden` | notification | `{conversation_id, message_ids}` |
+| `chat.file` | notification | `{conversation_id, message}` |
 
 **Sending.** `chat.send` without `conversation_id` starts a new conversation, titled with the start of the message. `agent_id` defaults to the first agent with chat configured. The result comes back before the turn's first `chat.delta`. A retry with the same `client_msg_id` within 10 minutes returns the original turn instead of sending twice. `attachments` lists photos and files uploaded first (§10); `text` may then be empty.
 
@@ -137,6 +138,8 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 **Catching up.** A device that reconnects while it was showing a running turn calls `chat.turn.get`. The snapshot has the turn's `status`, `user_text`, `text` so far, `tools`, `commentary`, `waiting_for_approval` with the pending `approval`, and `seq`, the last `seq` it covers. The device replaces what it showed with the snapshot and ignores any delta with `seq` at or below it. The bridge keeps the last 50 turns; an older `turn_id` gets `NOT_FOUND`, and the device reloads `chat.history` instead. `conversations.list` names a conversation's running turn as `active_turn_id`.
 
 **One turn at a time.** A conversation runs one turn at a time; a `chat.send` while one runs is queued (§11). `chat.cancel` stops a running turn; its result `status` is `stopping`, or the final status when the turn already ended, and the turn still ends with `chat.done`.
+
+**Files from the agent.** When the agent calls `send_file` (§15), every device gets `chat.file`: an assistant `message` `{id, role, text, ts, attachments}` whose one attachment is `{kind, name, mime, size, root, path}`, and `text` is the caption. The device opens it with `files.read {root, path}` (§12). The bridge keeps these messages, so `chat.history` includes them at their time (ids `f-<n>`), and `chat.hide` hides them like any other.
 
 **History.** `chat.history` returns the newest page first; `next_before` is an opaque cursor for the next older page, or `null`. Within a page, messages are oldest first. Each is `{id, role, text, ts, tools?, attachments?}`, where `role` is `user` or `assistant`, `ts` is Unix seconds or `null`, and `tools` lists the tools an assistant message called. Tool results are not included. Pages may hold fewer than `limit` messages.
 
@@ -318,6 +321,7 @@ The bridge offers the agent a few tools over the Model Context Protocol (MCP), s
 | `todo_update` | `{id, text?, due?, done?, group?}` | Changes a to-do, ticks it off (`done: true`) or opens it again, and returns it. `due: null` and `group: null` clear them. |
 | `todo_comment` | `{id, text}` | Adds a comment to a to-do, marked as the agent's, and returns the to-do. |
 | `automation_report_to` | `{id, to}` | Sets where one of the agent's scheduled jobs reports in Talaria: `home` (Home and a notification on every device), `chat` (a new conversation per run) or `log` (§14), as `automations.update` does. Its description tells the agent to create a job delivering locally and call this, instead of asking the owner where to send results. |
+| `send_file` | `{path, caption?}` | Sends a file the agent made into the conversation it is replying in (§9 `chat.file`): `path` as the agent sees it, inside a folder the bridge shares (its workspace or the inbox, §12), at most 20 MiB, no hidden files; `caption` up to 1000 characters. With no reply running, it goes to the agent's most recently active conversation of the last 30 minutes; otherwise it is refused. Returns `{conversation_id, name, size}`. Its description tells the agent to use it whenever a result is a file, instead of saying it can't send one. |
 | `server_op` | `{op, params?}` | Runs a server operation from the catalogue (§16). Tier 0 returns its result. Tier 1–2 waits up to 120 s for the owner to approve on a device, then returns the result, or says it was denied or expired. Offered only when `talaria-ops` is reachable. |
 
 A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos or comments: it ticks to-dos off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.

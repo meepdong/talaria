@@ -338,6 +338,8 @@ interface TalariaActions {
     fun openRoot(id: String) {}
     /** A folder opens in the list; a file is fetched and opened with the device's own app. */
     fun openFile(path: String) {}
+    /** Open a file the agent sent into a chat (§9 chat.file): fetched from the server, then opened (and shareable) on this device. */
+    fun openAttachment(root: String, path: String, name: String, mime: String) {}
     fun filesUp() {}
     /** Search by name under the folder showing; blank goes back to the folder. */
     fun searchFiles(query: String) {}

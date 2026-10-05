@@ -80,6 +80,9 @@ data class Attachment(
     val size: Long? = null,
     /** The photo itself, on the device that sent it; the bridge doesn't send image bytes back. */
     val preview: ByteArray? = null,
+    /** Where the file is on the server, for files.read (a file the agent sent, §9 chat.file). */
+    val root: String? = null,
+    val path: String? = null,
 ) {
     enum class Kind { IMAGE, FILE }
 }

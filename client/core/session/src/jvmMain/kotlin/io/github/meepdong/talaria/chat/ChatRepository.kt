@@ -647,9 +647,18 @@ class ChatRepository(
                 "chat.queued" -> onQueued(p)
                 "chat.aside.done" -> onAside(p)
                 "chat.hidden" -> onHidden(p)
+                "chat.file" -> onFile(p)
                 "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
             }
         }
+    }
+
+    /** A file the agent sent (§9): its message goes at the end of that conversation, and the list moves. */
+    private fun onFile(p: JsonObject) {
+        val conv = p.str("conversation_id") ?: return
+        val message = p.obj("message")?.let(::parseHistory) ?: return
+        _state.update { s -> s.withMessages(conv, onlyLoaded = true) { list -> list.filterNot { it.key == message.key } + message } }
+        scope.launch { refreshList() }
     }
 
     private fun onHidden(p: JsonObject) {
@@ -941,7 +950,8 @@ class ChatRepository(
     private fun parseAttachments(o: JsonObject): List<Attachment> = (o["attachments"] as? JsonArray).orEmpty().mapNotNull { e ->
         val a = e as? JsonObject ?: return@mapNotNull null
         val kind = if (a.str("kind") == "image") Attachment.Kind.IMAGE else Attachment.Kind.FILE
-        Attachment(kind, a.str("name") ?: "file", a.str("mime") ?: "application/octet-stream", a.long("size"))
+        Attachment(kind, a.str("name") ?: "file", a.str("mime") ?: "application/octet-stream", a.long("size"),
+            root = a.str("root"), path = a.str("path"))
     }
 
     companion object {

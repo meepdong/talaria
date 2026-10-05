@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/chat.file.schema.json",
+  "title": "chat.file",
+  "description": "Bridge to every device (notification): the agent sent a file into a conversation (§9).",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "chat.file"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "message": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^f-[0-9]+$"
+            },
+            "role": {
+              "const": "assistant"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "ts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "attachments": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "image",
+                      "file"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "mime": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "root": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "kind",
+                  "name",
+                  "mime",
+                  "size",
+                  "root",
+                  "path"
+                ]
+              }
+            }
+          },
+          "required": [
+            "id",
+            "role",
+            "text",
+            "ts",
+            "attachments"
+          ]
+        }
+      },
+      "required": [
+        "conversation_id",
+        "message"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ]
+}

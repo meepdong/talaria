@@ -143,6 +143,16 @@
                   "size": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "root": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
                   }
                 },
                 "required": [
@@ -155,7 +165,7 @@
             },
             "approval": {
               "type": "object",
-              "description": "The pending approval (\u00a79): what the agent wants to run and the answers it accepts.",
+              "description": "The pending approval (§9): what the agent wants to run and the answers it accepts.",
               "properties": {
                 "choices": {
                   "type": "array",

@@ -86,6 +86,19 @@ REPORT_TO = {
         "required": ["id", "to"]},
 }
 
+SEND_FILE = {
+    "name": "send_file",
+    "description": "Send the owner a file you made (a PDF, an image, a document, a spreadsheet, ...) in the Talaria chat"
+                   " you are replying in: it appears there with Open and Share on their phone and laptop. Use it"
+                   " whenever the result of a task is a file, instead of saying you can't send files or asking them"
+                   " to look in a folder. Save the file in your workspace (/workspace/projects) first; files the owner"
+                   " sent you (the inbox) work too. At most 20 MB.",
+    "inputSchema": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "The file's full path as you see it, e.g. /workspace/projects/report.pdf."},
+        "caption": {"type": "string", "description": "A short line shown with the file, e.g. \"Signed PDF\"."}},
+        "required": ["path"]},
+}
+
 SERVER_OP = {
     "name": "server_op",
     "description": "Run an operation on the server that hosts you and Talaria (spec §16). Read operations answer at once:"
@@ -130,7 +143,7 @@ def _brief(todo: dict) -> dict:
 
 class AgentTools:
     def __init__(self, todos: TodoStore, tokens: dict[str, str], changed: Changed, ops: ServerOps | None = None,
-                 automations: Automations | None = None):
+                 automations: Automations | None = None, chat=None):
         """[tokens] maps each agent's token to its id; [changed] tells every device (todos.changed);
         [ops] adds server_op (§16) when talaria-ops is installed; [automations] adds automation_report_to (§14)."""
         self.todos = todos
@@ -138,10 +151,12 @@ class AgentTools:
         self.changed = changed
         self.ops = ops
         self.automations = automations
+        self.chat = chat  # ChatService: send_file (§15), when it shares folders
 
     @property
     def tools(self) -> list[dict]:
         return (TOOLS + ([REPORT_TO] if self.automations is not None else [])
+                + ([SEND_FILE] if self.chat is not None and self.chat.files is not None else [])
                 + ([SERVER_OP] if self.ops is not None else []))
 
     def agent_for(self, authorization: str | None) -> str | None:
@@ -173,7 +188,8 @@ class AgentTools:
                 "instructions": "Talaria is the owner's app on their phone and laptop. These tools keep its to-do list,"
                                 " shown on Home; choose where your scheduled jobs report in it (automation_report_to:"
                                 " Home also notifies their devices, so you never need to ask where to send a result);"
-                                " and, when offered, run operations on the server with the owner's approval.",
+                                " send them files you make (send_file); and, when offered, run operations on the"
+                                " server with the owner's approval.",
             }}
         if method == "ping":
             return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
@@ -198,6 +214,13 @@ class AgentTools:
             except AutomationError as exc:
                 return _tool_result(exc.message, is_error=True)
             return _tool_result({"id": a["id"], "name": a["name"], "result_to": a["result_to"]})
+        if name == "send_file" and self.chat is not None:
+            from .chat import RpcError
+
+            try:
+                return _tool_result(await self.chat.agent_file(agent_id, args.get("path"), args.get("caption")))
+            except RpcError as exc:
+                return _tool_result(exc.message, is_error=True)
         if name == "server_op" and self.ops is not None:
             result, is_error = await self.ops.agent_call(args.get("op"), args.get("params"), agent_id)
             return _tool_result(result, is_error=is_error)

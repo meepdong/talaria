@@ -235,7 +235,7 @@ async def test_follow_up_list_and_history(chat_bridge):
     page = check("chat.history.result", await call(ws, "h1", "chat.history", {
         "conversation_id": first["conversation_id"], "limit": 2}))["result"]
     assert [(x["role"], x["text"]) for x in page["messages"]] == [("user", "Two"), ("assistant", "Hello")]
-    assert page["next_before"] == "2"
+    assert page["next_before"].split(":")[0] == "2"  # opaque; it also carries where this page starts (§9 files)
     older = (await call(ws, "h2", "chat.history", {
         "conversation_id": first["conversation_id"], "limit": 2, "before": page["next_before"]}))["result"]
     assert [x["text"] for x in older["messages"]] == ["One", "Hello"]
