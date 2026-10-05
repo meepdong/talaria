@@ -107,8 +107,11 @@ class UpdateRepositoryTest {
         assertTrue(repo.state.value.available)
 
         api.answers["app.read"] = reader("tampered installer!".toByteArray().copyOf(apk.size))
+        repo.installStarted()  // the tap
         assertNull(repo.download())
-        assertEquals("Couldn't update: The download didn't match its checksum", repo.state.value.error)
+        repo.installTimedOut()  // as the controller does when the download fails
+        assertFalse(repo.state.value.installing)
+        assertEquals("Couldn't update: The download didn't match its checksum", repo.state.value.error, "the error stays")
 
         // a newer release replaced it while downloading: ask again
         api.answers["app.read"] = { throw RpcException(UpdateRepository.CONFLICT, "A newer release replaced that one") }

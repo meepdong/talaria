@@ -10,6 +10,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
@@ -88,6 +89,7 @@ class UpdateUiTest {
         val downloading = newer.copy(progress = 0.4f)
         screen = screen.copy(home = screen.home.copy(update = updateBanner(downloading)))
         onNodeWithTag("update-install").assertIsNotEnabled()
+        onNodeWithText("Installing…").assertExists()  // from the tap, while it still downloads
         onNodeWithTag("update-status").assertTextEquals("Downloading 40%")
 
         screen = screen.copy(home = screen.home.copy(update = null), menuOpen = true,

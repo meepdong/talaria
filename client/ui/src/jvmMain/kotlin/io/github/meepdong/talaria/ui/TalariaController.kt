@@ -886,9 +886,9 @@ class TalariaController(
             return
         }
         repo.awaitPermission(false)
+        repo.installStarted()  // the button says "Installing…" from the tap, through the download
         scope.launch(io) {
-            val apk = repo.download() ?: return@launch
-            repo.installStarted()
+            val apk = repo.download() ?: return@launch repo.installTimedOut()  // the download failed; its error stays
             runCatching { platform.install(apk) }.onFailure { repo.installFailed(it.message ?: it::class.simpleName.orEmpty()) }
             delay(INSTALL_WAIT_MS)
             repo.installTimedOut()  // still here and no answer: let Update be tapped again

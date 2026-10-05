@@ -335,7 +335,7 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                 if (menu.canUpdate && menu.updateAvailable) {
                     Button(onClick = actions::installUpdate, enabled = !menu.updateBusy,
                         modifier = Modifier.fillMaxWidth().testTag("update-button")) {
-                        Text(if (menu.updateBusy) "Updating…" else "Update")
+                        Text(if (menu.updateBusy) "Installing…" else "Update")
                     }
                 } else if (menu.canUpdate) {
                     TextButton(onClick = actions::checkForUpdates, modifier = Modifier.fillMaxWidth().testTag("check-update")) {

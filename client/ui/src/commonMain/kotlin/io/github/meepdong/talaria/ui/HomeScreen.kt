@@ -88,7 +88,7 @@ private fun UpdateCard(update: UpdateBanner, actions: TalariaActions) {
         modifier = Modifier.fillMaxWidth().widthIn(max = 1120.dp).testTag("update-banner"),
         trailing = {
             Button(onClick = actions::installUpdate, enabled = !update.busy, modifier = Modifier.testTag("update-install")) {
-                Text(if (update.busy) "Updating…" else "Update")
+                Text(if (update.busy) "Installing…" else "Update")
             }
         },
     ) {
