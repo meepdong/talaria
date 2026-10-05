@@ -193,13 +193,14 @@ class FilesService:
 
     def find(self, agent_id: str, path: object) -> Found:
         """A file named by its path as the agent sees it (or the real one), inside one of its folders (send_file, §15)."""
-        if not isinstance(path, str) or not path.startswith("/"):
+        if not isinstance(path, str) or not (path.startswith("/") or os.path.isabs(path)):
             raise FilesError(m.INVALID_PARAMS, "path must be the file's full path, as you see it")
         roots = self._roots.get(agent_id, [])
         for root in roots:
-            for base in {root.agent_path.rstrip("/"), str(root.path).rstrip("/")}:
-                if base and path.startswith(base + "/"):
-                    return self.file(agent_id, root.id, path[len(base) + 1:])
+            for base in {root.agent_path.rstrip("/\\"), str(root.path).rstrip("/\\")}:
+                for sep in {"/", os.sep}:
+                    if base and path.startswith(base + sep):
+                        return self.file(agent_id, root.id, path[len(base) + 1:].replace(os.sep, "/"))
         shared = ", ".join(sorted({r.agent_path for r in roots})) or "none"
         raise FilesError(m.NOT_FOUND, f"That file isn't in a folder Talaria shares ({shared}): save it there first")
 
