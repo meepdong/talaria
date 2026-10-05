@@ -478,10 +478,14 @@ async def test_photo_and_file_reach_the_agent(chat_bridge, tmp_path: Path):
         {"kind": "file", "name": "../Q3 report.pdf", "mime": "application/pdf", "size": len(pdf)}]
 
     sent = hermes.messages[-1]
-    saved = tmp_path / "inbox" / res["conversation_id"] / f"{doc['blob_id']}-Q3 report.pdf"
+    folder = tmp_path / "inbox" / res["conversation_id"]
+    saved = folder / f"{doc['blob_id']}-Q3 report.pdf"
+    saved_photo = folder / f"{image['blob_id']}-IMG_1.jpg"
     assert saved.read_bytes() == pdf
+    assert saved_photo.read_bytes() == photo, "a photo is a file too, so the agent's tools can use it"
     assert sent == [
-        {"type": "text", "text": f"Attached file: {saved} (application/pdf, {len(pdf)} bytes)"},
+        {"type": "text", "text": f"Attached file: {saved_photo} (image/jpeg, {len(photo)} bytes)\n\n"
+                                 f"Attached file: {saved} (application/pdf, {len(pdf)} bytes)"},
         {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(photo).decode()}]
 
     # each blob is sent once
@@ -494,8 +498,8 @@ async def test_photo_and_file_reach_the_agent(chat_bridge, tmp_path: Path):
     history = (await call(ws, "h1", "chat.history", {"conversation_id": res["conversation_id"]}))["result"]
     assert history["messages"][0]["text"] == ""
     assert history["messages"][0]["attachments"] == [
-        {"kind": "image", "name": "Photo", "mime": "image/jpeg"},
-        {"kind": "file", "name": "Q3 report.pdf", "mime": "application/pdf", "size": len(pdf)}]
+        {"kind": "image", "name": "IMG_1.jpg", "mime": "image/jpeg", "size": len(photo)},
+        {"kind": "file", "name": "Q3 report.pdf", "mime": "application/pdf", "size": len(pdf)}], "each once, by name"
     await ws.close()
 
 

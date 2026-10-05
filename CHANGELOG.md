@@ -12,6 +12,8 @@ release notes the app shows.
   Esc, Ctrl-C, arrows. Hermes can never open terminals (spec §16.1).
 
 ### Changed
+- Every file you send, photos included, is saved to Hermes's inbox, so its tools can use it (e.g. put a signature
+  image on a PDF). Photos are still shown to Hermes as pictures too.
 - Update says "Installing…" as soon as it's tapped, through the download, until Android answers.
 
 ## [0.2.0-beta.3] - 2026-10-05

@@ -310,9 +310,13 @@ def _message_content(content) -> tuple[str, list[dict]]:
         if found:
             name = os.path.basename(found["path"])
             name = re.sub(r"^b-[0-9a-f]{24}-", "", name)
-            attachments.append({"kind": "file", "name": name, "mime": found["mime"], "size": int(found["size"])})
+            kind = "image" if found["mime"].startswith("image/") else "file"
+            attachments.append({"kind": kind, "name": name, "mime": found["mime"], "size": int(found["size"])})
         else:
             lines.append(line)
+    if any(a["kind"] == "image" and a["name"] != "Photo" for a in attachments):
+        # photos saved to the inbox are also inline: list each once, by its name
+        attachments = [a for a in attachments if not (a["kind"] == "image" and a["name"] == "Photo" and "size" not in a)]
     return "\n".join(lines), attachments
 
 
@@ -615,18 +619,21 @@ class ChatService:
             raise RpcError(m.INVALID_PARAMS, "Photos too large for one message; send fewer or smaller ones")
 
     def _content(self, conv: Conversation, text: str, blobs: list[Blob], found: list[Found] = ()) -> str | list:
-        """The message for the agent: images inline, files saved to its inbox with a line each.
+        """The message for the agent: every attachment saved to its inbox with a line each, so its tools can open
+        it (a signature to put on a PDF), and photos also inline when they fit, so it sees them (§10).
         The blobs are used up once this returns."""
         lines = [text] if text.strip() else []
         images = []
+        inbox = self.inboxes.get(conv.agent_id)
         try:
             inline = _inline(blobs)
             for blob in blobs:
                 if blob.kind == "image" and inline:
                     data = base64.b64encode(blob.path.read_bytes()).decode("ascii")
                     images.append({"type": "input_image", "image_url": f"data:{blob.mime};base64,{data}"})
-                    continue
-                folder = self.inboxes[conv.agent_id] / conv.id
+                if inbox is None:
+                    continue  # photos only (checked in _check_files)
+                folder = inbox / conv.id
                 folder.mkdir(parents=True, exist_ok=True, mode=0o750)
                 target = folder / f"{blob.blob_id}-{safe_name(blob.name)}"
                 shutil.copyfile(blob.path, target)

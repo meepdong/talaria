@@ -108,7 +108,8 @@ class ChatIntegrationTest {
         val history = withTimeout(30_000) { onPhone.state.first { it.threads[conv]?.loaded == true } }
         val asked = history.threads.getValue(conv).messages.first()
         assertEquals("Have a look", asked.text)
-        assertEquals(listOf(Attachment(Attachment.Kind.IMAGE, "Photo", "image/jpeg"),
+        // the photo is also a file in the agent's inbox, so history knows its name and size
+        assertEquals(listOf(Attachment(Attachment.Kind.IMAGE, "IMG_1.jpg", "image/jpeg", photo.bytes.size.toLong()),
             Attachment(Attachment.Kind.FILE, "report.pdf", "application/pdf", report.bytes.size.toLong())), asked.attachments)
     }
 }
