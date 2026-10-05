@@ -100,11 +100,11 @@ jobs:
           path: client/desktopApp/build/compose/binaries/main/app/
           if-no-files-found: error
 
-      # The Android debug APK, signed with the repo's fixed debug key so each build
-      # installs over the last one. Install it with adb install -r or from the phone.
+      # The Android debug APK ("Talaria Debug"), signed with the repo's public debug key. The
+      # unsigned release build is built too, so a tag never finds it broken (release.yml).
       - name: Build the Android app
         if: runner.os == 'Linux'
-        run: ./gradlew :androidApp:assembleDebug --console=plain
+        run: ./gradlew :androidApp:assembleDebug :androidApp:assembleRelease --console=plain
 
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
