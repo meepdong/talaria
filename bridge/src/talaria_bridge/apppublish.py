@@ -103,6 +103,7 @@ class Publisher:
         self.build_tools, self.group = build_tools, group
         self.get = get or _get
         self.run = run or _run
+        self.targets: list[tuple[str, Path, str]] = []  # (channel, folder, group): see read_targets
 
     def current(self, channel: str) -> int:
         try:
@@ -130,6 +131,23 @@ class Publisher:
                     self._place(channel, rel, *signed[rel.version])
                     placed.append(f"{channel} {rel.version}")
                     break
+            # other people's bridges on this server (talaria setup --instance): a copy of their channel's release
+            for channel, out, group in self.targets:
+                theirs = self.out / channel / "android.json"
+                try:
+                    release = json.loads(theirs.read_text())
+                except (OSError, ValueError):
+                    continue
+                try:
+                    have = json.loads((out / channel / "android.json").read_text()).get("version_code", 0)
+                except (OSError, ValueError):
+                    have = 0
+                if release["version_code"] > have:
+                    copy = Publisher(out, self.repo, self.keystore, self.password_file, self.cert_sha256, self.build_tools,
+                                     group, self.get, self.run)
+                    copy._place(channel, Release(release["version"], release["version_code"], "-beta." in release["version"], {}),
+                                self.out / channel / release["file"], {k: release[k] for k in ("version", "version_code", "size", "sha256", "notes") if k in release})
+                    placed.append(f"{channel} {release['version']} for {group}")
         return placed
 
     def _sign(self, rel: Release, tmp: Path) -> tuple[Path, dict]:
@@ -200,6 +218,20 @@ class Publisher:
         log.info("placed %s on %s", rel.version, channel)
 
 
+def read_targets(path: Path) -> list[tuple[str, Path, str]]:
+    """/etc/talaria/publish-targets: "<channel> <folder> <group>" per line, written by talaria setup --instance."""
+    out = []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 3 and parts[0] in CHANNELS and parts[1].startswith("/"):
+            out.append((parts[0], Path(parts[1]), parts[2]))
+    return out
+
+
 def _get(url: str) -> bytes:
     r = httpx.get(url, follow_redirects=True, timeout=300, headers={"User-Agent": "talaria-publish-app"})
     r.raise_for_status()
@@ -222,10 +254,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cert-sha256-file", type=Path, default=Path("/etc/talaria/release/cert.sha256"))
     p.add_argument("--build-tools", type=Path, default=Path("/opt/android-build-tools"))
     p.add_argument("--group", default="talaria", help="group that may read what's placed (the bridge's)")
+    p.add_argument("--targets", type=Path, default=Path("/etc/talaria/publish-targets"),
+                   help="other bridges on this server to place releases for (talaria setup --instance writes it)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     publisher = Publisher(args.out, args.repo, args.keystore, args.password_file,
                           args.cert_sha256_file.read_text().strip(), args.build_tools, args.group)
+    publisher.targets = read_targets(args.targets)
     try:
         placed = publisher.publish()
     except Exception as exc:  # one line in the journal; the timer tries again

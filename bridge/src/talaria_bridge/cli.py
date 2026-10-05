@@ -343,6 +343,20 @@ def build_parser() -> argparse.ArgumentParser:
     pair.add_argument("--no-qr", action="store_true")
     pair.set_defaults(func=cmd_pair)
 
+    for name, helptext in (("setup", "install or repair a bridge next to Hermes (root)"),
+                           ("doctor", "check an install and say what to fix")):
+        cmd = sub.add_parser(name, help=helptext)
+        cmd.add_argument("--instance", help="another person's separate bridge on this server, e.g. --instance asha")
+        cmd.add_argument("--hermes-user", help="the Linux user Hermes runs as (default hermes, or hermes-INSTANCE)")
+        cmd.add_argument("--channel", choices=["stable", "beta"], default="stable", help="app releases this bridge offers")
+        if name == "setup":
+            cmd.add_argument("--dns-name", help="the MagicDNS name devices use (default: this machine's)")
+            cmd.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")
+            cmd.add_argument("--install-hermes", action="store_true", help="also create the Hermes user and install Hermes")
+            cmd.add_argument("--model", default="qwen/qwen3.8-flash", help="their Hermes's model (with --install-hermes)")
+            cmd.add_argument("--openrouter-key-file", type=Path, help="a file with their OpenRouter key (with --install-hermes)")
+        cmd.set_defaults(func=lambda a, n=name: __import__("talaria_bridge.install", fromlist=["x"]).__dict__[f"main_{n}"](a))
+
     devices = sub.add_parser("devices", help="list or revoke paired devices")
     dsub = devices.add_subparsers(dest="devices_command", required=True)
     dsub.add_parser("list").set_defaults(func=cmd_devices_list)

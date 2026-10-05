@@ -4,6 +4,37 @@ The bridge runs next to your agent. M0 covers the device registry, secure pairin
 
 Byte formats and test vectors live in [`../spec/`](../spec/README.md). The protocol itself is in [`../docs/PROTOCOL.md`](../docs/PROTOCOL.md).
 
+## Quick install (a Linux server with Hermes)
+
+You need: a Linux server with systemd, [Tailscale](https://tailscale.com) up on it and on your phone, and
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) installed for a user (usually `hermes`). Then, as root:
+
+```bash
+git clone https://github.com/meepdong/talaria /opt/talaria
+python3 -m venv /opt/talaria/.venv && /opt/talaria/.venv/bin/pip install -q -e /opt/talaria/bridge
+/opt/talaria/.venv/bin/talaria setup            # add --dry-run first to see what it would do
+sudo -u talaria /opt/talaria/.venv/bin/talaria --home /var/lib/talaria pair --name "Phone"
+```
+
+`talaria setup` turns on Hermes's API server, gives the bridge its key, connects Talaria's tools to Hermes (MCP),
+shares the inbox and Hermes's workspace both ways, writes `agents.json`, makes a certificate for the machine's MagicDNS
+name, and installs a sandboxed `talaria-bridge` service. Each step looks first and changes only what's missing: run it
+again to repair an install. `talaria doctor` checks a running install and says what to fix.
+
+Install the app, open it and scan the QR code `pair` shows; updates then come through the app. For now the signed app
+comes from the person who runs the server (their bridge holds it under `/var/lib/talaria/updates/`); signed APKs on the
+[Releases](https://github.com/meepdong/talaria/releases) page are next.
+
+**Another person on the same server** (a family member with their own Hermes, devices and data, and no server
+operations): `talaria setup --instance asha --install-hermes --openrouter-key-file /root/asha-openrouter.key`. It makes
+the user `hermes-asha` with its own Hermes (OpenRouter, `qwen/qwen3.8-flash` unless `--model`), and the bridge
+`talaria-bridge-asha` on the next free ports. Give them a key with an OpenRouter guardrail (a cheap-model allowlist and a
+monthly budget). Their app updates come from the owner's publisher on the `stable` channel. Pair their phone with
+`sudo -u talaria-asha /opt/talaria/.venv/bin/talaria --home /var/lib/talaria-asha pair --name "Asha's phone"`.
+
+Optional, by hand for now: the calendar helper, the OpenRouter balance, server operations (talaria-ops) and app
+updates for the owner's own bridge, below.
+
 ## Install (Windows PowerShell; on macOS or Linux use `python3.12` and `.venv/bin/`)
 
 From the repository root:

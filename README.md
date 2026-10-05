@@ -88,6 +88,11 @@ The existing community apps ([hermes-android](https://github.com/rusty4444/herme
 5. **Reliable before rich.** Pairing, reconnection and battery handling come before features.
 6. **One protocol, many clients.** Platforms implement whatever capabilities they can, and the protocol says so honestly.
 
+## Try it
+
+On a Linux server with Hermes and Tailscale: `talaria setup`, then install the app from the latest release and pair
+it. See [bridge/README.md, "Quick install"](bridge/README.md#quick-install-a-linux-server-with-hermes).
+
 ## Documents
 
 | Doc | Contents |
