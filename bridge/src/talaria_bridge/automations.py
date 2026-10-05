@@ -864,7 +864,8 @@ AUTOMATION_METHODS = frozenset({"automations.list", "automations.add", "automati
 
 def last_run_note(run: dict) -> str:
     """What Hermes is told about the run before, so "run it again" comes with why it's being run again."""
-    when = dt.datetime.fromtimestamp(run["at"]).strftime("%-d %b %H:%M")
+    at = dt.datetime.fromtimestamp(run["at"])
+    when = f"{at.day} {at:%b %H:%M}"  # no %-d: Windows doesn't have it
     if run["status"] == "blocked":
         what = f"was blocked: it needed my approval for {run.get('blocked') or 'something'}, and I wasn't there."
     elif run["status"] == "error":
