@@ -334,3 +334,36 @@ PROTOCOL §10.8 describes them. `talaria-ops` (root, `bridge/src/talaria_bridge/
 | `{"cmd": "execute", "request_id", "device_id", "choice", "sig"}` | `{"result": {...}}`, or `{"result": null}` for `deny` |
 
 Any failure is `{"error": "<sentence>"}`. `params_json` is `json.dumps(params, sort_keys=True, separators=(",", ":"))`. A prepared request lives 120 s and is used at most once. Every run, of any tier, is appended to `/var/log/talaria-ops/audit.jsonl`.
+
+## 17. App updates
+
+The apps update themselves from the bridge they're paired with, so no device needs a computer, a store or a public
+download page. Each bridge has one **channel**: `beta` (the owner's devices, for testing) or `stable` (everyone else).
+Versions, tags and file names follow the release convention in the deployment notes (SemVer, `X.Y.Z-beta.N`).
+
+| Method | Direction | Params → result |
+|---|---|---|
+| `app.latest` | request | `{platform}` → `{channel, release?}` |
+| `app.read` | request | `{platform, version_code, offset?}` → `{size, offset, data, eof}` |
+| `app.available` | notification | `{platform, channel, release}` |
+
+**A release** is `{version, version_code, size, sha256, published_at, notes?}`: `version` as `0.2.0` or `0.2.0-beta.1`,
+`version_code` the Android version code (`MAJOR*1000000 + MINOR*10000 + PATCH*100 + N` for `beta.N`, `+ 99` for a stable
+release), `size` and `sha256` (lowercase hex) of the signed installer, `published_at` in Unix seconds. `platform` is
+`android` for now.
+
+**Where releases come from.** A tag `vX.Y.Z[-beta.N]` makes CI build an unsigned installer and publish it with its
+checksum as a GitHub Release (a pre-release for betas). On the server, a root-owned publisher fetches the newest release
+for each channel, checks the checksum, signs it with the **release key**, which never leaves the server, and places it
+where the bridge reads it. The bridge never holds the key. A beta release reaches the `beta` channel; a stable release
+reaches both.
+
+**Updating.** After `ready`, a device asks `app.latest` and compares `version_code` with its own. When a new release is
+placed, every device gets `app.available`. To update, the device reads the installer with `app.read` in chunks of at most
+512 KiB (`data` is base64, the next chunk starts at `offset` + decoded length), checks `size` and `sha256`, and hands it
+to the system installer. Android itself refuses an installer that isn't signed with the same key as the installed app.
+
+**Errors.** `NOT_FOUND` when the channel has no release for the platform; `CONFLICT` from `app.read` when `version_code`
+is no longer the newest (the device asks `app.latest` again); `INVALID_PARAMS` for a bad platform or offset.
+
+Schemas: `app.latest`, `app.latest.result`, `app.read`, `app.read.result`, `app.available`.

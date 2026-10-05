@@ -44,7 +44,8 @@ compose.desktop {
             // installers come later (MSI needs WiX).
             targetFormats(TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Talaria"
-            packageVersion = "0.1.0"
+            // installers take MAJOR.MINOR.PATCH only
+            packageVersion = providers.gradleProperty("talaria.version").get().substringBefore("-")
             description = "Talaria: talk to your agents"
             vendor = "meepdong"
             // The whole runtime, so OkHttp, JNA and the P-256 code find every JDK module

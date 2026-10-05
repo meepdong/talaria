@@ -324,22 +324,20 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                     Text("Version ${menu.version}", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (menu.updateAvailable) {
-                        Text("Update ${menu.updateVersion} available", style = MaterialTheme.typography.bodyMedium,
+                        Text("${menu.updateVersion} available", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                if (menu.updateAvailable) {
-                    Button(
-                        onClick = actions::checkForUpdates,
-                        modifier = Modifier.fillMaxWidth().testTag("update-button"),
-                    ) {
-                        Text("Install Update")
+                menu.updateStatus?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("menu-update-status"))
+                }
+                if (menu.canUpdate && menu.updateAvailable) {
+                    Button(onClick = actions::installUpdate, modifier = Modifier.fillMaxWidth().testTag("update-button")) {
+                        Text("Update")
                     }
-                } else {
-                    TextButton(
-                        onClick = actions::checkForUpdates,
-                        modifier = Modifier.fillMaxWidth().testTag("check-update"),
-                    ) {
+                } else if (menu.canUpdate) {
+                    TextButton(onClick = actions::checkForUpdates, modifier = Modifier.fillMaxWidth().testTag("check-update")) {
                         Text("Check for updates")
                     }
                 }

@@ -4,6 +4,7 @@ import io.github.meepdong.talaria.chat.ModelChoice
 import io.github.meepdong.talaria.chat.ModelOptions
 import io.github.meepdong.talaria.todos.Todo
 import io.github.meepdong.talaria.todos.TodosState
+import io.github.meepdong.talaria.updates.UpdateState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -125,4 +126,31 @@ fun List<HomeTile>.moved(tile: HomeTile, up: Boolean): List<HomeTile> {
     val j = if (up) i - 1 else i + 1
     if (i < 0 || j !in indices) return this
     return toMutableList().apply { add(j, removeAt(i)) }
+}
+
+/** The ☰ menu's About section with the bridge's update state (§17); [canInstall] is false where the app can't update itself. */
+fun MenuView.withUpdate(u: UpdateState?, canInstall: Boolean): MenuView {
+    if (u == null || !canInstall || !u.supported) return this
+    return copy(
+        canUpdate = true,
+        updateAvailable = u.available,
+        updateVersion = u.release?.version.orEmpty(),
+        updateNotes = u.release?.notes?.takeIf { u.available },
+        updateStatus = updateStatus(u) ?: if (u.upToDate) "Up to date" else null,
+    )
+}
+
+/** Home's card while a newer release waits. */
+fun updateBanner(u: UpdateState): UpdateBanner? {
+    val release = u.release?.takeIf { u.available && u.supported } ?: return null
+    return UpdateBanner(release.version, release.notes, updateStatus(u), busy = u.progress != null)
+}
+
+private fun updateStatus(u: UpdateState): String? = when (val progress = u.progress) {
+    null -> when {
+        u.error != null -> u.error
+        u.checking -> "Checking…"
+        else -> null
+    }
+    else -> "Downloading ${(progress * 100).toInt()}%"
 }

@@ -35,6 +35,7 @@ from .protocol.encoding import b64u_encode, now
 from .protocol.pairing import format_short_code
 from .registry import Registry
 from .server import BridgeServer, ServerSettings
+from .updates import AppUpdates
 
 TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
@@ -199,7 +200,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     chat = make_chat(args.home, agents)
     # server operations (§16) when talaria-ops is installed: its socket exists
     ops = ServerOps(OpsClient(args.ops_socket)) if args.ops_socket.exists() else None
-    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops)
+    updates = AppUpdates(args.home / "updates", args.update_channel)  # placed by talaria-publish-app (§17)
+    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates)
     tools = make_agent_tools(agents, chat, ops)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
@@ -212,6 +214,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if tools:
         print(f"  tools:     http://127.0.0.1:{args.agent_tools_port}/mcp for {', '.join(sorted(set(tools.tokens.values())))}")
     print(f"  server:    {'operations via ' + str(args.ops_socket) if ops else 'no operations (talaria-ops not installed)'}")
+    print(f"  updates:   {args.update_channel} channel, from {updates.folder}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
     sys.stdout.flush()  # under systemd stdout is a pipe, so these lines would wait in a buffer
 
@@ -319,6 +322,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="loopback port of the agents' MCP tools (§15)")
     serve.add_argument("--ops-socket", type=Path, default=OPS_SOCKET,
                        help="talaria-ops's socket; server operations are offered when it exists (§16)")
+    serve.add_argument("--update-channel", choices=["beta", "stable"],
+                       default=os.environ.get("TALARIA_UPDATE_CHANNEL", "stable"),
+                       help="which app releases this bridge offers its devices (§17; default $TALARIA_UPDATE_CHANNEL or stable)")
     serve.add_argument("--url", help="address devices use, e.g. wss://meep-vps.tailnet.ts.net/tnp")
     serve.add_argument("--dev", action="store_true", help="plain ws:// on loopback, for local testing")
     serve.add_argument("--behind-proxy", action="store_true",

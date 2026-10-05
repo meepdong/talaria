@@ -1,0 +1,18 @@
+# Changelog
+
+Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.N` for the owner's devices first,
+`X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
+release notes the app shows.
+
+## [0.2.0-beta.1] - 2026-10-05
+
+### Added
+- In-app updates: Talaria checks the bridge for a newer release and installs it with one tap (spec §17).
+- Home: dismiss a "Needs you" item; long-press a tile's title to rearrange Home.
+
+### Changed
+- A message can carry up to 128 files. More than 10 photos reach Hermes as files.
+
+### Security
+- Releases are signed on the server with a private release key; the public debug key signs only debug builds,
+  which now install as a separate "Talaria Debug" app.

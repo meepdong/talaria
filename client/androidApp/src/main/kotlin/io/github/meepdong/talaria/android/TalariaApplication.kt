@@ -37,6 +37,7 @@ class TalariaApplication : Application() {
             speechOutput = AndroidVoice(this),
             prefs = SharedPrefs(getSharedPreferences("settings", MODE_PRIVATE)),
         )
+        controller.setInstaller { apk -> AppInstaller.install(this, apk) }
         controller.start()
     }
 

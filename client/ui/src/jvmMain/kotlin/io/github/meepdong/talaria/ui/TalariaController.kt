@@ -17,6 +17,8 @@ import io.github.meepdong.talaria.schedule.AutomationRan
 import io.github.meepdong.talaria.schedule.ScheduleRepository
 import io.github.meepdong.talaria.schedule.ScheduleState
 import io.github.meepdong.talaria.schedule.When
+import io.github.meepdong.talaria.updates.UpdateRepository
+import io.github.meepdong.talaria.updates.UpdateState
 import io.github.meepdong.talaria.todos.TodosRepository
 import io.github.meepdong.talaria.todos.TodosState
 import io.github.meepdong.talaria.chat.asChatApi
@@ -105,6 +107,7 @@ class TalariaController(
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
             val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
+            val updates: UpdateRepository,
         ) : Mode
     }
 
@@ -142,6 +145,7 @@ class TalariaController(
 
     /** Opens fetched file bytes with the device's own app; set by the platform. */
     private var fileOpener: ((name: String, mime: String, bytes: ByteArray) -> Unit)? = null
+    @Volatile private var installer: ((apk: ByteArray) -> Unit)? = null
     private var textSharer: ((String) -> Unit)? = null
 
     /**
@@ -168,6 +172,7 @@ class TalariaController(
     private data class Live(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
         val todos: TodosState? = null, val schedule: ScheduleState? = null, val ops: OpsState? = null,
+        val updates: UpdateState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -175,8 +180,8 @@ class TalariaController(
         if (m is Mode.Connected) {
             combine(
                 combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Triple(st, c, f) },
-                m.todos.state, m.schedule.state, m.ops.state,
-            ) { (st, c, f), t, sc, o -> Live(m, st, c, f, t, sc, o) }
+                m.todos.state, m.schedule.state, m.ops.state, m.updates.state,
+            ) { (st, c, f), t, sc, o, u -> Live(m, st, c, f, t, sc, o, u) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -212,6 +217,7 @@ class TalariaController(
     private val todos: TodosRepository? get() = (mode.value as? Mode.Connected)?.todos
     private val schedule: ScheduleRepository? get() = (mode.value as? Mode.Connected)?.schedule
     private val ops: OpsRepository? get() = (mode.value as? Mode.Connected)?.ops
+    private val updates: UpdateRepository? get() = (mode.value as? Mode.Connected)?.updates
 
     /** Server operations waiting for approval, for a notification each (PROTOCOL §10.8). */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -865,8 +871,26 @@ class TalariaController(
     }
 
     override fun checkForUpdates() {
-        // TODO: Implement update check - for now just show a notice
-        chat?.notice("Update check not yet implemented. Current version: $VERSION")
+        updates?.check()
+    }
+
+    override fun installUpdate() {
+        val repo = updates ?: return
+        val install = installer ?: return
+        scope.launch(io) {
+            val apk = repo.download() ?: return@launch
+            runCatching { install(apk) }.onFailure { repo.installFailed(it.message ?: it::class.simpleName.orEmpty()) }
+        }
+    }
+
+    /** The platform's installer for an update (Android); null where the app can't update itself. */
+    fun setInstaller(install: ((apk: ByteArray) -> Unit)?) {
+        installer = install
+    }
+
+    /** The system installer refused the update; [message] says why. */
+    fun updateFailed(message: String) {
+        updates?.installFailed(message)
     }
 
     /** A reply typed into a notification, sent without opening the app. */
@@ -916,7 +940,8 @@ class TalariaController(
         val todos = TodosRepository(scope, client.asChatApi()).also { it.start() }
         val schedule = ScheduleRepository(scope, client.asChatApi()).also { it.start() }
         val ops = OpsRepository(scope, client.asChatApi()).also { it.start() }
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops)
+        val updates = UpdateRepository(scope, client.asChatApi(), versionCodeOf(TALARIA_VERSION) ?: 0).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates)
         client.start()
     }
 
@@ -945,8 +970,9 @@ class TalariaController(
                     view, withBalance,
                     tab = x.page.tab,
                     tabs = TABS,
-                    home = homeView(view, now, l.todos).copy(order = x.homeOrder, arranging = x.page.arrangingHome).withSchedule(l.schedule, now),
-                    menu = menuView(view, withBalance, l.chat?.models, VERSION),
+                    home = homeView(view, now, l.todos).copy(order = x.homeOrder, arranging = x.page.arrangingHome,
+                        update = l.updates?.takeIf { installer != null }?.let(::updateBanner)).withSchedule(l.schedule, now),
+                    menu = menuView(view, withBalance, l.chat?.models, VERSION).withUpdate(l.updates, installer != null),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice),
                     schedule = scheduleView(l.schedule, now),
@@ -960,8 +986,8 @@ class TalariaController(
         /** The countdown on Confirm code: the bridge gives its operator 120 s to approve. */
         const val APPROVAL_WINDOW_MS = 120_000L
 
-        /** App version, keep in sync with build.gradle.kts. */
-        const val VERSION = "0.1.0"
+        /** This build's version (Version.kt). */
+        const val VERSION = TALARIA_VERSION
 
         /** How long to wait for the decision, a little past the bridge's own limit. */
         const val DECISION_TIMEOUT_MS = 150_000L

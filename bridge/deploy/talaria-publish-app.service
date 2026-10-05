@@ -1,0 +1,14 @@
+# Signs the newest app release for each channel and places it for the bridge (spec §17).
+# Install as /etc/systemd/system/talaria-publish-app.service, with talaria-publish-app.timer.
+# Runs from talaria-ops's root-owned venv: the release key in /etc/talaria/release/ is root-only.
+[Unit]
+Description=Talaria app release publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/talaria-ops/venv/bin/talaria-publish-app
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true

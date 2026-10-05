@@ -57,6 +57,7 @@ fun HomeScreen(screen: Screen.Chat, actions: TalariaActions) {
                     Button(onClick = actions::doneArrangingHome, modifier = Modifier.testTag("arrange-done")) { Text("Done") }
                 }
             }
+            home.update?.let { UpdateCard(it, actions) }
             NeedsYouCard(home, actions)
             val tiles = home.order.filter { it.shown(home) }
             val full = Modifier.fillMaxWidth().widthIn(max = 1120.dp)
@@ -76,6 +77,24 @@ fun HomeScreen(screen: Screen.Chat, actions: TalariaActions) {
                 }
             }
         }
+    }
+}
+
+/** A newer release from the bridge (§17): one tap downloads, checks and installs it. */
+@Composable
+private fun UpdateCard(update: UpdateBanner, actions: TalariaActions) {
+    SectionCard(
+        "Update available",
+        modifier = Modifier.fillMaxWidth().widthIn(max = 1120.dp).testTag("update-banner"),
+        trailing = {
+            Button(onClick = actions::installUpdate, enabled = !update.busy, modifier = Modifier.testTag("update-install")) {
+                Text(if (update.busy) "Updating…" else "Update")
+            }
+        },
+    ) {
+        Text("Talaria ${update.version} is ready to install.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        update.notes?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) }
+        update.status?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp).testTag("update-status")) }
     }
 }
 

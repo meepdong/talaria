@@ -1,0 +1,67 @@
+name: release
+
+# A tag vX.Y.Z or vX.Y.Z-beta.N publishes an unsigned Android build as a GitHub Release (a pre-release for betas),
+# with release.json and SHA256SUMS. The server signs it with the release key and offers it to the apps
+# (spec/README.md §17, bridge/README.md "App updates"). Naming: PROCESS.md "Releases" in the deployment notes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: client
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag is the version in the code
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo "not a release tag: $GITHUB_REF_NAME"; exit 1; }
+          prop="$(sed -n 's/^talaria.version=//p' gradle.properties)"
+          [ "$version" = "$prop" ] || { echo "tag says $version, gradle.properties says $prop"; exit 1; }
+          grep -q "const val TALARIA_VERSION = \"$version\"" ui/src/commonMain/kotlin/io/github/meepdong/talaria/ui/Version.kt \
+            || { echo "Version.kt doesn't say $version"; exit 1; }
+          grep -q "^## \[$version\]" ../CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the unsigned release
+        run: ./gradlew :androidApp:assembleRelease --console=plain
+
+      - name: Package
+        run: |
+          mkdir -p ../dist
+          apks=(androidApp/build/outputs/apk/release/*.apk)
+          [ ${#apks[@]} -eq 1 ] || { echo "expected one release APK, found ${#apks[@]}"; exit 1; }
+          cp "${apks[0]}" "../dist/talaria-android-$VERSION-unsigned.apk"
+          awk -v v="## [$VERSION]" 'index($0, v) == 1 {on=1; next} /^## \[/ {on=0} on' ../CHANGELOG.md > ../notes.md
+          python3 - <<'PY'
+          import json, os, re
+          v = os.environ["VERSION"]
+          major, minor, patch, beta = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?", v).groups()
+          code = int(major) * 1_000_000 + int(minor) * 10_000 + int(patch) * 100 + (int(beta) if beta else 99)
+          notes = open("../notes.md").read().strip()[:4000]
+          json.dump({"version": v, "version_code": code, "notes": notes}, open("../dist/release.json", "w"), indent=2)
+          PY
+          cd ../dist && sha256sum talaria-android-*.apk > SHA256SUMS && cat SHA256SUMS release.json
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""; [[ "$VERSION" == *-beta.* ]] && pre="--prerelease"
+          gh release create "$GITHUB_REF_NAME" ../dist/* --title "Talaria $VERSION" --notes-file ../notes.md $pre

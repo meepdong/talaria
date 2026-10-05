@@ -33,6 +33,14 @@ kotlin {
     }
 }
 
+// Version.kt must say the version gradle.properties does (PROCESS.md, Releases).
+val talariaVersion = providers.gradleProperty("talaria.version").get()
+val versionFile = providers.fileContents(layout.projectDirectory.file(
+    "src/commonMain/kotlin/io/github/meepdong/talaria/ui/Version.kt")).asText.get()
+check("const val TALARIA_VERSION = \"$talariaVersion\"" in versionFile) {
+    "Version.kt doesn't say talaria.version=$talariaVersion from gradle.properties"
+}
+
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
 }

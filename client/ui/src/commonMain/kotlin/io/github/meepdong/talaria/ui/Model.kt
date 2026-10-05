@@ -76,7 +76,12 @@ data class HomeView(
     val order: List<HomeTile> = HomeTile.entries,
     /** Rearranging: each tile shows ↑ and ↓, and Home a Done button. */
     val arranging: Boolean = false,
+    /** A newer release to install, shown above everything else until it's installed. */
+    val update: UpdateBanner? = null,
 )
+
+/** Home's "Update available" card (§17). [status] is the download's progress or what went wrong. */
+data class UpdateBanner(val version: String, val notes: String? = null, val status: String? = null, val busy: Boolean = false)
 
 /** A to-do on Home (spec/README.md §13). */
 data class TodoItem(
@@ -130,10 +135,16 @@ data class MenuView(
     val defaultModelGroups: List<ModelGroup> = emptyList(),
     /** App version string (e.g., "0.1.0"). */
     val version: String = "",
-    /** Whether an update is available. */
+    /** A newer release is ready to install from the bridge (§17). */
     val updateAvailable: Boolean = false,
-    /** Update version if available. */
+    /** Its version: "0.2.0-beta.2". */
     val updateVersion: String = "",
+    /** False where the app can't update itself (desktop, or an older bridge): no update controls. */
+    val canUpdate: Boolean = false,
+    /** "Checking…", "Downloading 40%", "Up to date", or why it failed. */
+    val updateStatus: String? = null,
+    /** What's new in [updateVersion]. */
+    val updateNotes: String? = null,
 )
 
 /** Something at work: a reply being written. [conversationId] opens it. */
@@ -256,8 +267,10 @@ interface TalariaActions {
     fun selectTab(tab: Tab) {}
     fun setMenuOpen(open: Boolean) {}
 
-    /** Check for app updates and show if available. */
+    /** Ask the bridge for a newer release (§17). */
     fun checkForUpdates() {}
+    /** Download the newer release, check it and hand it to the system installer. */
+    fun installUpdate() {}
 
     /** The Chat button: a new chat, ready to type. */
     fun startChat() {}

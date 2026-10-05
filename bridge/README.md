@@ -137,6 +137,36 @@ sudo systemctl daemon-reload && sudo systemctl enable --now talaria-ops && sudo 
 
 The bridge offers `ops.*` to devices and `server_op` to the agent once it can reach `/run/talaria-ops/ops.sock` (`--ops-socket` changes it). To upgrade talaria-ops, repeat the `pip install` and `systemctl restart talaria-ops`. The `bridge.update` operation updates only the bridge. Every operation is logged to `/var/log/talaria-ops/audit.jsonl`.
 
+## App updates
+
+The apps update themselves from the bridge (spec README §17). A tag `vX.Y.Z[-beta.N]` makes CI publish an unsigned
+Android build as a GitHub Release. On the server, `talaria-publish-app` (root, every 10 minutes) checks its checksum,
+signs it with the **release key** and places it in `<data>/updates/<channel>/`, where the bridge reads it. The key never
+leaves the server and never enters the repository. The bridge offers the `stable` channel unless
+`TALARIA_UPDATE_CHANNEL=beta` (or `--update-channel beta`) is set.
+
+One-time setup, as root (`build-tools` 35 or later; take the current file name from Google's repository listing):
+
+```bash
+install -d -m 700 /etc/talaria/release
+openssl rand -base64 32 | tr -d '\n' > /etc/talaria/release/password && chmod 600 /etc/talaria/release/password
+keytool -genkeypair -keystore /etc/talaria/release/release.p12 -storetype PKCS12 -alias talaria -keyalg RSA \
+  -keysize 4096 -validity 10950 -dname "CN=Talaria release" \
+  -storepass:file /etc/talaria/release/password -keypass:file /etc/talaria/release/password
+keytool -list -v -keystore /etc/talaria/release/release.p12 -storepass:file /etc/talaria/release/password \
+  | sed -n 's/.*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f' > /etc/talaria/release/cert.sha256
+# apksigner and zipalign, without the rest of the SDK
+curl -fsSLo /tmp/bt.zip https://dl.google.com/android/repository/build-tools_<version>_linux.zip
+unzip -q /tmp/bt.zip -d /opt && mv /opt/android-* /opt/android-build-tools
+sudo /opt/talaria-ops/venv/bin/pip install /path/to/talaria/bridge        # gives talaria-publish-app
+install -m 644 deploy/talaria-publish-app.service deploy/talaria-publish-app.timer /etc/systemd/system/
+install -m 644 deploy/talaria-bridge-updates.conf /etc/systemd/system/talaria-bridge.service.d/30-updates.conf  # owner's bridge only
+systemctl daemon-reload && systemctl enable --now talaria-publish-app.timer && systemctl restart talaria-bridge
+```
+
+**Back up `/etc/talaria/release/` somewhere safe and offline.** Without that key, no installed app accepts another
+update: every device would have to uninstall and pair again. Releasing: PROCESS.md "Releases" in the deployment notes.
+
 ## Commands
 
 | Command | What it does |

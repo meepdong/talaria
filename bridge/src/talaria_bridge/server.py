@@ -19,6 +19,7 @@ from websockets.http11 import Request
 from . import __version__
 from .agents import AgentMonitor
 from .chat import CHAT_METHODS, ChatService, RpcError
+from .updates import UPDATE_METHODS, AppUpdates, UpdateError
 from .protocol import keys
 from .protocol import messages as m
 from .protocol.encoding import EncodingError, b64u_encode, now
@@ -65,7 +66,8 @@ class _Reject(Exception):
 
 class BridgeServer:
     def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None,
-                 agents: AgentMonitor | None = None, chat: ChatService | None = None, ops: ServerOps | None = None):
+                 agents: AgentMonitor | None = None, chat: ChatService | None = None, ops: ServerOps | None = None,
+                 updates: AppUpdates | None = None):
         self.registry = registry
         self.key = key
         self.settings = settings or ServerSettings()
@@ -74,6 +76,9 @@ class BridgeServer:
         if chat is not None:
             chat.broadcast = self.broadcast
         self.ops = ops
+        self.updates = updates
+        if updates is not None:
+            updates.broadcast = self.broadcast
         if ops is not None:
             ops.broadcast = self.broadcast
         self._tasks: set[asyncio.Task] = set()
@@ -100,10 +105,11 @@ class BridgeServer:
             self._started = time.monotonic()
             monitor = asyncio.ensure_future(self.agents.run(self.push_status)) if self.agents.agents else None
             background = asyncio.ensure_future(self.chat.run_background()) if self.chat is not None else None
+            releases = asyncio.ensure_future(self.updates.watch()) if self.updates is not None else None
             try:
                 yield server
             finally:
-                for task in (monitor, background):
+                for task in (monitor, background, releases):
                     if task is not None:
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
@@ -152,6 +158,17 @@ class BridgeServer:
             return
         with contextlib.suppress(ConnectionClosed):
             await self._send(ws, m.result(msg_id, result) if result is not None else m.error(msg_id, *error))
+
+    async def _update_request(self, session: _Session, method: str, msg_id, params) -> dict:
+        if not session.ready:
+            return m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first")
+        if self.updates is None:
+            return m.error(msg_id, m.METHOD_NOT_FOUND, "App updates are not set up on this bridge")
+        try:
+            return m.result(msg_id, await asyncio.to_thread(self.updates.handle, method,
+                                                            params if isinstance(params, dict) else {}))
+        except UpdateError as exc:
+            return m.error(msg_id, exc.code, exc.message)
 
     async def _chat_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
         try:
@@ -416,6 +433,8 @@ class BridgeServer:
             await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND if self.ops is None else m.INVALID_REQUEST,
                                          "Server operations are not set up on this bridge" if self.ops is None
                                          else "Send capabilities.announce first"))
+        elif method in UPDATE_METHODS and msg_id is not None:
+            await self._send(ws, await self._update_request(session, method, msg_id, msg.get("params")))
         elif method in CHAT_METHODS and not session.ready:
             if msg_id is not None:
                 await self._send(ws, m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first"))

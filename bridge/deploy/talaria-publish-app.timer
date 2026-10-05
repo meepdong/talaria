@@ -1,0 +1,11 @@
+# Checks GitHub Releases every 10 minutes (60 unauthenticated API calls an hour are allowed; this uses 6).
+[Unit]
+Description=Check for new Talaria app releases
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
