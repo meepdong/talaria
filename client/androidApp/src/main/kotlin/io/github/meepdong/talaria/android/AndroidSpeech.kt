@@ -23,8 +23,14 @@ class AndroidDictation(
     private val askPermission: (onResult: (Boolean) -> Unit) -> Unit,
 ) : SpeechInput {
     private var recognizer: SpeechRecognizer? = null
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
-    override fun start(listener: SpeechInput.Listener) {
+    /** SpeechRecognizer lives on the main thread; Talk opens the mic again from the speech engine's thread. */
+    private fun onMain(block: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) block() else main.post(block)
+    }
+
+    override fun start(listener: SpeechInput.Listener) = onMain {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             begin(listener)
         } else {
@@ -34,7 +40,7 @@ class AndroidDictation(
         }
     }
 
-    override fun stop() {
+    override fun stop() = onMain {
         recognizer?.stopListening()
     }
 

@@ -268,12 +268,29 @@ class ControllerTest {
         c.await<Screen.Chat> { it.tab == Tab.HOME && it.view.voice.canDictate }
         c.talk()
         // page and voice are separate flows, so wait for both rather than the first frame that listens
-        val talking = c.await<Screen.Chat> { it.view.voice.listening && it.tab == Tab.CHATS }
-        assertNull(talking.view.openId, "talking starts a new chat")
+        val talking = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING && it.tab == Tab.CHATS }
+        assertNull(talking.view.openId, "with no chat to go back to, Talk starts one")
         input.listener!!.done("what's on today")
-        val heard = c.await<Screen.Chat> { it.view.voice.dictation != null }.view.voice.dictation!!
-        assertEquals("what's on today", heard.text)
-        assertTrue(heard.send, "what's said to Talk is sent straight away")
+        // sent straight away, then Talk waits for Hermes's reply to speak it
+        val sent = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.THINKING }
+        assertEquals("what's on today", sent.view.messages.last().text)
+        assertNull(sent.view.voice.dictation, "not left in the composer")
+
+        // a tap while Hermes thinks interrupts and listens again; saying nothing ends Talk
+        val first = input.listener
+        c.talk()
+        c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING }
+        assertTrue(input.listener !== first)
+        input.listener!!.done("")
+        c.await<Screen.Chat> { it.view.voice.talk == null && !it.view.voice.listening }
+
+        // End stops it from any state
+        c.talk()
+        c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING }
+        c.endTalk()
+        c.await<Screen.Chat> { it.view.voice.talk == null }
+        assertTrue(input.stops > 0)
+        assertTrue(output.said.isEmpty(), "nothing to say without a reply")
         c.close()
     }
 

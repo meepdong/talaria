@@ -126,4 +126,9 @@ data class VoiceView(
     val speakingKey: String? = null,
     val readAloud: Boolean = false,
     val autoSend: Boolean = false,
+    /** Talk is on, and what it's doing; null when it's off. */
+    val talk: TalkPhase? = null,
 )
+
+/** Talk's state (Talk 2): it listens, waits for Hermes, speaks its reply, then listens again. */
+enum class TalkPhase(val label: String) { LISTENING("Listening…"), THINKING("Hermes is thinking…"), SPEAKING("Hermes is speaking…") }

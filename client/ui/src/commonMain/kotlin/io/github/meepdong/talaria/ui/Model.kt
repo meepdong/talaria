@@ -350,6 +350,9 @@ interface TalariaActions {
     /** The mic button: say something to Hermes and hear the answer, in the chat last open on this device. */
     fun talk() {}
 
+    /** End Talk: stop listening and speaking. */
+    fun endTalk() {}
+
     /** Take back what the last swipe did (the Undo bar). */
     fun undo() {}
 

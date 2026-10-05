@@ -180,11 +180,10 @@ class TalariaController(
     )
     private var dictations = 0L
 
-    /** The mic button is listening: send what's heard, and read the answer aloud. */
-    @Volatile private var talking = false
-
-    /** Read the next reply to this device aloud, after talking. */
-    @Volatile private var speakNextReply = false
+    /** Talk is on (Talk 2): listening, waiting for Hermes, or speaking its reply, then listening again. */
+    @Volatile private var talkOn = false
+    private var talkLoop: TalkLoop? = null
+    private var talkFollow: Job? = null
     private var pairJob: Job? = null
     private var started = false
 
@@ -294,8 +293,8 @@ class TalariaController(
         }
         scope.launch {
             replies.collect { r ->
-                if (r.fromThisDevice && r.state == MessageState.DONE && (voice.value.readAloud || speakNextReply)) {
-                    speakNextReply = false
+                // Talk speaks its own replies as they stream; Read aloud is for typed messages
+                if (r.fromThisDevice && r.state == MessageState.DONE && voice.value.readAloud && !talkOn) {
                     say(READ_ALOUD_KEY, r.text)
                 }
             }
@@ -517,19 +516,94 @@ class TalariaController(
         if (archived) offerUndo("Chat archived", undo = { c.archive(id, false) })
     }
 
+    /**
+     * The Talk button (Talk 2): a spoken conversation in the chat last open here. Hermes's reply is spoken as it
+     * streams, then the mic opens again; saying nothing ends it. While listening, a tap sends what was heard;
+     * while Hermes thinks or speaks, a tap interrupts (stops the reply) and listens.
+     */
     override fun talk() {
         if (speechInput.value == null) {
-            newConversation()
+            resumeChat()
             chat?.notice("This device can't take dictation, so type your message")
             return
         }
-        if (voice.value.listening) {
-            toggleDictation()
-            return
+        when (voice.value.talk) {
+            null -> {
+                resumeChat()
+                talkOn = true
+                listenForTalk()
+            }
+            TalkPhase.LISTENING -> speechInput.value?.stop()
+            else -> interruptTalk()
         }
-        resumeChat()
-        talking = true
-        toggleDictation()
+    }
+
+    override fun endTalk() {
+        talkOn = false
+        talkFollow?.cancel()
+        talkLoop?.stop()
+        talkLoop = null
+        if (voice.value.listening) speechInput.value?.stop()
+        voice.update { it.copy(talk = null, listening = false, heard = "") }
+    }
+
+    private fun interruptTalk() {
+        talkFollow?.cancel()
+        talkLoop?.stop()
+        talkLoop = null
+        chat?.state?.value?.openSummary?.activeTurnId?.let { chat?.stop(it) }
+        listenForTalk()
+    }
+
+    private fun listenForTalk() {
+        val input = speechInput.value ?: return endTalk()
+        stopSpeaking()
+        voice.update { it.copy(listening = true, heard = "", talk = TalkPhase.LISTENING) }
+        input.start(object : SpeechInput.Listener {
+            override fun partial(text: String) {
+                voice.update { if (it.listening) it.copy(heard = text) else it }
+            }
+
+            override fun done(text: String) {
+                val heard = text.trim()
+                voice.update { it.copy(listening = false, heard = "") }
+                if (!talkOn) return
+                if (heard.isEmpty()) endTalk() else talkSend(heard)
+            }
+
+            override fun failed(message: String) {
+                endTalk()
+                chat?.notice(message)
+            }
+        })
+    }
+
+    /** Send what was said, then speak the reply to it as it streams and listen again once it's said. */
+    private fun talkSend(text: String) {
+        val c = chat ?: return endTalk()
+        val cmid = c.send(text) ?: return endTalk()
+        val out = speechOutput ?: return endTalk()  // nothing to speak with: one message, as dictation
+        voice.update { it.copy(talk = TalkPhase.THINKING) }
+        val loop = TalkLoop(out, onSpeak = { voice.update { if (it.talk != null) it.copy(talk = TalkPhase.SPEAKING) else it } }) {
+            scope.launch { if (talkOn) listenForTalk() }
+        }
+        talkLoop = loop
+        talkFollow?.cancel()
+        talkFollow = scope.launch {
+            c.state.map { talkReply(it, cmid) }
+                .filterNotNull().distinctUntilChanged().collect { m ->
+                    if (m.waitingForApproval) {
+                        // approvals are answered on screen, not by voice
+                        loop.stop()
+                        endTalk()
+                        say(READ_ALOUD_KEY, "Hermes needs your approval for this. It's on screen.")
+                        return@collect
+                    }
+                    val over = m.state == MessageState.DONE || m.state == MessageState.FAILED || m.state == MessageState.CANCELLED
+                    val text = if (m.state == MessageState.FAILED && m.text.isBlank()) "Sorry, that didn't go through." else m.text
+                    loop.update(text, m.tools, over)
+                }
+        }
     }
 
     override fun sendMessage(text: String) {
@@ -941,17 +1015,13 @@ class TalariaController(
 
             override fun done(text: String) {
                 val heard = text.trim()
-                val talked = talking
-                talking = false
-                if (talked && heard.isNotEmpty()) speakNextReply = true
                 voice.update { v ->
                     v.copy(listening = false, heard = "",
-                        dictation = if (heard.isEmpty()) v.dictation else Dictation(++dictations, heard, v.autoSend || talked))
+                        dictation = if (heard.isEmpty()) v.dictation else Dictation(++dictations, heard, v.autoSend))
                 }
             }
 
             override fun failed(message: String) {
-                talking = false
                 voice.update { it.copy(listening = false, heard = "") }
                 chat?.notice(message)
             }
@@ -1261,6 +1331,13 @@ class TalariaController(
         const val PREF_HOME_ORDER = "home.order"
         /** The chat last open on this device, for Chat with Hermes and Talk. */
         const val PREF_LAST_CHAT = "chat.last"
+
+        /**
+         * The reply to the message sent with [cmid]: the assistant message of the same turn (the turn's id lands
+         * on the sent message once the bridge has it). Null until it starts, or if history replaced both.
+         */
+        fun talkReply(s: ChatState, cmid: String) = s.openMessages.firstOrNull { it.clientMsgId == cmid }?.turnId
+            ?.let { turn -> s.openMessages.lastOrNull { it.role == Role.ASSISTANT && it.turnId == turn } }
 
         /** How long Undo shows after a swipe. */
         const val UNDO_MS = 5_000L

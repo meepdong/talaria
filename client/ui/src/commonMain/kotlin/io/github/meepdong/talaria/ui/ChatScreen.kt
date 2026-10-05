@@ -586,6 +586,10 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         actions.dictationTaken(d.id)
         if (d.send) send()
     }
+    voice.talk?.let { phase ->
+        TalkBar(phase, voice.heard, actions)
+        return
+    }
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
         view.composerHint?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
@@ -723,3 +727,32 @@ private fun ApprovalCard(a: ApprovalItem, onAnswer: (String) -> Unit) {
     }
 }
 
+/**
+ * In place of the composer while Talk is on (Talk 2): what it's doing and hearing. A tap anywhere on it sends what
+ * was heard while listening, and interrupts Hermes (stopping its reply) while it thinks or speaks; End stops Talk.
+ */
+@Composable
+private fun TalkBar(phase: TalkPhase, heard: String, actions: TalariaActions) {
+    Surface(
+        color = if (phase == TalkPhase.LISTENING) Color(0xFFB4531A) else MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(8.dp).clickable(onClick = actions::talk).testTag("talk-bar"),
+    ) {
+        val on = if (phase == TalkPhase.LISTENING) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+        Row(Modifier.padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(phase.label, color = on, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("talk-phase"))
+                Text(
+                    when (phase) {
+                        TalkPhase.LISTENING -> heard.ifEmpty { "Say something, or stay quiet to finish" }
+                        else -> "Tap to interrupt"
+                    },
+                    color = on, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            TextButton(onClick = actions::endTalk, modifier = Modifier.testTag("talk-end")) {
+                Text("End", color = on, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}

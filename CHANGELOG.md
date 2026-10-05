@@ -4,6 +4,14 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk is a conversation now: Hermes's answer is spoken sentence by sentence as it arrives instead of after it
+  ends, it says what it's doing when it starts a tool ("Checking your calendar."), and the mic opens again when it
+  has finished, so you can keep talking without touching the phone. Stay quiet to finish. While it thinks or
+  speaks, tap the Talk bar to interrupt; End stops Talk.
+
 ## [0.2.0-beta.9] - 2026-10-06
 
 ### Fixed

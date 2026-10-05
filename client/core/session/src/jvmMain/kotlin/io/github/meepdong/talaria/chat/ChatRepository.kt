@@ -137,14 +137,15 @@ class ChatRepository(
 
     /**
      * Send [text] and [files] to [conversationId], the open conversation by default (null starts
-     * a new one). Files are uploaded first (spec/README.md §10).
+     * a new one). Files are uploaded first (spec/README.md §10). Returns the message's client id (its
+     * [ChatMessage.clientMsgId], which then gets the turn's id), or null when there was nothing to send.
      */
     fun send(
         text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId,
         serverFiles: List<ServerFile> = emptyList(), todoId: String? = null,
-    ) {
+    ): String? {
         val body = text.trim()
-        if (body.isEmpty() && files.isEmpty() && serverFiles.isEmpty()) return
+        if (body.isEmpty() && files.isEmpty() && serverFiles.isEmpty()) return null
         val cmid = newClientMsgId()
         val conv = conversationId
         val msg = ChatMessage("local:$cmid", Role.USER, body, nowMs(), MessageState.SENDING, clientMsgId = cmid,
@@ -154,6 +155,7 @@ class ChatRepository(
         todoId?.let { outgoingTodo[cmid] = it }
         _state.update { s -> s.withMessages(conv) { it + msg } }
         scope.launch { deliver(conv, body, cmid) }
+        return cmid
     }
 
     /** Send a message that didn't reach the bridge again. The same client_msg_id means it can't arrive twice. */

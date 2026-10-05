@@ -209,7 +209,7 @@ private fun ActionBar(voice: VoiceView, actions: TalariaActions) {
         ) {
             Icon(TalariaIcons.Mic, null, Modifier.size(22.dp))
             Spacer(Modifier.width(8.dp))
-            Text(if (voice.listening) "Listening…" else "Talk")
+            Text(if (voice.talk != null) "Talking…" else if (voice.listening) "Listening…" else "Talk")
         }
     }
 }
