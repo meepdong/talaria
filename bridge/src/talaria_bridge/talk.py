@@ -87,7 +87,21 @@ agent.
 - Never approve anything for the owner and never ask the agent to approve or "always allow" anything: approvals are \
 the owner's, on screen or by saying yes.
 - When a result from the agent arrives, say it briefly in your own words and offer more if there's more.
-{context}"""
+{bots}{context}"""
+
+BOTS_PROMPT = """
+The owner's bots, which you can ask with ask_bot when the owner asks for one by name (or says "ask the …"): \
+{roster}. Write the message as the owner would, self-contained. Say you've asked it and carry on; its reply is \
+spoken when it comes.
+"""
+
+ASK_BOT = {"type": "function", "function": {
+    "name": "ask_bot",
+    "description": "Send a message to one of the owner's bots (Hermes Desktop's Bots) in its own chat; its reply is "
+                   "spoken when it comes. Only when the owner asks for that bot.",
+    "parameters": {"type": "object", "properties": {
+        "bot": {"type": "string", "description": "the bot's name, as listed"},
+        "message": {"type": "string", "description": "what to send, self-contained"}}, "required": ["bot", "message"]}}}
 
 TOOLS = [
     {"type": "function", "function": {
@@ -150,6 +164,7 @@ class Talker:
         self.voice = voice
         self.name = name
         self.active: dict[str, float] = {}  # conversation_id -> when it was last talked in
+        self.asked: dict[str, tuple[str | None, str, float]] = {}  # a bot's conversation -> (Talk's, bot name, when)
         self.memory: dict[str, list[dict]] = {}  # conversation_id -> recent exchanges, as text
         self._tasks: set[asyncio.Task] = set()
         self._holds: dict[str, _Hold] = {}  # talk_id -> an early turn not yet committed
@@ -252,11 +267,18 @@ class Talker:
 
     def on_reply(self, conversation_id: str, text: str, status: str) -> None:
         """The agent finished a turn: if it's a conversation being talked in, say the result."""
+        word = "finished" if status == "completed" else f"stopped ({status})"
+        asked = self.asked.pop(conversation_id, None)
+        if asked is not None and time.time() - asked[2] <= ACTIVE_S and text.strip():
+            # a bot answered what Talk asked it: say it in the conversation Talk was in
+            user = {"role": "user", "content": f"[The bot {asked[1]} {word}. Its reply, for you to tell the owner "
+                                               f"briefly in your own words:]\n{text.strip()[:4000]}"}
+            self._spawn(self._run("tk_" + secrets.token_hex(8), asked[0], user, tools=False, unprompted=True))
+            return
         at = self.active.get(conversation_id)
         if at is None or time.time() - at > ACTIVE_S or not text.strip():
             return
         talk_id = "tk_" + secrets.token_hex(8)
-        word = "finished" if status == "completed" else f"stopped ({status})"
         user = {"role": "user", "content": f"[{self.name} {word}. Its reply, for you to tell the owner briefly in "
                                            f"your own words:]\n{text.strip()[:4000]}"}
         self._spawn(self._run(talk_id, conversation_id, user, tools=False, unprompted=True))
@@ -301,7 +323,15 @@ class Talker:
         c = self.chat.store.get(conv) if conv else None
         if c is not None and c.last_role == "assistant" and c.last_text:
             context = f"\nThe agent's last message in this conversation: {c.last_text[:1500]}"
-        return {"role": "system", "content": SYSTEM.format(name=self.name, now=now, context=context)}
+        roster = self._bots()
+        bots = BOTS_PROMPT.format(roster="; ".join(
+            b["name"] + (f" ({b.get('description') or b.get('role')})" if b.get("description") or b.get("role") else "")
+            for b in roster)) if roster else ""
+        return {"role": "system", "content": SYSTEM.format(name=self.name, now=now, context=context, bots=bots)}
+
+    def _bots(self) -> list[dict]:
+        bots = getattr(self.chat, "bots", None)
+        return bots.roster() if bots is not None and bots.backend.connected else []
 
     async def _run(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool = True,
                    unprompted: bool = False, hearing: asyncio.Task | None = None, system: dict | None = None,
@@ -480,7 +510,7 @@ class Talker:
         body = {"model": TALKER_MODEL, "stream": True, "modalities": ["text", "audio"],
                 "audio": {"voice": voice, "format": "pcm16"}, "messages": messages}
         if tools:
-            body["tools"] = TOOLS
+            body["tools"] = TOOLS + ([ASK_BOT] if self._bots() else [])
         said, calls, seq = "", {}, 0
         where = {"conversation_id": conv} if conv else {}  # devices know an unprompted reply by its conversation
         try:
@@ -540,6 +570,8 @@ class Talker:
                 return await self._agenda(args), conv
             if name == "ask_hermes":
                 return await self._ask(args, conv, talk_id)
+            if name == "ask_bot":
+                return await self._ask_bot(args, conv), conv
         except Exception as exc:  # noqa: BLE001 (the model hears what went wrong and says so)
             log.warning("talk tool %s failed: %s", name, exc)
             return f"Error: {getattr(exc, 'message', None) or exc}", conv
@@ -610,6 +642,24 @@ class Talker:
         conv = result["conversation_id"]
         self.active[conv] = time.time()
         return f"Sent to {self.name}; it's working on it and its reply will be spoken when it comes.", conv
+
+
+    async def _ask_bot(self, args: dict, conv: str | None) -> str:
+        wanted = str(args.get("bot") or "").strip().lower().lstrip("@")
+        message = str(args.get("message") or "").strip()
+        roster = self._bots()
+        bot = next((b for b in roster if wanted in (b["name"].lower(), b["profile"].lower())), None) or next(
+            (b for b in roster if wanted and (wanted in b["name"].lower() or wanted in b["profile"].lower())), None)
+        if bot is None:
+            names = ", ".join(b["name"] for b in roster) or "none"
+            return f"Error: no bot called {args.get('bot')!r}. The bots are: {names}."
+        if not message:
+            return "Error: the message is empty."
+        result, turn = await self.chat.send({"agent_id": bot["id"], "text": f"🎙 From Talk: {message}"})
+        if turn is not None:
+            self.chat.start(turn)
+        self.asked[result["conversation_id"]] = (conv, bot["name"], time.time())
+        return f"Sent to {bot['name']}; its reply will be spoken when it comes."
 
 
 TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end", "talk.voices", "talk.voice", "talk.commit", "talk.cancel"})

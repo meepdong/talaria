@@ -31,6 +31,7 @@ from .ops.client import DEFAULT_SOCKET as OPS_SOCKET
 from .ops.client import OpsClient
 from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
+from .bots import Bots
 from .hermes_check import HermesWatch
 from .hermes_serve import HermesBackend, read_token
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -238,8 +239,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     ops = ServerOps(OpsClient(args.ops_socket)) if args.ops_socket.exists() else None
     updates = AppUpdates(args.home / "updates", args.update_channel)  # placed by talaria-publish-app (§17)
     doorway = make_doorway(agents, chat)
-    if doorway is not None and chat is not None and chat.hermes_watch is not None:
-        chat.hermes_watch.backend = doorway  # the daily check covers the doorway too
+    if doorway is not None and chat is not None:
+        if chat.hermes_watch is not None:
+            chat.hermes_watch.backend = doorway  # the daily check covers the doorway too
+        chat.bots = Bots(doorway)  # Hermes's bots as chats (§18)
+        chat.bots.broadcast = lambda msg: chat.broadcast(msg)
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates, doorway)
     tools = make_agent_tools(agents, chat, ops)
     print(f"Talaria bridge {__version__}")

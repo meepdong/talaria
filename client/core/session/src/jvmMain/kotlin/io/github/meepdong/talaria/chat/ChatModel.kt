@@ -19,6 +19,15 @@ data class ConversationSummary(
     val archived: Boolean = false,
 )
 
+/**
+ * One of Hermes's bots (spec/README.md §18.1): a Hermes profile with its own role, model and memory. Its chat is
+ * an ordinary conversation whose agent is [id] (`bot:<profile>`).
+ */
+data class Bot(val id: String, val name: String, val profile: String, val description: String? = null) {
+    /** What @mentions match: the profile name, or the name without spaces, lower case. */
+    val handles: Set<String> get() = setOf(profile.lowercase(), name.lowercase().replace(" ", ""))
+}
+
 /** A model as Hermes names it, e.g. openrouter / anthropic/claude-sonnet-4. */
 data class ModelChoice(val provider: String, val model: String) {
     /** The part people recognise: "claude-sonnet-4" rather than "anthropic/claude-sonnet-4". */
@@ -180,6 +189,8 @@ data class ChatState(
     /** Shown by /status until dismissed. */
     val status: ConversationStatus? = null,
     val balances: List<AccountBalance> = emptyList(),
+    /** Hermes's bots, when the bridge has its doorway (§18.1); empty otherwise. */
+    val bots: List<Bot> = emptyList(),
 ) {
     val openMessages: List<ChatMessage>
         get() = openId?.let { threads[it]?.messages } ?: draft

@@ -286,8 +286,11 @@ class HermesBackend:
         self.methods: set[str] = set()  # allowlisted and present in this Hermes
         self.missing: set[str] = set()  # allowlisted but this Hermes doesn't have it
         self.version: str | None = None
+        self.generation = 0  # counts connections: a live session id is only good for the one it came from
+        self.on_change: list[Callable[[], Awaitable[None]]] = []  # bots.py: the roster may have changed
         self._hs: HermesServe | None = None
         self._questions: dict[str, _Question] = {}
+        self._listeners: dict[str, set[asyncio.Queue]] = {}  # live session id -> bridge-side followers (bots.py)
 
     @property
     def connected(self) -> bool:
@@ -337,12 +340,19 @@ class HermesBackend:
         if self.missing:
             log.warning("hermes serve lacks %s: hidden on devices", ", ".join(sorted(self.missing)))
         self._hs = hs
+        self.generation += 1
         await self._notify("hermes.changed", self.capabilities())
+        for changed in self.on_change:
+            with contextlib.suppress(Exception):
+                await changed()
 
     async def _close(self) -> None:
         was = self._hs is not None
         self._hs = None
         closed, self._questions = list(self._questions), {}
+        for queues in self._listeners.values():
+            for q in queues:
+                q.put_nowait({"type": "_disconnected"})
         for request_id in closed:
             await self._notify("hermes.request.done", {"request_id": request_id, "reason": "disconnected"})
         if was:
@@ -359,6 +369,11 @@ class HermesBackend:
                 del self._questions[q.request_id]
                 await self._notify("hermes.request.done", {"request_id": q.request_id, "reason": "withdrawn"})
             return
+        followers = self._listeners.get(event.get("session_id") or "")
+        if followers:  # a chat the bridge itself is running (a bot's chat): it shows this its own way
+            for q in followers:
+                q.put_nowait(event)
+            return
         out: dict = {"type": kind[:100]}
         if isinstance(event.get("session_id"), str) and event["session_id"]:
             out["session_id"] = event["session_id"][:200]
@@ -372,10 +387,37 @@ class HermesBackend:
     async def _question(self, serve_id: str, method: str, params: dict) -> bool:
         if method not in QUESTIONS or self._hs is None:
             return False  # declined at once by HermesServe
+        followers = self._listeners.get(params.get("session_id") or "")
+        if followers and method != "approval":
+            return False  # a bot's chat has no card for clarify: Hermes goes on without the answer
         q = _Question("hq-" + secrets.token_hex(8), serve_id, method, params, self._hs)
         self._questions[q.request_id] = q
-        await self._notify("hermes.request", q.public())
+        if followers:  # the chat's own approval card answers it (chat.approve)
+            for queue in followers:
+                queue.put_nowait({"type": "_approval", "request_id": q.request_id, "payload": params})
+        else:
+            await self._notify("hermes.request", q.public())
         return True
+
+    # for the bridge's own use (bots.py): no allowlist, trusted callers only
+
+    async def rpc(self, method: str, params: dict | None = None, *, timeout: float = CALL_TIMEOUT_S):
+        hs = self._hs
+        if hs is None:
+            raise ServeUnavailable("Hermes's backend isn't connected")
+        return await hs.call(method, params or {}, timeout=timeout)
+
+    def listen(self, session_id: str) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self._listeners.setdefault(session_id, set()).add(q)
+        return q
+
+    def unlisten(self, session_id: str, q: asyncio.Queue) -> None:
+        followers = self._listeners.get(session_id)
+        if followers is not None:
+            followers.discard(q)
+            if not followers:
+                del self._listeners[session_id]
 
     # what devices call
 

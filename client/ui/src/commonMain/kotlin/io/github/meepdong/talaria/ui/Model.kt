@@ -243,6 +243,8 @@ interface TalariaActions {
     // chat (M2); defaults, so screens that don't chat needn't care
 
     fun openConversation(id: String) {}
+    /** Open one of Hermes's bots' chat (§18.1). */
+    fun openBot(id: String) {}
     fun newConversation() {}
 
     /** Back from a conversation to the list, on a phone. */

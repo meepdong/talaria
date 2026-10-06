@@ -81,6 +81,44 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun botsAreListedAndOpenIntoTheirOneChat() = chatTest { scope ->
+        val api = FakeApi()
+        var listed = """[]"""
+        api.answers["conversations.list"] = { json("""{"conversations":$listed}""") }
+        api.answers["bots.list"] = { json("""{"available":true,"bots":[{"id":"bot:scout","name":"Scout","profile":"scout","has_avatar":false,"description":"Finds things"}]}""") }
+        api.answers["bots.open"] = { json("""{"conversation_id":"c-bot","title":"Scout"}""") }
+        api.answers["chat.history"] = { json("""{"messages":[],"next_before":null}""") }
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-bot","turn_id":"t-1","title":"Scout"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        assertEquals(listOf(Bot("bot:scout", "Scout", "scout", "Finds things")), repo.state.value.bots)
+        assertEquals(setOf("scout"), repo.state.value.bots.single().handles)
+
+        listed = """[{"conversation_id":"c-bot","agent_id":"bot:scout","title":"Scout","created_at":1,"updated_at":2}]"""
+        var opened: String? = null
+        repo.openBot("bot:scout", "Find a cafe") { opened = it }
+        advanceUntilIdle()
+        assertEquals("c-bot", opened)
+        assertEquals("c-bot", repo.state.value.openId)
+        assertEquals("bot:scout", repo.state.value.openSummary?.agentId)
+        assertEquals("""{"bot_id":"bot:scout"}""", api.calls.last { it.first == "bots.open" }.second.toString())
+        val sent = api.calls.last { it.first == "chat.send" }.second
+        assertEquals("\"c-bot\"", sent["conversation_id"].toString())
+        assertEquals("\"Find a cafe\"", sent["text"].toString())
+
+        // the roster changes on the bridge; a bridge without bots answers an error: none
+        api.push("bots.changed", """{"bots":[]}""")
+        advanceUntilIdle()
+        assertTrue(repo.state.value.bots.isEmpty())
+        api.answers["bots.open"] = { throw RpcException(-32014, "Unknown bot") }
+        repo.openBot("bot:gone")
+        advanceUntilIdle()
+        assertEquals("Couldn't open the bot: Unknown bot", repo.state.value.notice)
+    }
+
+    @Test
     fun hidingMessagesAndPinning() = chatTest { scope ->
         val api = FakeApi()
         api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }

@@ -45,6 +45,7 @@ class ChatScreensTest {
         override fun reconnectNow() {}
         override fun forgetServer() {}
         override fun openConversation(id: String) { calls += "open $id" }
+        override fun openBot(id: String) { calls += "bot $id" }
         override fun openAttachment(root: String, path: String, name: String, mime: String) { calls += "file $root/$path $mime" }
         override fun newConversation() { calls += "new" }
         override fun closeConversation() { calls += "close" }
@@ -114,6 +115,67 @@ class ChatScreensTest {
         assertNull(v.listMessage)
         assertEquals("No conversations yet. Start one with New chat.", view(ChatState(listLoaded = true)).listMessage)
         assertEquals("Chat is off on the bridge: none", view(ChatState(unavailable = "none")).listMessage)
+    }
+
+    private fun withBots(s: ChatState, openBot: Boolean) = s.copy(
+        bots = listOf(io.github.meepdong.talaria.chat.Bot("bot:scout", "Scout", "scout", "Finds things"),
+            io.github.meepdong.talaria.chat.Bot("bot:code-helper", "Code Helper", "code-helper")),
+        conversations = s.conversations + ConversationSummary("c-bot", "bot:scout", "Scout", 1, 1_650_000_000, Role.ASSISTANT, "Found it"),
+        openId = if (openBot) "c-bot" else s.openId,
+    )
+
+    @Test
+    fun botsAndTheirChats() {
+        val v = view(withBots(state(), openBot = true))
+        assertEquals(listOf("scout", "code-helper"), v.bots.map { it.handle })
+        assertEquals("CH", v.bots[1].initials)
+        assertEquals("bot:scout", v.openBot?.id)
+        assertEquals(listOf(false, false, true), v.conversations.map { it.bot })
+        assertNull(v.model, "a bot's model is its own: no model chip")
+        assertNull(view(withBots(state(), openBot = false)).openBot)
+    }
+
+    @Test
+    fun mentions() {
+        val bots = listOf(BotItem("bot:scout", "Scout", "scout"), BotItem("bot:code-helper", "Code Helper", "code-helper"))
+        assertEquals("bot:scout" to "find a cafe", parseMention("@Scout find a cafe", bots)?.let { it.first.id to it.second })
+        assertEquals("bot:code-helper" to "fix it", parseMention("@codehelper, fix it", bots)?.let { it.first.id to it.second })
+        assertEquals("bot:scout" to "", parseMention("@scout", bots)?.let { it.first.id to it.second })
+        assertNull(parseMention("@nobody hi", bots))
+        assertNull(parseMention("email me@scout.com", bots))
+        assertNull(parseMention("@ scout", bots))
+        assertEquals(listOf("scout"), mentionSuggestions("@s", bots).map { it.handle })
+        assertEquals(listOf("scout", "code-helper"), mentionSuggestions("@", bots).map { it.handle })
+        assertTrue(mentionSuggestions("@scout hi", bots).isEmpty() && mentionSuggestions("hi", bots).isEmpty())
+    }
+
+    @Test
+    fun botStripAndMentionsOnScreen() = runComposeUiTest {
+        val actions = Recorder()
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) {
+                ChatHome(view(withBots(state(), openBot = true)), actions)
+            }
+        }
+        onNodeWithTag("title").assertTextContains("🤖 Scout")
+        onNodeWithTag("bot-code-helper").performClick()
+        assertEquals("bot bot:code-helper", actions.calls.last())
+        onNodeWithTag("composer").performTextInput("@sc")
+        onNodeWithTag("mention-scout").performClick()
+        onNodeWithTag("composer").assertTextContains("@scout ")
+        onNodeWithTag("composer").performTextInput("find a cafe")
+        onNodeWithTag("send").performClick()
+        assertEquals("send @scout find a cafe", actions.calls.last())
+    }
+
+    @Test
+    fun noBotsNoStrip() = runComposeUiTest {
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) { ChatHome(view(state()), Recorder()) }
+        }
+        onNodeWithTag("bots").assertDoesNotExist()
+        onNodeWithTag("composer").performTextInput("@sc")
+        onNodeWithTag("mentions").assertDoesNotExist()
     }
 
     @Test

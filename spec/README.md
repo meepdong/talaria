@@ -509,3 +509,37 @@ closed or unknown question is `NOT_FOUND`; a `result` of the wrong shape is `INV
 
 Schemas: `hermes.capabilities`, `hermes.capabilities.result`, `hermes.call`, `hermes.call.result`, `hermes.respond`,
 `hermes.respond.result`, `hermes.changed`, `hermes.event`, `hermes.request`, `hermes.request.done`.
+
+### 18.1 Bots
+
+A bot is a Hermes profile (Bot Mode in Hermes Desktop) with its own role, model, memory and skills. Each bot has
+one permanent chat in Hermes, the session titled exactly `Bot Chat` in its profile, which Hermes Desktop opens too.
+The bridge shows it as an ordinary conversation (§9) whose `agent_id` is `bot:<profile>`: chat, history, stop,
+notes (`chat.steer`), approvals (`chat.approve`) and Talk work as they do for Hermes. Hermes's default profile is
+Hermes itself, so it isn't listed as a bot.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `bots.list` | request | `{}` → `{bots, available}` |
+| `bots.open` | request | `{bot_id}` → `{conversation_id, title}` |
+| `bots.avatar` | request | `{bot_id}` → `{found, mime?, data?}` |
+| `bots.changed` | notification | `{bots}` |
+
+A bot is `{id, name, profile, has_avatar, description?, role?, model?}`, listed by name; `available` is false
+while the doorway is down. `bots.changed` goes to every device when the roster changes (the bridge looks every
+minute and whenever the doorway connects). `bots.open` returns the bot's conversation, made the first time (and
+Hermes's `Bot Chat` with it, if the bot never had one); it is the same conversation every time, on every device.
+`chat.send` with `agent_id` a bot's id and no `conversation_id` writes into that conversation. `bots.avatar`
+returns the bot's picture as base64 (`found: false` when it has none).
+
+What the bridge never does to a bot's chat in Hermes: rename it (renaming changes only Talaria's title), delete it
+(`conversations.delete` only takes it off Talaria's list; `bots.open` brings it back with its history from
+Hermes), or pin a model to it (`conversations.set_model` is `INVALID_PARAMS`: a bot's model is its profile's).
+Attachments to bots aren't supported yet (`MODALITY_UNSUPPORTED`). A `clarify` question in a bot's chat isn't
+asked on devices: Hermes goes on without the answer.
+
+Errors: `NOT_FOUND` for an unknown bot; `AGENT_UNAVAILABLE` when the doorway is down or Hermes can't open the
+bot's chat; `METHOD_NOT_FOUND` when the bridge has no doorway.
+
+Schemas: `bots.list`, `bots.list.result`, `bots.open`, `bots.open.result`, `bots.avatar`, `bots.avatar.result`,
+`bots.changed`.

@@ -177,6 +177,8 @@ agents.json `"serve_url": "ws://127.0.0.1:9119/api/ws"` and `"serve_key_file"` (
 The bridge then passes an allowlisted set of calls (`hermes_serve.ALLOWED`) through to devices, forwards Hermes's
 events, and lets devices answer its approvals and questions; it declines anything else Hermes asks (sudo, secrets).
 `talaria hermes-serve probe` shows what it offers; `talaria doctor --hermes` checks it.
+With the doorway on, Hermes's bots (its profiles, except the default one) are chats too (`bots.py`, spec §18.1):
+each bot's permanent "Bot Chat" in Hermes is one Talaria conversation with agent `bot:<profile>`.
 
 ## App updates
 

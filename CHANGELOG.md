@@ -16,6 +16,15 @@ release notes the app shows.
   with Hermes's approvals and questions passed to your devices. Nothing to see in the app yet: the bots and
   group chats screens come next. The compatibility check covers it too. Server side: `hermes serve` runs on
   this machine only (`talaria-hermes-serve`, bridge/deploy).
+- Bots: the bots you make in Hermes Desktop (its Bots tab) show at the top of Chats. Tap one to open its
+  permanent chat (the same one Hermes Desktop shows), with replies, tool progress, Stop, notes and approvals as
+  with Hermes. Type @ in any chat to pick a bot: "@scout find a quiet cafe" sends that to Scout's chat and opens
+  it. In Talk, say "ask Scout to …": the voice sends it and tells you Scout's answer when it comes. Renaming or
+  deleting a bot's chat in Talaria never touches it in Hermes.
+
+### Fixed
+- Picking a /command (or now an @bot) in the composer put the cursor back where it was, so what you typed next
+  landed in the middle of the word.
 
 ## [0.2.0-beta.18] - 2026-10-06
 

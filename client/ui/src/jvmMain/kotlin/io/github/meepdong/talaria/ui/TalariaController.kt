@@ -528,6 +528,10 @@ class TalariaController(
         page.value = Page(conversationOpen = true, tab = Tab.CHATS)
     }
 
+    override fun openBot(id: String) {
+        chat?.openBot(id) { conv -> openConversation(conv) }
+    }
+
     override fun newConversation() {
         chat?.newConversation()
         page.value = Page(conversationOpen = true, tab = Tab.CHATS)
@@ -834,6 +838,16 @@ class TalariaController(
 
     override fun sendMessage(text: String) {
         val c = chat ?: return
+        val bots = c.state.value.bots.map { BotItem(it.id, it.name, it.profile, it.description) }
+        parseMention(text, bots)?.let { (bot, rest) ->
+            // "@scout find a cafe": that goes to Scout's chat, which opens (§18.1)
+            if (pending.value.isNotEmpty() || pendingServer.value.isNotEmpty()) {
+                c.notice("Bots can't take attachments yet: send them to Hermes, or the message to @${bot.handle} alone")
+                return
+            }
+            c.openBot(bot.id, rest.ifBlank { null }) { conv -> openConversation(conv) }
+            return
+        }
         val command = Command.parse(text)
         if (command == null) {
             c.send(text, pending.value, serverFiles = pendingServer.value)

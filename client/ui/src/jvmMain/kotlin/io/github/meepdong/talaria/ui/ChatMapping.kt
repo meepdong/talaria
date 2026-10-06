@@ -105,7 +105,12 @@ fun chatView(
         !connected -> "Not connected. ${status.failure ?: status.summary}"
         else -> null
     }
+    val bots = state.bots.map { BotItem(it.id, it.name, it.profile, it.description) }
+    val openBot = state.openSummary?.agentId?.let { agent -> bots.firstOrNull { it.id == agent } }
+        ?: state.openSummary?.agentId?.takeIf { it.startsWith("bot:") }?.let { BotItem(it, state.openSummary?.title ?: it, it.removePrefix("bot:")) }
     return ChatView(
+        bots = bots,
+        openBot = openBot,
         // pinned chats first, each part newest first as the list comes
         conversations = state.conversations.filter { !it.archived }.sortedByDescending { it.pinned }.map { it.item(nowMs) },
         archived = state.conversations.filter { it.archived }.sortedByDescending { it.updatedAt }.map { it.item(nowMs) },
@@ -127,7 +132,7 @@ fun chatView(
         pending = pending.map { it.toAttachment().chip(images) } + serverPending.map { it.toAttachment().chip(images) },
         canAttach = canAttach,
         canAttachMore = pending.size + serverPending.size < OutgoingFile.MAX_PER_MESSAGE,
-        model = state.effectiveModel?.shortName,
+        model = state.effectiveModel?.shortName?.takeIf { openBot == null },  // a bot's model is its own (§18.1)
         modelGroups = state.models?.providers.orEmpty().map { p ->
             ModelGroup(p.id, p.name, p.models.map { m ->
                 ModelItem(p.id, m, m.substringAfterLast('/'), state.effectiveModel == ModelChoice(p.id, m))
@@ -173,4 +178,5 @@ private fun ConversationSummary.item(nowMs: Long) = ConversationItem(
     time = shortTime(updatedAt * 1000, nowMs).orEmpty(),
     running = activeTurnId != null,
     pinned = pinned,
+    bot = agentId.startsWith("bot:"),
 )

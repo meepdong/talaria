@@ -327,3 +327,58 @@ async def test_an_early_turn_waits_for_commit_and_a_cancel_drops_it(tmp_path: Pa
     with pytest.raises(TalkError):
         await chat.talker.commit({"talk_id": talk_id})
     await chat.close()
+
+
+class FakeBots:
+    def __init__(self):
+        self.backend = type("Backend", (), {"connected": True})()
+
+    def roster(self):
+        return [{"id": "bot:scout", "name": "Scout", "profile": "scout", "has_avatar": False, "description": "Finds things"}]
+
+
+async def test_talk_asks_a_bot_and_says_its_reply_where_talk_is(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path)
+    asked: list[dict] = []
+
+    async def send(p):
+        asked.append(p)
+        return {"conversation_id": "c-bot", "turn_id": "t-b"}, None
+
+    chat.send = send
+    fake.replies += [voice_says("Sure.")]
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    assert "ask_bot" not in [t["function"]["name"] for t in fake.bodies[-1]["tools"]]  # no bots: no such tool
+
+    chat.bots = FakeBots()
+    sent.clear()
+    fake.replies += [calls(("ask_bot", {"bot": "scout", "message": "Find a quiet cafe near Indiranagar"})),
+                     voice_says("I've asked Scout; I'll tell you what it finds.")]
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    body = fake.bodies[-2]
+    assert "ask_bot" in [t["function"]["name"] for t in body["tools"]]
+    assert "Scout (Finds things)" in body["messages"][0]["content"]
+    assert asked == [{"agent_id": "bot:scout", "text": "🎙 From Talk: Find a quiet cafe near Indiranagar"}]
+    tool_result = [x for x in fake.bodies[-1]["messages"] if x["role"] == "tool"][0]["content"]
+    assert tool_result.startswith("Sent to Scout")
+
+    sent.clear()
+    fake.replies += [voice_says("Scout found Dyu Art Cafe on twelfth main.")]
+    chat.talker.on_reply("c-bot", "Dyu Art Cafe, 12th Main, quiet in the mornings.", "completed")
+    end = await done(sent)
+    assert end["unprompted"] is True and "Dyu Art Cafe" in end["text"]
+    assert "The bot Scout finished" in fake.bodies[-1]["messages"][-1]["content"]
+    assert {x["params"].get("conversation_id") for x in sent if x["method"] in ("chat.talk", "talk.done")} == {"c-1"}
+    chat.talker.on_reply("c-bot", "again", "completed")  # answered once: not said twice
+    await asyncio.sleep(0.05)
+    assert len(fake.replies) == 0 and len([b for b in fake.bodies if "Scout finished" in str(b["messages"][-1])]) == 1
+
+    sent.clear()
+    fake.replies += [calls(("ask_bot", {"bot": "nobody", "message": "hi"})), voice_says("There's no bot called nobody.")]
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    result = [x for x in fake.bodies[-1]["messages"] if x["role"] == "tool"][-1]["content"]
+    assert result.startswith("Error: no bot called 'nobody'") and "Scout" in result
+    await chat.close()

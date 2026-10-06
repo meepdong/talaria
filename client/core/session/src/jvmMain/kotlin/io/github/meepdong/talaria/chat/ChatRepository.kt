@@ -478,6 +478,46 @@ class ChatRepository(
 
     fun notice(text: String) = _state.update { it.copy(notice = text) }
 
+    /**
+     * Open a bot's chat (§18.1): the bridge gives its one conversation, made the first time. [then] gets its id;
+     * [text], when given, is sent there.
+     */
+    fun openBot(botId: String, text: String? = null, then: (String) -> Unit = {}) {
+        scope.launch {
+            try {
+                val r = api.request("bots.open", buildJsonObject { put("bot_id", botId) })
+                val conv = r.str("conversation_id") ?: return@launch
+                refreshList()
+                open(conv)
+                then(conv)
+                if (!text.isNullOrBlank()) send(text, conversationId = conv)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't open the bot: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun loadBots() {
+        try {
+            val r = api.request("bots.list", JsonObject(emptyMap()))
+            _state.update { it.copy(bots = parseBots(r["bots"] as? JsonArray)) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // a bridge without the doorway (or an older one): no bots
+            _state.update { it.copy(bots = emptyList()) }
+        }
+    }
+
+    private fun parseBots(list: JsonArray?): List<Bot> = list.orEmpty().mapNotNull { e ->
+        val o = e as? JsonObject ?: return@mapNotNull null
+        val id = o.str("id")?.takeIf { it.startsWith("bot:") } ?: return@mapNotNull null
+        Bot(id, o.str("name") ?: id.removePrefix("bot:"), o.str("profile") ?: id.removePrefix("bot:"),
+            o.str("description") ?: o.str("role"))
+    }
+
     // requests
 
     private suspend fun deliver(conv: String?, text: String, cmid: String) {
@@ -672,6 +712,7 @@ class ChatRepository(
 
     private suspend fun onNewSession() {
         refreshList()
+        loadBots()
         loadModels()
         loadBalance()
         val s = _state.value
@@ -723,6 +764,7 @@ class ChatRepository(
                 "chat.hidden" -> onHidden(p)
                 "chat.file", "chat.talk" -> onFile(p)  // a message the bridge keeps: a file, or what was said in Talk
                 "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
+                "bots.changed" -> _state.update { it.copy(bots = parseBots(p["bots"] as? JsonArray)) }
             }
         }
     }

@@ -9,7 +9,35 @@ data class ConversationItem(
     val running: Boolean,
     /** Pinned to the top of the list. */
     val pinned: Boolean = false,
+    /** A bot's chat (§18.1): shown with 🤖. */
+    val bot: Boolean = false,
 )
+
+/** One of Hermes's bots, for the strip above the chat list and @mentions. [handle] is what @ matches first. */
+data class BotItem(val id: String, val name: String, val handle: String, val description: String? = null) {
+    val initials: String get() = name.split(' ', '-', '_').filter { it.isNotEmpty() }.take(2)
+        .joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
+}
+
+/**
+ * "@scout find a cafe" → (the bot, "find a cafe"): a message for that bot's chat. Matches a bot's handle or its
+ * name without spaces, ignoring case; null when the text doesn't start with a known bot.
+ */
+fun parseMention(text: String, bots: List<BotItem>): Pair<BotItem, String>? {
+    val t = text.trimStart()
+    if (!t.startsWith("@")) return null
+    val word = t.drop(1).takeWhile { !it.isWhitespace() }.trimEnd(',', ':', '.').lowercase()
+    if (word.isEmpty()) return null
+    val bot = bots.firstOrNull { it.handle.lowercase() == word || it.name.lowercase().replace(" ", "") == word } ?: return null
+    return bot to t.drop(1 + t.drop(1).takeWhile { !it.isWhitespace() }.length).trim()
+}
+
+/** The bots an "@…" being typed could mean, for the composer's suggestions; empty once a space follows. */
+fun mentionSuggestions(text: String, bots: List<BotItem>): List<BotItem> {
+    if (!text.startsWith("@") || text.any { it.isWhitespace() }) return emptyList()
+    val typed = text.drop(1).lowercase()
+    return bots.filter { it.handle.lowercase().startsWith(typed) || it.name.lowercase().replace(" ", "").startsWith(typed) }
+}
 
 enum class ItemState { SENDING, NOT_SENT, QUEUED, STREAMING, DONE, FAILED, CANCELLED }
 
@@ -99,6 +127,10 @@ data class ChatView(
     val opsResults: List<OpsResultItem> = emptyList(),
     /** Chats swiped away, under Archived at the end of the list, newest first. */
     val archived: List<ConversationItem> = emptyList(),
+    /** Hermes's bots (§18.1), above the chat list and for @mentions. */
+    val bots: List<BotItem> = emptyList(),
+    /** The open conversation is this bot's chat. */
+    val openBot: BotItem? = null,
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

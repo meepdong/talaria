@@ -30,6 +30,7 @@ from .files import FILES_METHODS, FilesError, FilesService, Found
 from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
+from .bots import profile_of
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
 
@@ -472,6 +473,8 @@ class ChatService:
         self.voice = voice  # Talk's natural voice and quick first line (§9)
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         self.hermes_watch = None  # checks Hermes still answers as the bridge expects (hermes_check.py), set by make_chat
+        self.bots = None  # Hermes's bots as chats (bots.py, §18), set by the server when the doorway is on
+        self._bot_lock = asyncio.Lock()
         if automations is not None:
             automations.notify = lambda msg: self.broadcast(msg)
             automations.on_chat = self._automation_chat
@@ -503,7 +506,8 @@ class ChatService:
     async def run_background(self) -> None:
         """What runs while the bridge serves: watching the agent's jobs (§14) and Hermes's compatibility (§9)."""
         tasks = [t for t in (self.automations.poll() if self.automations is not None else None,
-                             self.hermes_watch.run() if self.hermes_watch is not None else None) if t is not None]
+                             self.hermes_watch.run() if self.hermes_watch is not None else None,
+                             self.bots.run() if self.bots is not None else None) if t is not None]
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -638,6 +642,12 @@ class ChatService:
             client = self._client(conv.agent_id)
             self._check_queue(conv_id)
             self._check_files(conv.agent_id, blobs)
+        elif self.bots is not None and profile_of(p.get("agent_id")) is not None:
+            # a bot has one permanent chat: writing to the bot writes there (bots.py)
+            conv = await self._bot_conversation(p["agent_id"])
+            conv_id, client, model = conv.id, self._client(conv.agent_id), None
+            self._check_queue(conv_id)
+            self._check_files(conv.agent_id, blobs)
         else:
             agent_id = p.get("agent_id", self.default_agent)
             if agent_id is not None:
@@ -760,12 +770,59 @@ class ChatService:
             return message
         return ([{"type": "text", "text": message}] if message else []) + images
 
+    def _lookup(self, agent_id: str | None):
+        """The agent's client: Hermes's API (hermes.py), or a bot's chat through hermes serve (bots.py)."""
+        if agent_id in self.agents:
+            return self.agents[agent_id]
+        if self.bots is not None and profile_of(agent_id) is not None:
+            return self.bots.client(agent_id)
+        return None
+
     def _client(self, agent_id: str | None) -> HermesClient:
-        if agent_id is None or agent_id not in self.agents:
+        client = self._lookup(agent_id)
+        if client is None:
             raise RpcError(m.AGENT_UNAVAILABLE,
                            "No chat agent is configured on the bridge" if agent_id is None
                            else f"Agent {agent_id!r} has no chat configured")
-        return self.agents[agent_id]
+        return client
+
+    async def _bot_conversation(self, agent_id) -> Conversation:
+        """A bot's one permanent chat in Talaria (bots.py): found, or made from its Bot Chat in Hermes."""
+        _id(agent_id, "bot_id")
+        if self.bots is None or not self.bots.known(agent_id):
+            raise RpcError(m.NOT_FOUND, "Unknown bot")
+        async with self._bot_lock:
+            found = next((c for c in self.store.all() if c.agent_id == agent_id), None)
+            if found is not None:
+                return found
+            try:
+                stored = await self.bots.client(agent_id).open_chat()
+            except (HermesError, HermesUnavailable) as exc:
+                raise RpcError(m.AGENT_UNAVAILABLE, f"The bot's chat isn't available: {exc}") from None
+            now_s = int(time.time())
+            conv = Conversation(id="c-" + secrets.token_hex(8), agent_id=agent_id, hermes_session_id=stored,
+                                title=self.bots.name(agent_id)[:MAX_TITLE], created_at=now_s, updated_at=now_s)
+            self.store.add(conv)
+            return conv
+
+    async def bots_handle(self, method: str, p: dict) -> dict:
+        if self.bots is None:
+            raise RpcError(m.METHOD_NOT_FOUND, "Hermes's bots aren't set up on this bridge")
+        if method == "bots.list":
+            return {"bots": self.bots.roster(), "available": self.bots.backend.connected}
+        if method == "bots.open":
+            conv = await self._bot_conversation(p.get("bot_id"))
+            if conv.archived:
+                self.store.archive(conv.id, False)
+            return {"conversation_id": conv.id, "title": conv.title}
+        agent_id = _id(p.get("bot_id"), "bot_id")
+        if not self.bots.known(agent_id):
+            raise RpcError(m.NOT_FOUND, "Unknown bot")
+        try:
+            return await self.bots.avatar(agent_id)
+        except Exception as exc:  # noqa: BLE001 (no avatar is not an error worth more than this)
+            log.info("no avatar for %s: %s", agent_id, exc)
+            return {"found": False}
 
     async def _new_conversation(self, agent_id: str, client: HermesClient, text: str) -> Conversation:
         token = secrets.token_hex(8)
@@ -846,7 +903,9 @@ class ChatService:
         try:
             if conv is None:
                 raise HermesUnavailable("conversation was deleted")
-            client = self.agents[conv.agent_id]
+            client = self._lookup(conv.agent_id)
+            if client is None:
+                raise HermesUnavailable(f"agent {conv.agent_id} isn't available")
             before = await self._totals(client, conv.hermes_session_id)
             if self._sizes.get(conv.id, 0) >= TIDY_TOKENS:
                 watch = asyncio.create_task(self._tidy_watch(turn, progressed))
@@ -913,7 +972,7 @@ class ChatService:
             if watch is not None:
                 watch.cancel()
             if before is not None and conv is not None:
-                self._spawn(self._measure(self.agents[conv.agent_id], conv, before))
+                self._spawn(self._measure(client, conv, before))
             turn.waiting_for_approval, turn.approval = False, None
             turn.status = status or "failed"
             if final_text is not None:
@@ -991,7 +1050,7 @@ class ChatService:
             return {"turn_id": turn.turn_id, "status": turn.status}
         stopped = False
         if turn.run_id is not None:
-            client = self.agents.get(turn.agent_id)
+            client = self._lookup(turn.agent_id)
             try:
                 if client is not None:
                     await client.stop_run(turn.run_id)
@@ -1102,7 +1161,7 @@ class ChatService:
         if not (isinstance(title, str) and title.strip() and len(title) <= MAX_TITLE):
             raise RpcError(m.INVALID_PARAMS, f"title must be 1 to {MAX_TITLE} characters")
         title = " ".join(title.split())
-        client = self.agents.get(conv.agent_id)
+        client = self._lookup(conv.agent_id)
         if client is not None:
             try:
                 await client.rename_session(conv.hermes_session_id, title)
@@ -1117,7 +1176,7 @@ class ChatService:
         pinned = p.get("pinned")
         if not isinstance(pinned, bool):
             raise RpcError(m.INVALID_PARAMS, "pinned must be true or false")
-        client = self.agents.get(conv.agent_id)
+        client = self._lookup(conv.agent_id)
         if client is not None:
             try:
                 await client.pin_session(conv.hermes_session_id, pinned)
@@ -1152,7 +1211,7 @@ class ChatService:
         conv = self._conversation(p)
         if conv.id in self._active:
             raise RpcError(m.CONFLICT, "Stop the running reply before deleting")
-        client = self.agents.get(conv.agent_id)
+        client = self._lookup(conv.agent_id)
         if client is not None:
             try:
                 await client.delete_session(conv.hermes_session_id)
@@ -1377,6 +1436,8 @@ class ChatService:
             if changed:
                 await self.todos_changed()
             return result, None
+        if method in BOT_METHODS:
+            return await self.bots_handle(method, p), None
         if method == "chat.send":
             return await self.send(p)
         if method == "chat.cancel":
@@ -1447,7 +1508,8 @@ class ChatService:
         raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
-CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
+CHAT_METHODS = BOT_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

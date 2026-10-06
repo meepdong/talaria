@@ -74,7 +74,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -125,6 +127,7 @@ private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Com
         Button(onClick = actions::newConversation, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("new-chat")) {
             Text("✎ New chat")
         }
+        if (view.bots.isNotEmpty()) BotStrip(view.bots, view.openBot?.id, actions)
         view.listMessage?.let {
             Text(it, Modifier.padding(16.dp).testTag("list-message"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -147,6 +150,26 @@ private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Com
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Hermes's bots (§18.1), a tap away: each opens its one chat. */
+@Composable
+private fun BotStrip(bots: List<BotItem>, open: String?, actions: TalariaActions) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 8.dp)
+        .testTag("bots"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        bots.forEach { b ->
+            Column(Modifier.width(64.dp).clickable { actions.openBot(b.id) }.padding(vertical = 4.dp).testTag("bot-${b.handle}"),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Surface(shape = CircleShape, modifier = Modifier.size(44.dp),
+                    color = if (b.id == open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = if (b.id == open) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer) {
+                    Box(contentAlignment = Alignment.Center) { Text(b.initials, style = MaterialTheme.typography.titleSmall) }
+                }
+                Text(b.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -177,7 +200,7 @@ fun ConversationRow(c: ConversationItem, selected: Boolean, actions: TalariaActi
                 .padding(horizontal = 16.dp, vertical = 10.dp).testTag("conversation-${c.id}"),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text((if (c.pinned) "📌 " else "") + c.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                Text((if (c.pinned) "📌 " else "") + (if (c.bot) "🤖 " else "") + c.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text(if (c.running) "⏳" else c.time, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -227,8 +250,8 @@ private fun Conversation(
             if (showBack) {
                 TextButton(onClick = actions::closeConversation, modifier = Modifier.testTag("back")) { Text("←") }
             }
-            Text(view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
+            Text((if (view.openBot != null) "🤖 " else "") + view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
             if (showBack) ConnectionDot(view, actions)
             if (view.openId != null) {
                 IconButton(onClick = actions::newConversation, modifier = Modifier.testTag("new-chat-here")) {
@@ -613,19 +636,23 @@ private fun AttachmentView(a: AttachmentChip, modifier: Modifier = Modifier) {
 
 @Composable
 private fun Composer(view: ChatView, actions: TalariaActions) {
-    var text by remember { mutableStateOf("") }
+    // the text with its cursor: text set here (a picked @bot or /command, dictation) puts the cursor at its end
+    var field by remember { mutableStateOf(TextFieldValue("")) }
+    val text = field.text
+    fun setText(t: String) { field = TextFieldValue(t, TextRange(t.length)) }
     val ready = view.canSend && (text.isNotBlank() || view.pending.isNotEmpty())
     fun send() {
-        if (view.canSend && (text.isNotBlank() || view.pending.isNotEmpty())) {
-            actions.sendMessage(text)
-            text = ""
+        val now = field.text  // what's there now, also right after dictation set it
+        if (view.canSend && (now.isNotBlank() || view.pending.isNotEmpty())) {
+            actions.sendMessage(now)
+            setText("")
         }
     }
     val voice = view.voice
     // dictation lands in the composer, to edit before sending unless auto-send is on
     LaunchedEffect(voice.dictation?.id) {
         val d = voice.dictation ?: return@LaunchedEffect
-        text = listOf(text.trimEnd(), d.text).filter { it.isNotEmpty() }.joinToString(" ").take(32000)
+        setText(listOf(field.text.trimEnd(), d.text).filter { it.isNotEmpty() }.joinToString(" ").take(32000))
         actions.dictationTaken(d.id)
         if (d.send) send()
     }
@@ -641,12 +668,27 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         if (voice.speakingKey != null) {
             TextButton(onClick = actions::stopSpeaking, modifier = Modifier.testTag("stop-speaking")) { Text("🔊 Stop reading") }
         }
+        val mentions = mentionSuggestions(text, view.bots)
+        if (mentions.isNotEmpty()) {
+            Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("mentions")) {
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    mentions.forEach { b ->
+                        Row(Modifier.fillMaxWidth().clickable { setText("@${b.handle} ") }.padding(horizontal = 14.dp, vertical = 8.dp)
+                            .testTag("mention-${b.handle}"), verticalAlignment = Alignment.CenterVertically) {
+                            Text("🤖 ${b.name}", Modifier.width(150.dp), style = MaterialTheme.typography.labelLarge)
+                            Text(b.description ?: "@${b.handle}", style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
         val suggestions = Command.suggestions(text)
         if (suggestions.isNotEmpty()) {
             Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("commands")) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     suggestions.forEach { c ->
-                        Row(Modifier.fillMaxWidth().clickable { text = "/${c.name} " }.padding(horizontal = 14.dp, vertical = 8.dp)
+                        Row(Modifier.fillMaxWidth().clickable { setText("/${c.name} ") }.padding(horizontal = 14.dp, vertical = 8.dp)
                             .testTag("command-${c.name}"), verticalAlignment = Alignment.CenterVertically) {
                             Text(c.usage, Modifier.width(150.dp), style = MaterialTheme.typography.labelLarge)
                             Text(c.what, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -695,10 +737,15 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                         }
                     }
                     TextField(
-                        value = text,
-                        onValueChange = { text = it.take(32000) },
+                        value = field,
+                        onValueChange = { field = if (it.text.length > 32000) it.copy(text = it.text.take(32000)) else it },
                         placeholder = {
-                            Text(if (view.runningTurnId != null) "Sends after this reply" else "Message Hermes, or / for commands",
+                            Text(when {
+                                view.runningTurnId != null -> "Sends after this reply"
+                                view.openBot != null -> "Message ${view.openBot.name}"
+                                view.bots.isNotEmpty() -> "Message Hermes, / for commands, @ for bots"
+                                else -> "Message Hermes, or / for commands"
+                            },
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         },
                         maxLines = 6,
