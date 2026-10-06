@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,6 +46,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -331,6 +333,8 @@ internal fun filterModels(groups: List<ModelGroup>, query: String): List<ModelGr
 private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActions, onRename: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var pickVoice by remember { mutableStateOf(false) }
+    if (pickVoice) VoicePicker(voice, actions) { pickVoice = false }
     if (id == null && !voice.canSpeak && !voice.canDictate) return
     Box {
         TextButton(onClick = { open = true }, modifier = Modifier.testTag("menu")) { Text("⋮") }
@@ -349,6 +353,8 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
                 DropdownMenuItem(text = { Text("Talk waits: ${voice.talkWait.label}") },
                     modifier = Modifier.testTag("talk-wait"),
                     onClick = { actions.setTalkWait(voice.talkWait.next()) })
+                DropdownMenuItem(text = { Text("Talk voice…") }, modifier = Modifier.testTag("talk-voice"),
+                    onClick = { open = false; pickVoice = true; actions.loadTalkVoices() })
             }
             if (id == null) return@DropdownMenu
             DropdownMenuItem(text = { Text("Rename") }, onClick = { open = false; onRename() })
@@ -367,6 +373,36 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
             )
         }
     }
+}
+
+/** The talker's voice: hear each one (▶), pick one for every device. */
+@Composable
+private fun VoicePicker(voice: VoiceView, actions: TalariaActions, onDone: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Talk voice") },
+        text = {
+            if (voice.talkVoices.isEmpty()) {
+                Text("Asking the server…", modifier = Modifier.testTag("voices-loading"))
+            } else {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    voice.talkVoices.forEach { (id, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { actions.setTalkVoice(id) }.testTag("voice-$id"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = id == voice.talkVoice, onClick = { actions.setTalkVoice(id) })
+                            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            TextButton(onClick = { actions.previewTalkVoice(id) }, modifier = Modifier.testTag("hear-$id")) {
+                                Text(if (voice.previewing == id) "…" else "▶")
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Done") } },
+    )
 }
 
 @Composable

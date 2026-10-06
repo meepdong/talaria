@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -93,11 +94,13 @@ class OpsRepository(
     fun refresh() {
         loadCatalogue()
         for (op in listOf("system.overview", "services.list", "docker.ps", "bridge.version")) run(op)
+        if (_state.value.catalogue.any { it.op == SKILLS }) run(SKILLS)
     }
 
     fun loadCatalogue() {
         call("ops.catalogue", JsonObject(emptyMap()), "catalogue") { r ->
-            _state.update { s -> s.copy(available = true, catalogue = (r["ops"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::opInfo) }) }
+            val s = _state.updateAndGet { s -> s.copy(available = true, catalogue = (r["ops"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::opInfo) }) }
+            if (s.catalogue.any { it.op == SKILLS } && SKILLS !in s.reads && SKILLS !in s.busy) run(SKILLS)
         }
     }
 
@@ -233,6 +236,9 @@ class OpsRepository(
         const val METHOD_NOT_FOUND = -32601
 
         /** After these finish, the Server page's reads are out of date. */
-        val REFRESH_AFTER = setOf("service.restart", "docker.restart", "bridge.update", "disk.cleanup", "apt.upgrade")
+        val REFRESH_AFTER = setOf("service.restart", "docker.restart", "bridge.update", "disk.cleanup", "apt.upgrade",
+            "hermes.skill.set")
+        /** Hermes's skills for Talaria, listed when the server offers it (§16). */
+        const val SKILLS = "hermes.skills"
     }
 }

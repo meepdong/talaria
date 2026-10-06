@@ -6,6 +6,7 @@ never a shell string, and parameters are checked against enums, bounds or live l
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import os
@@ -19,6 +20,9 @@ OUTPUT_LIMIT = 64 * 1024
 REPO = "/opt/talaria"
 BRIDGE_PYTHON = "/opt/talaria/.venv/bin/python"
 HERMES_LOG = "/home/hermes/.hermes/logs/agent.log"
+HERMES_HOME = "/home/hermes/.hermes"
+HERMES_CLI = "/home/hermes/.local/bin/hermes"
+SKILLS_OFF = "skills.platform_disabled.api_server"  # the skills Hermes doesn't load for Talaria (its API server)
 
 # name -> (kind, unit). "system" units are managed with systemctl; Hermes runs as a user unit of `hermes`.
 SERVICES: dict[str, tuple[str, str]] = {
@@ -98,6 +102,7 @@ class Context:
     audit_tail: Callable[[int], list[dict]] = lambda n: []
     proc: Path = Path("/proc")
     hermes_log: Path = Path(HERMES_LOG)
+    hermes_home: Path = Path(HERMES_HOME)
     terminals: object = None  # terminal.Terminals: root's tmux sessions and the grants to them (§16.1)
 
 
@@ -367,6 +372,67 @@ async def tmux_sessions(ctx: Context, p: dict) -> Outcome:
     return Outcome(True, f"{len(sessions)} tmux session{'' if len(sessions) == 1 else 's'}", data={"sessions": sessions})
 
 
+def _skill_files(home: Path) -> list[dict]:
+    """Hermes's installed skills, from each SKILL.md's front matter: {name, description, category}."""
+    found: dict[str, dict] = {}
+    root = home / "skills"
+    try:
+        files = sorted(root.rglob("SKILL.md"))
+    except OSError:  # not there, or not readable (as talaria-ops isn't root in tests)
+        files = []
+    for f in files:
+        try:
+            text = f.read_text(errors="replace")[:4000]
+        except OSError:
+            continue
+        meta = text.split("---", 2)[1] if text.startswith("---") and text.count("---") >= 2 else ""
+        name = re.search(r"(?m)^name:\s*(.+?)\s*$", meta)
+        if name is None:
+            continue
+        desc = re.search(r"(?m)^description:\s*(.+?)\s*$", meta)
+        n = name[1].strip("\"'")
+        found.setdefault(n, {"name": n, "description": desc[1].strip("\"'")[:200] if desc else "",
+                             "category": f.relative_to(root).parts[0]})
+    return sorted(found.values(), key=lambda x: (x["category"], x["name"]))
+
+
+async def _skills_off(ctx: Context) -> list[str] | None:
+    run = await ctx.run([HERMES_CLI, "config", "get", SKILLS_OFF], user="hermes", timeout=60)
+    if run.exit_code != 0:
+        return None
+    return re.findall(r"(?m)^\s*-\s*(\S+)\s*$", run.output)
+
+
+async def _skill_names(ctx: Context) -> list[str]:
+    return [s["name"] for s in await asyncio.to_thread(_skill_files, ctx.hermes_home)]
+
+
+async def hermes_skills(ctx: Context, p: dict) -> Outcome:
+    skills = await asyncio.to_thread(_skill_files, ctx.hermes_home)
+    off = await _skills_off(ctx)
+    if off is None:
+        return Outcome(False, "couldn't read Hermes's skills settings", "", None)
+    rows = [{**s, "enabled": s["name"] not in off} for s in skills]
+    on = sum(r["enabled"] for r in rows)
+    return Outcome(True, f"{on} of {len(rows)} skills on for Talaria", "", 0, rows)
+
+
+async def hermes_skill_set(ctx: Context, p: dict) -> Outcome:
+    off = await _skills_off(ctx)
+    if off is None:
+        return Outcome(False, "couldn't read Hermes's skills settings", "", None)
+    name, on = p["skill"], p["enabled"] == "on"
+    new = [s for s in off if s != name] + ([] if on else [name])
+    if sorted(new) == sorted(off):
+        return Outcome(True, f"{name} was already {'on' if on else 'off'} for Talaria", "", 0)
+    run = await ctx.run([HERMES_CLI, "config", "set", SKILLS_OFF, json.dumps(sorted(new))], user="hermes", timeout=60)
+    if run.exit_code != 0:
+        return _done(run, f"turning {name} {'on' if on else 'off'}")
+    kind, unit = SERVICES["hermes-gateway"]
+    restart = await ctx.run([*_systemctl(kind), "restart", "--no-block", unit], timeout=30)
+    return _done(restart, f"{name} is {'on' if on else 'off'} for Talaria; Hermes is restarting")
+
+
 async def _tmux_names(ctx: Context) -> list[str]:
     return await ctx.terminals.names() if ctx.terminals is not None else []
 
@@ -443,6 +509,10 @@ OPS: dict[str, Op] = {op.name: op for op in [
        lambda p: "Trim the system journal to 200 MB and delete unused Docker images"),
     Op("apt.upgrade", 1, "Upgrade packages", apt_upgrade, {}, lambda p: "Install all pending package updates"),
     Op("system.reboot", 2, "Reboot the server", system_reboot, {}, lambda p: "Reboot the server now"),
+    Op("hermes.skills", 0, "Hermes's skills", hermes_skills),
+    Op("hermes.skill.set", 1, "Turn a skill on or off", hermes_skill_set,
+       {"skill": Param("string", choices=_skill_names), "enabled": Param("string", enum=["on", "off"])},
+       lambda p: f"Turn the skill {p['skill']} {p['enabled']} for Talaria (Hermes restarts; a reply in progress stops)"),
     Op("tmux.sessions", 0, "Terminal sessions", tmux_sessions),
     Op("terminal.watch", 1, "Watch a terminal", terminal_watch, {"session": Param("string", choices=_tmux_names)},
        lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),

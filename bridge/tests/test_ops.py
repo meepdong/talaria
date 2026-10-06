@@ -249,3 +249,31 @@ async def test_real_runner_has_no_shell_and_times_out():
     assert run.exit_code == 0 and run.output == "a;b $(id)\n"
     slow = await run_command(["/bin/sleep", "5"], timeout=0.2)
     assert slow.exit_code is None
+
+
+async def test_hermes_skills_are_listed_and_switched_for_talaria(tmp_path, registry_db, clock):
+    for cat, name, desc in (("email", "himalaya", "Read and send email"), ("media", "gif-search", '"Find GIFs"')):
+        d = tmp_path / "skills" / cat / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\nversion: 1\n---\n# {name}\n")
+    hermes = "/home/hermes/.local/bin/hermes"
+    runner = FakeRunner({(hermes, "config", "get"): Run(0, "  - gif-search\n  - airtable\n")})
+    d = OpsDaemon(registry_db, AuditLog(tmp_path / "a.jsonl"), runner, clock, hermes_home=tmp_path)
+    listed = await d.run("hermes.skills", {}, "device:X")
+    assert listed["summary"] == "1 of 2 skills on for Talaria"
+    assert listed["data"] == [{"name": "himalaya", "description": "Read and send email", "category": "email", "enabled": True},
+                              {"name": "gif-search", "description": "Find GIFs", "category": "media", "enabled": False}]
+    assert runner.calls[0][1]["user"] == "hermes"
+
+    ops = {o["op"]: o for o in (await d.handle({"cmd": "catalogue"}))["ops"]}
+    assert ops["hermes.skill.set"]["tier"] == 1 and ops["hermes.skill.set"]["params"]["skill"]["enum"] == ["himalaya", "gif-search"]
+    prepared = await d.prepare("hermes.skill.set", {"skill": "gif-search", "enabled": "on"}, "device:X")
+    assert prepared["summary"].startswith("Turn the skill gif-search on for Talaria")
+    result = (await d.handle({"cmd": "execute", "request_id": prepared["request_id"], "device_id": PHONE_ID,
+                              "choice": "once", "sig": sign(prepared)}))["result"]
+    assert result["ok"] and "Hermes is restarting" in result["summary"]
+    assert [hermes, "config", "set", "skills.platform_disabled.api_server", '["airtable"]'] in runner.argvs()
+    assert ["systemctl", "--user", "-M", "hermes@", "restart", "--no-block", "hermes-gateway.service"] in runner.argvs()
+
+    with pytest.raises(Exception):
+        await d.prepare("hermes.skill.set", {"skill": "not-installed", "enabled": "on"}, "device:X")

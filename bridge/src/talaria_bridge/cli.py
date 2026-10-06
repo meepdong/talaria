@@ -19,7 +19,7 @@ from . import __version__
 from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
-from .talk import VOICES, Talker
+from .talk import TRANSCRIBERS, VOICES, Talker
 from .voice import VoiceService
 from .chat import ChatService, ChatStore
 from .todos import TodoStore
@@ -126,7 +126,8 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     if talk_agent is not None and voice is not None:
         try:
             chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)), chat, name=talk_agent.name,
-                                 voice=talk_agent.talk_voice or VOICES[0])
+                                 voice=talk_agent.talk_voice or VOICES[0],
+                                 transcriber=talk_agent.talk_transcriber or TRANSCRIBERS[0])
         except (OSError, ValueError) as exc:
             print(f"WARNING: no Talk 3 talker: {exc}", file=sys.stderr)
     return chat

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/talk.turn.schema.json",
-  "title": "talk.turn",
-  "description": "Device to bridge (request): what the owner said in Talk, as audio, for the voice talker (\u00a79).",
+  "$id": "https://talaria.invalid/tnp/v0/talk.cancel.schema.json",
+  "title": "talk.cancel",
+  "description": "Device to bridge: the owner went on talking; drop the early turn (\u00a79).",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -12,7 +12,7 @@
       "const": 0
     },
     "method": {
-      "const": "talk.turn"
+      "const": "talk.cancel"
     },
     "id": {
       "type": [
@@ -23,28 +23,14 @@
     "params": {
       "type": "object",
       "properties": {
-        "audio": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 900000
-        },
-        "format": {
-          "enum": [
-            "wav",
-            "mp3"
-          ]
-        },
-        "conversation_id": {
+        "talk_id": {
           "type": "string",
           "minLength": 1,
           "maxLength": 64
-        },
-        "early": {
-          "type": "boolean"
         }
       },
       "required": [
-        "audio"
+        "talk_id"
       ]
     }
   },

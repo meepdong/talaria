@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/talk.say.schema.json",
-  "title": "talk.say",
-  "description": "Device to bridge (request): a line for the talker to say as it is (\u00a79).",
+  "$id": "https://talaria.invalid/tnp/v0/talk.voice.result.schema.json",
+  "title": "talk.voice.result",
+  "description": "Result of talk.voice.",
   "type": "object",
   "properties": {
     "jsonrpc": {
@@ -11,28 +11,15 @@
     "tnp": {
       "const": 0
     },
-    "method": {
-      "const": "talk.say"
-    },
     "id": {
       "type": [
         "string",
         "integer"
       ]
     },
-    "params": {
+    "result": {
       "type": "object",
       "properties": {
-        "text": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        },
-        "conversation_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
         "voice": {
           "enum": [
             "shimmer",
@@ -51,25 +38,15 @@
           ]
         }
       },
-      "anyOf": [
-        {
-          "required": [
-            "text"
-          ]
-        },
-        {
-          "required": [
-            "voice"
-          ]
-        }
+      "required": [
+        "voice"
       ]
     }
   },
   "required": [
     "jsonrpc",
     "tnp",
-    "method",
     "id",
-    "params"
+    "result"
   ]
 }

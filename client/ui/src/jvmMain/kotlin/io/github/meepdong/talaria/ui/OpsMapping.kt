@@ -52,6 +52,12 @@ fun serverView(s: OpsState, deviceId: String): ServerView {
     val bridge = s.reads["bridge.version"]
     val behind = ((bridge?.data as? Map<*, *>)?.get("behind") as? Number)?.toInt()
     val logs = s.reads["service.logs"]
+    val skills = s.reads["hermes.skills"]
+    val skillRows = (skills?.data as? List<*>).orEmpty().mapNotNull { e ->
+        val x = e as? Map<*, *> ?: return@mapNotNull null
+        SkillRow(x["name"] as? String ?: return@mapNotNull null, x["description"] as? String ?: "",
+            x["category"] as? String ?: "", x["enabled"] == true)
+    }
     return ServerView(
         available = s.available,
         loading = s.busy.isNotEmpty(),
@@ -69,6 +75,9 @@ fun serverView(s: OpsState, deviceId: String): ServerView {
         results = opsResults(s, deviceId),
         busy = s.busy,
         error = s.error,
+        hasSkills = s.catalogue.any { it.op == "hermes.skills" },
+        skillsSummary = skills?.summary.orEmpty(),
+        skills = skillRows,
     )
 }
 

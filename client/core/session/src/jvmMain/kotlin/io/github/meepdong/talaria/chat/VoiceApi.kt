@@ -53,26 +53,56 @@ class VoiceApi(private val api: ChatApi) {
         }
     }
 
-    /** What was said, as WAV: the talker hears it, answers through [talkEvents]. Returns the talk id, or null. */
-    suspend fun talkTurn(wav: ByteArray, conversationId: String?): String? {
+    /**
+     * What was said, as WAV: the talker hears it, answers through [talkEvents]. Returns the talk id, or null. An
+     * [early] turn (sent at their first pause) is held on the bridge until [talkCommit], or dropped by [talkCancel].
+     */
+    suspend fun talkTurn(wav: ByteArray, conversationId: String?, early: Boolean = false): String? {
         if (!talkerAvailable) return null
         val r = call("talk.turn", buildJsonObject {
             put("audio", Base64.getEncoder().encodeToString(wav))
             put("format", "wav")
             conversationId?.let { put("conversation_id", it) }
+            if (early) put("early", true)
         }, talk = true) ?: return null
         return (r["talk_id"] as? JsonPrimitive)?.content
     }
 
-    /** The talker says [text] as it is. */
-    suspend fun talkSay(text: String, conversationId: String?): String? {
+    /** They had finished: the early turn [talkId] goes ahead. False if the bridge no longer has it. */
+    suspend fun talkCommit(talkId: String): Boolean =
+        talkerAvailable && call("talk.commit", buildJsonObject { put("talk_id", talkId) }, optional = true) != null
+
+    /** They went on talking: drop the early turn [talkId]. */
+    suspend fun talkCancel(talkId: String) {
+        if (talkerAvailable) call("talk.cancel", buildJsonObject { put("talk_id", talkId) }, optional = true)
+    }
+
+    /** The talker says [text] as it is; in [voice] if given (without text: a sample line, to hear it). */
+    suspend fun talkSay(text: String?, conversationId: String?, voice: String? = null): String? {
         if (!talkerAvailable) return null
         val r = call("talk.say", buildJsonObject {
-            put("text", text.take(2000))
+            text?.let { put("text", it.take(2000)) }
             conversationId?.let { put("conversation_id", it) }
+            voice?.let { put("voice", it) }
         }, talk = true) ?: return null
         return (r["talk_id"] as? JsonPrimitive)?.content
     }
+
+    /** The talker's voices (id to label) and the one in use, or null if the bridge can't say. */
+    suspend fun talkVoices(): Pair<List<Pair<String, String>>, String>? {
+        if (!talkerAvailable) return null
+        val r = call("talk.voices", buildJsonObject {}, optional = true) ?: return null
+        val voices = (r["voices"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { e ->
+            val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? JsonPrimitive)?.content ?: return@mapNotNull null
+            id to ((o["label"] as? JsonPrimitive)?.content ?: id)
+        }
+        return voices to ((r["voice"] as? JsonPrimitive)?.content ?: return null)
+    }
+
+    /** The talker speaks in [voice] from now on, on every device. True once the bridge has it. */
+    suspend fun talkSetVoice(voice: String): Boolean =
+        talkerAvailable && call("talk.voice", buildJsonObject { put("voice", voice) }, optional = true) != null
 
     /** Talk ended: the agent's replies in [conversationId] aren't spoken any more. */
     suspend fun talkEnd(conversationId: String) {
@@ -97,12 +127,14 @@ class VoiceApi(private val api: ChatApi) {
         return (r["text"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
     }
 
-    private suspend fun call(method: String, params: kotlinx.serialization.json.JsonObject, talk: Boolean = false) = try {
+    /** [optional]: a method an older bridge may lack, which says nothing about the rest. */
+    private suspend fun call(method: String, params: kotlinx.serialization.json.JsonObject, talk: Boolean = false,
+                             optional: Boolean = false) = try {
         api.request(method, params, timeoutMs = TIMEOUT_MS)
     } catch (e: CancellationException) {
         throw e
     } catch (e: RpcException) {
-        if (e.code == METHOD_NOT_FOUND) { if (talk) talkerAvailable = false else available = false }
+        if (e.code == METHOD_NOT_FOUND && !optional) { if (talk) talkerAvailable = false else available = false }
         null
     } catch (e: Exception) {
         null

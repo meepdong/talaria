@@ -38,9 +38,20 @@ class FakeOpenRouter:
         self.heard = heard
         self.bodies: list[dict] = []
         self.hearing: list[dict] = []
+        self.whisper = 200  # what Whisper answers with
+        self.fillers: list[str] = []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         body = json.loads(req.content)
+        if req.url.path.endswith("/audio/transcriptions"):
+            self.hearing.append(body)
+            if self.whisper != 200:
+                return httpx.Response(self.whisper, json={"error": {"message": "Model blocked by guardrail"}})
+            return httpx.Response(200, json={"text": " " + self.heard, "usage": {"seconds": 2}})
+        if "Mm-hm, one sec." in str(body["messages"][-1]["content"]):  # the talker records its filler once
+            self.fillers.append(body["audio"]["voice"])
+            return httpx.Response(200, content=sse({"choices": [{"delta": {"audio": {"data": "MMHM"}}}]}),
+                                  headers={"content-type": "text/event-stream"})
         if not body.get("stream"):
             self.hearing.append(body)
             return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": self.heard}}]})
@@ -101,9 +112,8 @@ async def test_what_was_said_is_written_down_and_kept_in_the_chat(tmp_path: Path
     await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
     await done(sent)
     hear = fake.hearing[0]
-    assert hear["model"] == "openai/gpt-audio-mini" and hear["modalities"] == ["text"] and "stream" not in hear
-    assert "word for word" in hear["messages"][0]["content"]
-    assert hear["messages"][1]["content"][1] == {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
+    assert hear["model"] == "openai/whisper-large-v3-turbo"
+    assert hear["input_audio"] == {"data": "UklGRg==", "format": "wav"} and hear["prompt"].startswith("Talking to Hermes")
     heard = [check("talk.heard", x)["params"] for x in sent if x["method"] == "talk.heard"]
     assert heard[0]["text"] == "Add send Shreyas the humanoid files to my to-dos" and heard[0]["conversation_id"] == "c-1"
     kept = [check("chat.talk", x)["params"] for x in sent if x["method"] == "chat.talk"]
@@ -129,6 +139,42 @@ async def test_what_was_said_is_written_down_and_kept_in_the_chat(tmp_path: Path
     await chat.handle("talk.say", {"text": "I need your okay.", "conversation_id": "c-1"})
     await done(sent)
     assert not [x for x in sent if x["method"] in ("chat.talk", "talk.heard")]
+    await chat.close()
+
+
+async def test_whisper_blocked_the_talker_model_writes_it_down(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, voice_says("Added it."))
+    fake.whisper = 404
+    chat.todos.add({"text": "Send Shreyas the humanoid files"})
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    assert "Names: Shreyas." in fake.hearing[0]["prompt"], "names from the to-dos, spelled as the owner does"
+    hear = fake.hearing[1]
+    assert hear["model"] == "openai/gpt-audio-mini" and hear["modalities"] == ["text"] and "stream" not in hear
+    assert "word for word" in hear["messages"][0]["content"]
+    assert hear["messages"][1]["content"][1] == {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
+    assert chat.store.talk_messages("c-1")[0]["text"] == "🎙 Add send Shreyas the humanoid files to my to-dos"
+    await chat.close()
+
+
+async def test_the_owner_picks_the_talkers_voice_and_can_hear_it_first(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, voice_says("Hi, this is how I'd sound."), voice_says("Sure."))
+    listed = check("talk.voices.result", m.result("1", (await chat.handle("talk.voices", {}))[0]))["result"]
+    assert listed["voice"] == "shimmer" and {"id": "marin", "label": "Marin: natural, relaxed"} in listed["voices"]
+    await chat.handle("talk.say", check("talk.say", m.request("2", "talk.say", {"voice": "cedar"}))["params"])
+    await done(sent)
+    assert fake.bodies[0]["audio"]["voice"] == "cedar" and "how I'd sound" in fake.bodies[0]["messages"][-1]["content"]
+    req = check("talk.voice", m.request("3", "talk.voice", {"voice": "marin"}))
+    assert check("talk.voice.result", m.result("3", (await chat.handle("talk.voice", req["params"]))[0]))["result"] == {"voice": "marin"}
+    sent.clear()
+    await chat.handle("talk.say", {"text": "Sure.", "conversation_id": "c-1"})
+    await done(sent)
+    assert fake.bodies[1]["audio"]["voice"] == "marin"
+    again = Talker("sk", chat)
+    assert again.voice == "marin", "the pick outlives a restart"
+    await again.close()
+    with pytest.raises(TalkError):
+        chat.talker.set_voice({"voice": "robot"})
     await chat.close()
 
 
@@ -244,4 +290,40 @@ async def test_a_refusing_model_ends_the_turn_with_an_error(tmp_path: Path):
     assert "refused (404)" in end["error"] and end["text"] == ""
     with pytest.raises(TalkError):
         raise TalkError(1, "x")
+    await chat.close()
+
+
+async def test_an_early_turn_waits_for_commit_and_a_cancel_drops_it(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, calls(("add_todo", {"text": "Buy milk"})), voice_says("Added milk."))
+    chat.talker._fillers["shimmer"] = ["MMHM"]
+    early = check("talk.turn", m.request("1", "talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1", "early": True}))
+    talk_id = (await chat.handle("talk.turn", early["params"]))[0]["talk_id"]
+    for _ in range(100):
+        if len(fake.bodies) == 1 and fake.hearing:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    assert fake.bodies, "the model already started"
+    assert chat.todos.list() == [] and not [x for x in sent if x["method"].startswith(("talk.", "chat.talk"))], \
+        "nothing said, done or kept before the commit"
+    req = check("talk.commit", m.request("2", "talk.commit", {"talk_id": talk_id}))
+    check("talk.commit.result", m.result("2", (await chat.handle("talk.commit", req["params"]))[0]))
+    end = await done(sent)
+    assert end["text"] == "Added milk." and [t["text"] for t in chat.todos.list()] == ["Buy milk"]
+    audio = [x["params"]["data"] for x in sent if x["method"] == "talk.audio"]
+    assert audio == ["MMHM", "AAAA", "BBBB"], "the filler while it went quiet to add the to-do, then the answer"
+    assert [x["role"] for x in chat.store.talk_messages("c-1")] == ["user", "assistant"]
+
+    # they went on talking: the early turn is dropped with nothing done or said
+    sent.clear()
+    fake.replies += [calls(("add_todo", {"text": "Buy bread"}))]
+    talk_id = (await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1", "early": True}))[0]["talk_id"]
+    await asyncio.sleep(0.05)
+    req = check("talk.cancel", m.request("3", "talk.cancel", {"talk_id": talk_id}))
+    check("talk.cancel.result", m.result("3", (await chat.handle("talk.cancel", req["params"]))[0]))
+    await asyncio.sleep(0.05)
+    assert [t["text"] for t in chat.todos.list()] == ["Buy milk"] and not sent
+    assert len(chat.store.talk_messages("c-1")) == 2
+    with pytest.raises(TalkError):
+        await chat.talker.commit({"talk_id": talk_id})
     await chat.close()

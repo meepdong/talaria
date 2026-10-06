@@ -61,6 +61,9 @@ class ChatScreensTest {
         override fun speak(key: String, text: String) { calls += "speak $key" }
         override fun stopSpeaking() { calls += "stop speaking" }
         override fun setReadAloud(on: Boolean) { calls += "read aloud $on" }
+        override fun loadTalkVoices() { calls += "voices" }
+        override fun previewTalkVoice(id: String) { calls += "hear $id" }
+        override fun setTalkVoice(id: String) { calls += "voice $id" }
         override fun pickModel(provider: String, model: String) { calls += "model $provider $model" }
         override fun openModelPicker(query: String) { calls += "picker $query" }
         override fun dismissAside(id: String) { calls += "dismiss $id" }
@@ -310,6 +313,24 @@ class ChatScreensTest {
         onNodeWithTag("dictate").performClick()
         onNodeWithTag("dictate").performTouchInput { longClick() }
         assertEquals(listOf("talk", "dictate"), actions.calls)
+    }
+
+    @Test
+    fun theTalkVoiceIsPickedAfterHearingIt() = runComposeUiTest {
+        val actions = Recorder()
+        var v by mutableStateOf(view(state()).copy(voice = VoiceView(canDictate = true)))
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
+        }
+        onNodeWithTag("menu").performClick()
+        onNodeWithTag("talk-voice").performClick()
+        onNodeWithTag("voices-loading").assertExists()
+        v = v.copy(voice = v.voice.copy(talkVoices = listOf("shimmer" to "Shimmer: bright and warm", "marin" to "Marin: natural, relaxed"),
+            talkVoice = "shimmer"))
+        waitForIdle()
+        onNodeWithTag("hear-marin").performClick()
+        onNodeWithTag("voice-marin").performClick()
+        assertEquals(listOf("voices", "hear marin", "voice marin"), actions.calls)
     }
 
     @Test

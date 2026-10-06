@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
+import io.github.meepdong.talaria.ops.OpInfo
 import io.github.meepdong.talaria.ops.OpOutcome
 import io.github.meepdong.talaria.ops.OpsApproval
 import io.github.meepdong.talaria.ops.OpsState
@@ -51,6 +52,22 @@ class ServerScreenTest {
         ),
         pending = listOf(OpsApproval("op-1", "system.reboot", "{}", 2, "Reboot the server now", "agent:hermes", 9_999_999_999)),
     )
+
+    @Test
+    fun hermesSkillsAreSwitches() = runComposeUiTest {
+        val actions = Recorder()
+        val skills = state.copy(pending = emptyList(), catalogue = listOf(OpInfo("hermes.skills", 0, "Hermes's skills", emptyMap())),
+            reads = state.reads + ("hermes.skills" to outcome("hermes.skills", "1 of 2 skills on for Talaria", listOf(
+                mapOf("name" to "himalaya", "description" to "Email", "category" to "email", "enabled" to true),
+                mapOf("name" to "gif-search", "description" to "", "category" to "media", "enabled" to false)))))
+        val view = serverView(skills, "D1")
+        assertEquals(listOf(SkillRow("himalaya", "Email", "email", true), SkillRow("gif-search", "", "media", false)), view.skills)
+        setContent { TalariaTheme { ServerScreen(view, actions) } }
+        onNodeWithTag("skills-summary").performScrollTo().assertTextContains("1 of 2 skills on for Talaria", substring = true)
+        onNodeWithTag("skill-gif-search").performScrollTo().performClick()
+        onNodeWithTag("skill-himalaya").performScrollTo().performClick()
+        assertEquals(listOf("hermes.skill.set enabled=on skill=gif-search", "hermes.skill.set enabled=off skill=himalaya"), actions.calls)
+    }
 
     @Test
     fun showsTheServerAndAsksBeforeChanging() = runComposeUiTest {

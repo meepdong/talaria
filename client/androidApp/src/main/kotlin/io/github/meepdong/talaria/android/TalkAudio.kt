@@ -23,7 +23,8 @@ import kotlin.math.sqrt
 
 /**
  * Talk 3's ears: the microphone at 16 kHz until the owner stops talking (0.5, 0.8 or 1.5 s of quiet after speech,
- * as they chose), as WAV, with how loud it is a few times a second. A
+ * as they chose), as WAV, with how loud it is a few times a second and a word at the first short pause, so Talk
+ * can start answering before the wait is over. A
  * quarter of a second before the first word is kept so it isn't clipped; 7 s with nothing said gives null (Talk
  * ends); 20 s is the most one turn records.
  */
@@ -80,6 +81,8 @@ class AndroidRecorder(
         var floor = 0.0
         var speaking = false
         var quietMs = 0
+        var pausedSent = false  // a first pause was reported: Talk may answer early
+        val earlyMs = minOf(EARLY_MS, endQuietMs - 150)
         var ms = 0
         rec.startRecording()
         try {
@@ -109,6 +112,14 @@ class AndroidRecorder(
                 } else {
                     out.write(pcm(chunk))
                     quietMs = if (loud) 0 else quietMs + 20
+                    if (loud && pausedSent) {
+                        pausedSent = false
+                        main.post { listener.resumed() }
+                    } else if (!pausedSent && quietMs >= earlyMs && quietMs < endQuietMs && ms < MAX_MS) {
+                        pausedSent = true
+                        val soFar = wav(out.toByteArray())
+                        main.post { listener.paused(soFar) }
+                    }
                     if (quietMs >= endQuietMs || ms >= MAX_MS) break
                 }
             }
@@ -142,6 +153,7 @@ class AndroidRecorder(
         const val MIN_SPEECH = 600.0
         const val PRE_FRAMES = 12  // 240 ms
         const val LEVEL_EVERY_MS = 60
+        const val EARLY_MS = 350  // a pause this long sends an early turn (spec §9)
         const val LOUD = 6_000.0  // as loud as the level shows
         const val NOTHING_MS = 7_000
         const val MAX_MS = 20_000

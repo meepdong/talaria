@@ -70,6 +70,26 @@ class OpsRepositoryTest {
     }
 
     @Test
+    fun hermesSkillsAreListedWhenTheServerOffersThem() = runTest {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val api = FakeApi()
+        api.answers["ops.catalogue"] = { json("""{"ops":[{"op":"hermes.skills","tier":0,"title":"Hermes's skills","params":{}}]}""") }
+        api.answers["ops.run"] = { json("""{"status":"done","result":{"op":"hermes.skills","ok":true,"exit_code":0,
+            "summary":"1 of 2 skills on for Talaria","output":"","finished_at":5,
+            "data":[{"name":"himalaya","description":"Email","category":"email","enabled":true}]}}""") }
+        val repo = OpsRepository(scope, api) { 1000 }
+        repo.start()
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        assertEquals("1 of 2 skills on for Talaria", repo.state.value.reads.getValue("hermes.skills").summary)
+        repo.refresh()
+        advanceUntilIdle()
+        assertTrue("hermes.skills" in repo.state.value.reads)
+        scope.cancel()
+    }
+
+    @Test
     fun approvalsAreKeptSignedAndSettled() = runTest {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
         val api = FakeApi()

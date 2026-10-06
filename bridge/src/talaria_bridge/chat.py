@@ -44,6 +44,9 @@ CLIENT_MSG_TTL_S = 600
 HISTORY_DEFAULT, HISTORY_MAX = 50, 100
 MAX_ATTACHMENTS = 128
 MAX_FILE_CAPTION = 1000
+TIDY_TOKENS = 48_000  # a chat this big may be compressed before the agent answers (Hermes compresses at 64k)
+TIDY_AFTER_S = 8  # ... which is likely when a turn in it has shown nothing for this long
+TIDYING = "Tidying up this long chat…"
 RECENT_CHAT_S = 30 * 60  # send_file with no reply running: the agent's latest conversation, if this recent
 MAX_INLINE_COUNT = 10  # more photos than this go to the agent's inbox as files (§10)
 MAX_QUEUED = 5
@@ -179,6 +182,7 @@ class ChatStore:
             self.db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER")
         if "archived" not in have:
             self.db.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER")
+        self.db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS default_models "
                         "(agent_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL)")
 
@@ -223,6 +227,13 @@ class ChatStore:
     def talk_messages(self, conversation_id: str) -> list[dict]:
         rows = self.db.execute("SELECT * FROM talk_messages WHERE conversation_id = ? ORDER BY at, id", (conversation_id,))
         return [{"id": f"t-{r['id']}", "role": r["role"], "text": r["text"], "ts": r["at"]} for r in rows]
+
+    def setting(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     def set_model(self, conversation_id: str, provider: str, model: str) -> None:
         self.db.execute("UPDATE conversations SET model_provider = ?, model_name = ? WHERE id = ?",
@@ -477,6 +488,7 @@ class ChatService:
         self._jobs: set[asyncio.Task] = set()
         self._client_msgs: dict[str, tuple[float, dict]] = {}
         self._grouping: asyncio.Task | None = None
+        self._sizes: dict[str, int] = {}  # conversation_id -> about how many tokens the agent reads per call
         self._group_tried: set[str] = set()  # to-dos already handed to the agent to group
 
     def _automation_chat(self, agent_id: str, session_id: str, title: str, at: int, text: str) -> str:
@@ -825,12 +837,20 @@ class ChatService:
         conv = self.store.get(turn.conversation_id)
         final_text: str | None = None
         status: str | None = None
+        progressed = asyncio.Event()
+        watch = None
+        before = None
         try:
             if conv is None:
                 raise HermesUnavailable("conversation was deleted")
-            stream = self.agents[conv.agent_id].chat_stream(
-                conv.hermes_session_id, turn.content if turn.content is not None else turn.user_text)
+            client = self.agents[conv.agent_id]
+            before = await self._totals(client, conv.hermes_session_id)
+            if self._sizes.get(conv.id, 0) >= TIDY_TOKENS:
+                watch = asyncio.create_task(self._tidy_watch(turn, progressed))
+            stream = client.chat_stream(conv.hermes_session_id, turn.content if turn.content is not None else turn.user_text)
             async for name, payload in stream:
+                if name not in ("run.started", "message.started"):
+                    progressed.set()
                 if turn.waiting_for_approval and name != "approval.request":
                     turn.waiting_for_approval, turn.approval = False, None
                 if name == "run.started":
@@ -886,6 +906,11 @@ class ChatService:
             log.exception("chat turn %s failed", turn.turn_id)
             status, turn.error = "failed", f"Bridge error: {type(exc).__name__}"
         finally:
+            progressed.set()
+            if watch is not None:
+                watch.cancel()
+            if before is not None and conv is not None:
+                self._spawn(self._measure(self.agents[conv.agent_id], conv, before))
             turn.waiting_for_approval, turn.approval = False, None
             turn.status = status or "failed"
             if final_text is not None:
@@ -920,6 +945,29 @@ class ChatService:
                 self.start(following)
 
     # chat.cancel, chat.turn.get
+
+    # how big a chat is: the agent compresses big ones before answering, which takes a while (§9 "Tidying up")
+
+    async def _totals(self, client: HermesClient, session_id: str) -> tuple[int, int] | None:
+        """The session's tokens read so far and its model calls, from the agent; None if it can't say."""
+        try:
+            info = await client.session(session_id)
+            read = sum(int(info.get(k) or 0) for k in ("input_tokens", "cache_read_tokens", "cache_write_tokens"))
+            return read, int(info.get("api_call_count") or 0)
+        except Exception:  # noqa: BLE001 (a nicety: without it there's no tidying note)
+            return None
+
+    async def _measure(self, client: HermesClient, conv: Conversation, before: tuple[int, int]) -> None:
+        after = await self._totals(client, conv.hermes_session_id)
+        if after is not None and after[1] > before[1]:
+            self._sizes[conv.id] = (after[0] - before[0]) // (after[1] - before[1])
+
+    async def _tidy_watch(self, turn: Turn, progressed: asyncio.Event) -> None:
+        try:
+            await asyncio.wait_for(progressed.wait(), TIDY_AFTER_S)
+        except asyncio.TimeoutError:
+            turn.commentary.append(TIDYING)
+            await self._delta(turn, "commentary", text=TIDYING)
 
     def _turn(self, p: dict) -> Turn:
         turn = self._turns.get(_id(p.get("turn_id"), "turn_id"))
@@ -1370,6 +1418,14 @@ class ChatService:
                     return await self.talker.turn(p), None
                 if method == "talk.say":
                     return await self.talker.say(p), None
+                if method == "talk.commit":
+                    return await self.talker.commit(p), None
+                if method == "talk.cancel":
+                    return self.talker.cancel(p), None
+                if method == "talk.voices":
+                    return self.talker.voices(), None
+                if method == "talk.voice":
+                    return self.talker.set_voice(p), None
                 return self.talker.end(p), None
             except TalkError as exc:
                 raise RpcError(exc.code, exc.message) from None

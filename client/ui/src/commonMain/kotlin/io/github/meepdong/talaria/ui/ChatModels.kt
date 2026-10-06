@@ -132,6 +132,11 @@ data class VoiceView(
     val level: Float = 0f,
     /** How long Talk waits after they stop before it answers. */
     val talkWait: TalkWait = TalkWait.NORMAL,
+    /** The talker's voices (id to label), once asked for, and the one it uses. */
+    val talkVoices: List<Pair<String, String>> = emptyList(),
+    val talkVoice: String? = null,
+    /** The voice being heard as a sample. */
+    val previewing: String? = null,
 )
 
 /** How long a pause ends the owner's turn in Talk. */

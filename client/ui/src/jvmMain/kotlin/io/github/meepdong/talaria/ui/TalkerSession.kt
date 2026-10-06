@@ -2,7 +2,9 @@ package io.github.meepdong.talaria.ui
 
 import io.github.meepdong.talaria.chat.VoiceApi.TalkEvent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -23,6 +25,10 @@ interface VoiceRecorder {
         fun speaking() {}
         /** How loud it is now, 0 to 1, a few times a second. */
         fun level(level: Float) {}
+        /** A first short pause, with what was said so far: they may have finished (Talk answers early). */
+        fun paused(wav: ByteArray) {}
+        /** They went on talking after [paused]. */
+        fun resumed() {}
         fun done(wav: ByteArray?)
         fun failed(message: String)
     }
@@ -40,7 +46,9 @@ interface PcmPlayer {
 /** The bridge's talker, as Talk 3 uses it (VoiceApi). */
 interface TalkerApi {
     val events: Flow<TalkEvent>
-    suspend fun turn(wav: ByteArray, conversationId: String?): String?
+    suspend fun turn(wav: ByteArray, conversationId: String?, early: Boolean = false): String?
+    suspend fun commit(talkId: String): Boolean = false
+    suspend fun cancel(talkId: String) {}
     suspend fun say(text: String, conversationId: String?): String?
     suspend fun end(conversationId: String)
 }
@@ -78,6 +86,8 @@ class TalkerSession(
     private val said = mutableMapOf<String, StringBuilder>()
     private val afterSaid = mutableMapOf<String, () -> Unit>()
     private var listening = false
+    /** An early turn, sent at their first pause; committed if they had finished, cancelled if they went on. */
+    private var early: Deferred<String?>? = null
     private var held = false
     private var ended = false
     private var events: Job? = null
@@ -95,6 +105,7 @@ class TalkerSession(
             recorder.stop()
             return
         }
+        dropEarly()
         synchronized(lock) {
             ignored += mine + playing
             mine.clear()
@@ -114,6 +125,7 @@ class TalkerSession(
         events?.cancel()
         recorder.cancel()
         player.stop()
+        dropEarly()
         conv?.let { scope.launch { api.end(it) } }
         onEnd(error)
     }
@@ -170,14 +182,24 @@ class TalkerSession(
         recorder.start(object : VoiceRecorder.Listener {
             override fun level(level: Float) = onLevel(level)
 
+            override fun paused(wav: ByteArray) {
+                dropEarly()
+                val conv = conversationId
+                synchronized(lock) { early = scope.async { api.turn(wav, conv, early = true) } }
+            }
+
+            override fun resumed() = dropEarly()
+
             override fun done(wav: ByteArray?) {
                 onLevel(0f)
                 val busy = synchronized(lock) {
                     listening = false
                     mine.isNotEmpty() || playing.isNotEmpty()
                 }
-                if (ended) return
+                if (ended) return dropEarly()
+                val sent = synchronized(lock) { early.also { early = null } }
                 when {
+                    wav != null && sent != null -> commit(sent, wav)
                     wav != null -> send(wav)
                     !busy -> end()  // quiet: Talk is over
                 }
@@ -185,6 +207,26 @@ class TalkerSession(
 
             override fun failed(message: String) = end(message)
         }, endQuietMs())
+    }
+
+    /** The early turn is theirs after all: let it go ahead (its answer is likely under way), or send it anew. */
+    private fun commit(sent: Deferred<String?>, wav: ByteArray) {
+        onPhase(TalkPhase.THINKING, "")
+        scope.launch {
+            val id = sent.await()
+            if (id != null) {
+                synchronized(lock) { mine += id }  // before the commit: its held answer comes before the reply
+                if (api.commit(id)) return@launch
+                synchronized(lock) { mine -= id }
+                api.cancel(id)
+            }
+            send(wav)
+        }
+    }
+
+    private fun dropEarly() {
+        val sent = synchronized(lock) { early.also { early = null } } ?: return
+        scope.launch { sent.await()?.let { api.cancel(it) } }
     }
 
     private fun send(wav: ByteArray) {

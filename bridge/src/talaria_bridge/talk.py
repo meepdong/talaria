@@ -29,13 +29,27 @@ log = logging.getLogger("talaria.talk")
 
 OPENROUTER = "https://openrouter.ai/api/v1"
 TALKER_MODEL = "openai/gpt-audio-mini"
-VOICES = ("shimmer", "coral", "nova", "sage", "alloy", "ballad", "verse", "ash", "echo", "fable", "onyx")
+WHISPER_MODEL = "openai/whisper-large-v3-turbo"  # writes down what was said: a seventh of the talker's price
+# the talker's voices, the owner's pick first-to-last; marin and cedar are OpenAI's newest and most natural
+VOICES = ("shimmer", "marin", "cedar", "coral", "sage", "alloy", "ballad", "verse", "ash", "echo", "fable", "nova", "onyx")
+TRANSCRIBERS = ("whisper", "talker")
+VOICE_LABELS = {
+    "shimmer": "Shimmer: bright and warm", "marin": "Marin: natural, relaxed", "cedar": "Cedar: natural, deeper",
+    "coral": "Coral: cheerful", "sage": "Sage: calm and clear", "alloy": "Alloy: neutral", "ballad": "Ballad: soft",
+    "verse": "Verse: expressive", "ash": "Ash: steady", "echo": "Echo: low and smooth", "fable": "Fable: storyteller",
+    "nova": "Nova: crisp", "onyx": "Onyx: deep",
+}
+SAMPLE = "Hi, this is how I'd sound. Want me to add anything to your day?"
 MAX_AUDIO_B64 = 900_000  # about 20 s of 16 kHz WAV, inside a 1 MiB frame
 MAX_SAY = 2000
 ACTIVE_S = 15 * 60  # a conversation talked in this recently hears its agent's replies spoken
 MAX_ROUNDS = 3
 MEMORY = 8  # recent spoken exchanges kept per conversation, as text
+HOLD_S = 30  # an early turn the device neither commits nor cancels is dropped after this
+FILLER = "Mm-hm, one sec."  # said while the talker uses a tool without having said anything
 MAX_KEPT = 4000  # longest spoken message kept in a chat
+# Whisper's prompt: the words it should expect; it also keeps Hinglish in Latin letters
+HINT = "Talking to {name}, a personal assistant, about to-dos, the calendar and email.{people}"
 HEAR = ("Write down exactly what is said in this recording, word for word, in the language spoken (Hinglish as "
         "spoken, in Latin letters). Don't answer it or add anything: output only the words, or nothing if no words "
         "are said.")
@@ -107,17 +121,39 @@ class TalkError(Exception):
         self.message = message
 
 
+class _Hold:
+    """An early turn (§9 talk.turn early): it runs, but what it says, does and keeps waits for talk.commit."""
+
+    def __init__(self):
+        self.committed = asyncio.Event()
+        self.queue: list[dict] = []  # notifications held until committed, in order
+        self.open = False  # committed and flushed: notifications go straight out
+        self.tasks: list[asyncio.Task] = []
+
+
+class _Dropped(Exception):
+    """An early turn that was never committed."""
+
+
 class Talker:
     def __init__(self, api_key: str, chat, *, voice: str = VOICES[0], name: str = "Hermes",
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transcriber: str = TRANSCRIBERS[0], transport: httpx.AsyncBaseTransport | None = None):
         if voice not in VOICES:
             raise ValueError(f"talk voice must be one of {', '.join(VOICES)}")
+        if transcriber not in TRANSCRIBERS:
+            raise ValueError(f"talk transcriber must be one of {', '.join(TRANSCRIBERS)}")
+        self.transcriber = transcriber
+        chosen = chat.store.setting("talk.voice")  # what the owner picked on a device outlives the config
+        if chosen in VOICES:
+            voice = chosen
         self.chat = chat  # ChatService: to-dos, the calendar, sending briefs, broadcasting
         self.voice = voice
         self.name = name
         self.active: dict[str, float] = {}  # conversation_id -> when it was last talked in
         self.memory: dict[str, list[dict]] = {}  # conversation_id -> recent exchanges, as text
         self._tasks: set[asyncio.Task] = set()
+        self._holds: dict[str, _Hold] = {}  # talk_id -> an early turn not yet committed
+        self._fillers: dict[str, list[str]] = {}  # voice -> FILLER as PCM chunks (base64), made once
         self._http = httpx.AsyncClient(base_url=OPENROUTER, transport=transport, timeout=httpx.Timeout(60, connect=5),
                                        headers={"Authorization": f"Bearer {api_key}", "User-Agent": "talaria-bridge",
                                                 "X-Title": "Talaria"})
@@ -130,7 +166,9 @@ class Talker:
     # requests
 
     async def turn(self, p: dict) -> dict:
-        """talk.turn {audio, format, conversation_id?} → {talk_id}; the answer streams as talk.* notifications."""
+        """talk.turn {audio, format, conversation_id?, early?} → {talk_id}; the answer streams as talk.* notifications.
+        An early turn is sent at the owner's first pause: it starts at once, but nothing is said, done or kept until
+        talk.commit (they really had finished), and talk.cancel (they went on talking) drops it."""
         audio, fmt = p.get("audio"), p.get("format", "wav")
         if not (isinstance(audio, str) and 0 < len(audio) <= MAX_AUDIO_B64):
             raise TalkError(m.INVALID_PARAMS, f"audio must be base64, at most {MAX_AUDIO_B64} characters")
@@ -140,23 +178,68 @@ class Talker:
         talk_id = "tk_" + secrets.token_hex(8)
         sound = {"type": "input_audio", "input_audio": {"data": audio, "format": fmt}}
         system = self._system(conv)  # before the owner's words are kept, which makes them the chat's last message
-        hearing = asyncio.create_task(self._heard(talk_id, conv, sound, int(time.time())))
+        hold = _Hold() if p.get("early") is True else None
+        if hold is not None:
+            self._holds[talk_id] = hold
+        hearing = asyncio.create_task(self._heard(talk_id, conv, sound, int(time.time()), hold))
         self._tasks.add(hearing)
         hearing.add_done_callback(self._tasks.discard)
-        self._spawn(self._run(talk_id, conv, {"role": "user", "content": [sound]}, tools=True, hearing=hearing,
-                              system=system))
+        run = self._spawn(self._run(talk_id, conv, {"role": "user", "content": [sound]}, tools=True, hearing=hearing,
+                                    system=system, hold=hold))
+        if hold is not None:
+            hold.tasks = [hearing, run]
+        if self.voice not in self._fillers:
+            self._spawn(self._make_filler(self.voice))
         return {"talk_id": talk_id}
 
+    async def commit(self, p: dict) -> dict:
+        """talk.commit {talk_id}: the owner had finished; the early turn goes ahead."""
+        hold = self._holds.get(p.get("talk_id"))
+        if hold is None:
+            raise TalkError(m.NOT_FOUND, "No early turn with that talk_id")
+        hold.committed.set()
+        while hold.queue:
+            await self.chat.broadcast(hold.queue.pop(0))
+        hold.open = True
+        return {}
+
+    def cancel(self, p: dict) -> dict:
+        """talk.cancel {talk_id}: the owner went on talking; drop the early turn (unknown ids are fine)."""
+        hold = self._holds.pop(p.get("talk_id"), None)
+        if hold is not None and not hold.committed.is_set():
+            for task in hold.tasks:
+                task.cancel()
+        return {}
+
     async def say(self, p: dict) -> dict:
-        """talk.say {text, conversation_id?} → {talk_id}: the talker says this line, as it is."""
-        text = p.get("text")
+        """talk.say {text?, conversation_id?, voice?} → {talk_id}: the talker says this line, as it is; in [voice]
+        if given (to hear a voice before picking it: then without text, a sample line)."""
+        voice = p.get("voice")
+        if voice is not None and voice not in VOICES:
+            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(VOICES)}")
+        text = SAMPLE if voice is not None and p.get("text") is None else p.get("text")
         if not (isinstance(text, str) and text.strip() and len(text) <= MAX_SAY):
             raise TalkError(m.INVALID_PARAMS, f"text must be 1 to {MAX_SAY} characters")
         conv = self._conv(p.get("conversation_id"))
         talk_id = "tk_" + secrets.token_hex(8)
         user = {"role": "user", "content": f"Say exactly this, word for word, and nothing else:\n{text.strip()}"}
-        self._spawn(self._run(talk_id, conv, user, tools=False, remember=False))
+        self._spawn(self._run(talk_id, conv, user, tools=False, remember=False, voice=voice))
         return {"talk_id": talk_id}
+
+    def voices(self) -> dict:
+        """talk.voices → {voice, voices: [{id, label}]}: the talker's voices, and the one it uses."""
+        return {"voice": self.voice, "voices": [{"id": v, "label": VOICE_LABELS[v]} for v in VOICES]}
+
+    def set_voice(self, p: dict) -> dict:
+        """talk.voice {voice} → {voice}: the talker speaks in this voice from now on, on every device."""
+        voice = p.get("voice")
+        if voice not in VOICES:
+            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(VOICES)}")
+        self.voice = voice
+        self.chat.store.set_setting("talk.voice", voice)
+        if voice not in self._fillers:
+            self._spawn(self._make_filler(voice))
+        return {"voice": voice}
 
     def end(self, p: dict) -> dict:
         """talk.end {conversation_id}: stop speaking the agent's replies in it."""
@@ -190,10 +273,26 @@ class Talker:
         self.active[value] = time.time()
         return value
 
-    def _spawn(self, coro) -> None:
+    def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
+
+    async def _out(self, hold: _Hold | None, msg: dict) -> None:
+        """Send a talk notification, or hold it while its early turn isn't committed."""
+        if hold is not None and not hold.open:
+            hold.queue.append(msg)
+        else:
+            await self.chat.broadcast(msg)
+
+    async def _go_ahead(self, hold: _Hold | None) -> None:
+        """Before anything that can't be taken back: wait for an early turn to be committed."""
+        if hold is not None:
+            try:
+                await asyncio.wait_for(hold.committed.wait(), HOLD_S)
+            except asyncio.TimeoutError:
+                raise _Dropped from None
 
     def _system(self, conv: str | None) -> dict:
         t = dt.datetime.now().astimezone()
@@ -205,16 +304,35 @@ class Talker:
         return {"role": "system", "content": SYSTEM.format(name=self.name, now=now, context=context)}
 
     async def _run(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool = True,
-                   unprompted: bool = False, hearing: asyncio.Task | None = None, system: dict | None = None) -> None:
+                   unprompted: bool = False, hearing: asyncio.Task | None = None, system: dict | None = None,
+                   voice: str | None = None, hold: _Hold | None = None) -> None:
+        try:
+            await self._talk(talk_id, conv, user, tools=tools, remember=remember, unprompted=unprompted,
+                             hearing=hearing, system=system, voice=voice or self.voice, hold=hold)
+        except _Dropped:
+            log.info("talk %s: early turn never committed, dropped", talk_id)
+            if hearing is not None:
+                hearing.cancel()
+        finally:
+            if hold is not None:
+                self._holds.pop(talk_id, None)
+
+    async def _talk(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool, unprompted: bool,
+                    hearing: asyncio.Task | None, system: dict | None, voice: str, hold: _Hold | None) -> None:
         messages = [system or self._system(conv), *self.memory.get(conv or "", []), user]
         said_all, error = [], None
         try:
             for _ in range(MAX_ROUNDS):
-                said, calls = await self._stream(talk_id, conv, messages, tools)
+                said, calls = await self._stream(talk_id, conv, messages, tools, voice, hold)
                 if said:
                     said_all.append(said)
                 if not calls:
                     break
+                if not said:  # going quiet to use a tool: say so
+                    for i, chunk in enumerate(self._fillers.get(voice, [])):
+                        await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": i, "data": chunk,
+                                                                            **({"conversation_id": conv} if conv else {})}))
+                await self._go_ahead(hold)
                 if hearing is not None and any(c["function"]["name"] == "ask_hermes" for c in calls):
                     conv = (await hearing)[0]  # the owner's words go in the chat before the brief
                 messages.append({"role": "assistant", "content": said or None, "tool_calls": calls})
@@ -223,9 +341,12 @@ class Talker:
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
         except TalkError as exc:
             error = exc.message
+        except _Dropped:
+            raise
         except Exception as exc:  # noqa: BLE001 (tell the device, whatever it was)
             log.exception("talk %s failed", talk_id)
             error = f"Talk failed: {type(exc).__name__}"
+        await self._go_ahead(hold)
         said = " ".join(said_all).strip()
         heard = None
         if hearing is not None:
@@ -247,11 +368,60 @@ class Talker:
             done["unprompted"] = True
         if error:
             done["error"] = error
-        await self.chat.broadcast(m.notification("talk.done", done))
+        await self._out(hold, m.notification("talk.done", done))
 
-    async def _heard(self, talk_id: str, conv: str | None, sound: dict, at: int) -> tuple[str | None, str]:
+    async def _heard(self, talk_id: str, conv: str | None, sound: dict, at: int,
+                     hold: _Hold | None = None) -> tuple[str | None, str]:
         """Write down what the owner said and keep it in the chat (starting one if needed): (conversation, words).
         Never raises: without the words, Talk carries on."""
+        words = await self._whisper(sound) if self.transcriber == "whisper" else None
+        if words is None:
+            words = await self._listen(sound)
+        words = words.strip('"“” ')[:MAX_KEPT - 2]
+        if hold is not None:
+            await hold.committed.wait()  # an early turn keeps nothing until it's committed (or is cancelled)
+        try:
+            if conv is None:
+                conv = await self._new_chat(words or "Talk")
+            if conv is not None and words:
+                await self._keep(conv, "user", "🎙 " + words, at)
+                await self.chat.broadcast(m.notification("talk.heard", {"talk_id": talk_id, "text": words,
+                                                                        "conversation_id": conv}))
+        except Exception:  # noqa: BLE001 (keeping it is a nicety; Talk goes on)
+            log.exception("talk %s: couldn't keep what was said", talk_id)
+        return conv, words
+
+    async def _whisper(self, sound: dict) -> str | None:
+        """Whisper's words, or None if it couldn't (the talker model writes them down instead)."""
+        people = ", ".join(self._people())
+        people = f" Names: {people}." if people else ""
+        try:
+            resp = await self._http.post("/audio/transcriptions", timeout=httpx.Timeout(20, connect=5), json={
+                "model": WHISPER_MODEL, "input_audio": sound["input_audio"],
+                "prompt": HINT.format(name=self.name, people=people)})
+            if resp.status_code == 200:
+                return str(resp.json().get("text") or "").strip()
+            log.warning("whisper couldn't write down the words (%s): %s", resp.status_code, resp.text[:200])
+        except (httpx.HTTPError, ValueError, AttributeError) as exc:
+            log.warning("whisper couldn't write down the words: %s", type(exc).__name__)
+        return None
+
+    def _people(self) -> list[str]:
+        """Capitalised words from the open to-dos (names, mostly), so Whisper spells them as the owner does."""
+        if self.chat.todos is None:
+            return []
+        seen: list[str] = []
+        for t in self.chat.todos.list():
+            if t["done"]:
+                continue
+            for w in t["text"].split()[1:]:
+                w = w.strip(".,;:!?'\"()")
+                if len(w) > 2 and w[0].isupper() and w not in seen:
+                    seen.append(w)
+        return seen[:12]
+
+    async def _listen(self, sound: dict) -> str:
+        """The talker model's words for what was said ("" if it couldn't)."""
         words = ""
         try:
             resp = await self._http.post("/chat/completions", timeout=httpx.Timeout(30, connect=5), json={
@@ -264,17 +434,7 @@ class Talker:
                 log.warning("talker couldn't write down the words (%s)", resp.status_code)
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
             log.warning("talker couldn't write down the words: %s", type(exc).__name__)
-        words = words.strip('"“” ')[:MAX_KEPT - 2]
-        try:
-            if conv is None:
-                conv = await self._new_chat(words or "Talk")
-            if conv is not None and words:
-                await self._keep(conv, "user", "🎙 " + words, at)
-                await self.chat.broadcast(m.notification("talk.heard", {"talk_id": talk_id, "text": words,
-                                                                        "conversation_id": conv}))
-        except Exception:  # noqa: BLE001 (keeping it is a nicety; Talk goes on)
-            log.exception("talk %s: couldn't keep what was said", talk_id)
-        return conv, words
+        return words
 
     async def _new_chat(self, words: str) -> str | None:
         agent = self.chat.default_agent
@@ -292,10 +452,33 @@ class Talker:
         self.chat.store.touch(conv, role, text, max(at, int(time.time())))
         await self.chat.broadcast(m.notification("chat.talk", {"conversation_id": conv, "message": message}))
 
-    async def _stream(self, talk_id: str, conv: str | None, messages: list[dict], tools: bool) -> tuple[str, list[dict]]:
+    async def _make_filler(self, voice: str) -> None:
+        """Record FILLER in [voice] once, for when the talker goes quiet to use a tool."""
+        body = {"model": TALKER_MODEL, "stream": True, "modalities": ["text", "audio"],
+                "audio": {"voice": voice, "format": "pcm16"},
+                "messages": [{"role": "user", "content": f"Say exactly this, casually, and nothing else: {FILLER}"}]}
+        chunks: list[str] = []
+        try:
+            async with self._http.stream("POST", "/chat/completions", json=body) as resp:
+                if resp.status_code != 200:
+                    return
+                async for line in resp.aiter_lines():
+                    if line.startswith("data:") and line.strip() != "data: [DONE]":
+                        with contextlib.suppress(ValueError, AttributeError):
+                            for choice in json.loads(line[5:]).get("choices") or []:
+                                data = ((choice.get("delta") or {}).get("audio") or {}).get("data")
+                                if data:
+                                    chunks.append(data)
+        except httpx.HTTPError:
+            return
+        if chunks:
+            self._fillers[voice] = chunks
+
+    async def _stream(self, talk_id: str, conv: str | None, messages: list[dict], tools: bool,
+                      voice: str, hold: _Hold | None = None) -> tuple[str, list[dict]]:
         """One model call: its audio and words go to the devices as they come; returns what it said and its tool calls."""
         body = {"model": TALKER_MODEL, "stream": True, "modalities": ["text", "audio"],
-                "audio": {"voice": self.voice, "format": "pcm16"}, "messages": messages}
+                "audio": {"voice": voice, "format": "pcm16"}, "messages": messages}
         if tools:
             body["tools"] = TOOLS
         said, calls, seq = "", {}, 0
@@ -317,12 +500,12 @@ class Talker:
                         delta = choice.get("delta") or {}
                         audio = delta.get("audio") or {}
                         if audio.get("data"):
-                            await self.chat.broadcast(m.notification("talk.audio", {"talk_id": talk_id, "seq": seq,
+                            await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": seq,
                                                                                     "data": audio["data"], **where}))
                             seq += 1
                         if audio.get("transcript"):
                             said += audio["transcript"]
-                            await self.chat.broadcast(m.notification("talk.text", {"talk_id": talk_id,
+                            await self._out(hold, m.notification("talk.text", {"talk_id": talk_id,
                                                                                    "text": audio["transcript"], **where}))
                         for tc in delta.get("tool_calls") or []:
                             entry = calls.setdefault(tc.get("index", 0), {"id": "", "type": "function",
@@ -429,4 +612,4 @@ class Talker:
         return f"Sent to {self.name}; it's working on it and its reply will be spoken when it comes.", conv
 
 
-TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end"})
+TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end", "talk.voices", "talk.voice", "talk.commit", "talk.cancel"})

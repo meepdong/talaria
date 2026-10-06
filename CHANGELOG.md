@@ -4,6 +4,22 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk answers sooner: at your first short pause it starts working on the answer, and if you keep talking it drops
+  that and listens on. Nothing is said, done or saved until you've really finished.
+- While the voice goes quiet to do something (add a to-do, check your agenda, brief Hermes), it says "Mm-hm, one sec."
+- Talk voice: pick the voice in the chat's ⋮ menu (13 voices, including the newer, more natural Marin and Cedar),
+  hearing each one first. The pick applies on every device.
+- Server page: Hermes's skills as switches. Turning one off makes replies quicker and cheaper; a change restarts
+  Hermes after you approve it.
+- "Tidying up this long chat…" shows when Hermes is likely compressing a long chat before it answers.
+
+### Changed
+- What you say in Talk is written down by Whisper Large v3 Turbo (a seventh of the cost, about as fast, spells names
+  from your to-dos), falling back to the voice model if Whisper isn't available.
+
 ## [0.2.0-beta.17] - 2026-10-06
 
 ### Added

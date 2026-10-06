@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/talk.voices.result.schema.json",
+  "title": "talk.voices.result",
+  "description": "Result of talk.voices.",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "voice": {
+          "enum": [
+            "shimmer",
+            "marin",
+            "cedar",
+            "coral",
+            "sage",
+            "alloy",
+            "ballad",
+            "verse",
+            "ash",
+            "echo",
+            "fable",
+            "nova",
+            "onyx"
+          ]
+        },
+        "voices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "enum": [
+                  "shimmer",
+                  "marin",
+                  "cedar",
+                  "coral",
+                  "sage",
+                  "alloy",
+                  "ballad",
+                  "verse",
+                  "ash",
+                  "echo",
+                  "fable",
+                  "nova",
+                  "onyx"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ]
+          }
+        }
+      },
+      "required": [
+        "voice",
+        "voices"
+      ]
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ]
+}

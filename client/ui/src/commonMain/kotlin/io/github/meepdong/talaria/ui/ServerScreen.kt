@@ -25,6 +25,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -119,6 +120,29 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
                         }
                         TextButton(onClick = { actions.serverRun("docker.restart", mapOf("container" to c.name)) },
                             modifier = Modifier.testTag("restart-container-${c.name}")) { Text("Restart") }
+                    }
+                }
+            }
+        }
+
+        if (view.hasSkills) {
+            Section("Hermes's skills in Talaria") {
+                Text(view.skillsSummary.ifEmpty { "…" } + ". Fewer skills make each reply quicker and cheaper; a change restarts Hermes.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("skills-summary"))
+                view.skills.forEachIndexed { i, k ->
+                    if (i > 0) HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(k.name)
+                            if (k.description.isNotEmpty()) {
+                                Text(k.description, style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Switch(checked = k.enabled, modifier = Modifier.testTag("skill-${k.name}"), onCheckedChange = { on ->
+                            actions.serverRun("hermes.skill.set", mapOf("skill" to k.name, "enabled" to if (on) "on" else "off"))
+                        })
                     }
                 }
             }

@@ -47,7 +47,13 @@ class TalkerSessionTest {
         val turns = mutableListOf<Pair<String, String?>>()
         val ended = mutableListOf<String>()
         var next = 1
-        override suspend fun turn(wav: ByteArray, conversationId: String?) = "t${next++}".also { turns += String(wav) to conversationId }
+        val early = mutableListOf<String>()
+        val committed = mutableListOf<String>()
+        val cancelled = mutableListOf<String>()
+        override suspend fun turn(wav: ByteArray, conversationId: String?, early: Boolean) =
+            "t${next++}".also { if (early) this.early += String(wav) else turns += String(wav) to conversationId }
+        override suspend fun commit(talkId: String) = true.also { committed += talkId }
+        override suspend fun cancel(talkId: String) { cancelled += talkId }
         override suspend fun say(text: String, conversationId: String?) = "s${next++}"
         override suspend fun end(conversationId: String) { ended += conversationId }
     }
@@ -119,6 +125,24 @@ class TalkerSessionTest {
         wait = TalkWait.QUICK
         speaker.drained()
         assertEquals(500, mic.quietMs, "a change applies to the next turn")
+        s.end()
+    }
+
+    @Test
+    fun itAnswersAtTheFirstPauseUnlessTheyGoOn() = runBlocking {
+        val mic = Mic(); val speaker = Speaker(); val talker = Talker()
+        val s = session(mic, speaker, talker, mutableListOf(), mutableListOf(), mutableListOf(), IntArray(1))
+        s.start("c-1")
+        mic.listener!!.paused("add milk".toByteArray())
+        assertEquals(listOf("add milk"), talker.early, "sent at the first pause")
+        mic.listener!!.resumed()
+        assertEquals(listOf("t1"), talker.cancelled, "they went on: dropped")
+        mic.listener!!.paused("add milk and bread".toByteArray())
+        mic.listener!!.done("add milk and bread...".toByteArray())
+        assertEquals(listOf("t2"), talker.committed, "the wait passed in silence: it goes ahead")
+        assertTrue(talker.turns.isEmpty(), "and isn't sent again")
+        talker.events.emit(TalkEvent.Audio("t2", "c-1", 1, "answer".toByteArray()))
+        assertEquals(listOf("answer"), speaker.played)
         s.end()
     }
 

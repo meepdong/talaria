@@ -69,8 +69,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Runs [pair] for the controller; tests swap in a fake. */
 fun interface Pairer {
@@ -213,7 +215,10 @@ class TalariaController(
         if (!m.voice.talkerAvailable) return false
         val api = object : TalkerApi {
             override val events = m.voice.talkEvents
-            override suspend fun turn(wav: ByteArray, conversationId: String?) = m.voice.talkTurn(wav, conversationId)
+            override suspend fun turn(wav: ByteArray, conversationId: String?, early: Boolean) =
+                m.voice.talkTurn(wav, conversationId, early)
+            override suspend fun commit(talkId: String) = m.voice.talkCommit(talkId)
+            override suspend fun cancel(talkId: String) = m.voice.talkCancel(talkId)
             override suspend fun say(text: String, conversationId: String?) = m.voice.talkSay(text, conversationId)
             override suspend fun end(conversationId: String) = m.voice.talkEnd(conversationId)
         }
@@ -1282,6 +1287,36 @@ class TalariaController(
         voice.update { it.copy(autoSend = on) }
     }
 
+    override fun loadTalkVoices() {
+        val m = mode.value as? Mode.Connected ?: return
+        scope.launch {
+            val (voices, current) = m.voice.talkVoices() ?: return@launch
+            voice.update { it.copy(talkVoices = voices, talkVoice = current) }
+        }
+    }
+
+    /** Hear [id] say a sample line (not while Talk is on: it has the speaker). */
+    override fun previewTalkVoice(id: String) {
+        val m = mode.value as? Mode.Connected ?: return
+        val player = pcmPlayer ?: return
+        if (talker != null) return
+        scope.launch {
+            player.stop()
+            val talkId = m.voice.talkSay(null, null, voice = id) ?: return@launch
+            voice.update { it.copy(previewing = id) }
+            withTimeoutOrNull(PREVIEW_MS) {
+                m.voice.talkEvents.takeWhile { it !is VoiceApi.TalkEvent.Done || it.talkId != talkId }
+                    .collect { e -> if (e is VoiceApi.TalkEvent.Audio && e.talkId == talkId) player.write(e.pcm) }
+            }
+            player.finish { voice.update { if (it.previewing == id) it.copy(previewing = null) else it } }
+        }
+    }
+
+    override fun setTalkVoice(id: String) {
+        val m = mode.value as? Mode.Connected ?: return
+        scope.launch { if (m.voice.talkSetVoice(id)) voice.update { it.copy(talkVoice = id) } }
+    }
+
     override fun setTalkWait(wait: TalkWait) {
         prefs.setString(PREF_TALK_WAIT, wait.name)
         voice.update { it.copy(talkWait = wait) }
@@ -1555,6 +1590,7 @@ class TalariaController(
         const val PREF_READ_ALOUD = "voice.read_aloud"
         const val PREF_AUTO_SEND = "voice.auto_send"
         const val PREF_TALK_WAIT = "voice.talk_wait"
+        const val PREVIEW_MS = 15_000L
         /** Home's tile order on this device, as "DAY,NEXT,…" (see [homeOrder]). */
         const val PREF_HOME_ORDER = "home.order"
         /** The chat last open on this device, for Chat with Hermes and Talk. */
