@@ -202,8 +202,22 @@ class TalariaController(
         if (voice.value.talk == null) talk()
     }
 
+    @Volatile private var audioPlayer: AudioPlayer? = null
+
+    /** The "your turn" tone, before the mic opens again; nothing where the app can't play audio. */
+    private suspend fun listenCue() {
+        val player = audioPlayer ?: return
+        kotlinx.coroutines.withTimeoutOrNull(2_000) {
+            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+                player.play(LISTEN_CUE) { if (cont.isActive) cont.resume(Unit) {} }
+                cont.invokeOnCancellation { player.stop() }
+            }
+        }
+    }
+
     /** The platform's audio player, for Talk's natural voice; without one Talk uses the device's own voice. */
     fun setAudioPlayer(player: AudioPlayer?) {
+        audioPlayer = player
         talkVoice = player?.let {
             // no fallback to the device's own voice: the owner would rather miss a piece than hear it robotic
             CloudSpeech(scope, fetch = { text -> (mode.value as? Mode.Connected)?.voice?.speech(text) }, player = it,
@@ -617,7 +631,11 @@ class TalariaController(
         val out = talkVoice ?: speechOutput ?: return endTalk()  // nothing to speak with: one message, as dictation
         voice.update { it.copy(talk = TalkPhase.THINKING) }
         val loop = TalkLoop(out, onSpeak = { voice.update { if (it.talk != null) it.copy(talk = TalkPhase.SPEAKING) else it } }) {
-            scope.launch { if (talkOn) listenForTalk() }
+            scope.launch {
+                if (!talkOn) return@launch
+                listenCue()  // Hermes is done: your turn
+                if (talkOn) listenForTalk()
+            }
         }
         talkLoop = loop
         talkFollow?.cancel()
@@ -650,7 +668,10 @@ class TalariaController(
                             loop.note(LOCKED_APPROVAL_LINE)
                         } else {
                             loop.note(approvalLine(m.approval?.description ?: m.approval?.command)) {
-                                if (turn != null && !isLocked()) scope.launch { listenForApproval(turn, loop) }
+                                if (turn != null && !isLocked()) scope.launch {
+                                    listenCue()
+                                    listenForApproval(turn, loop)
+                                }
                             }
                         }
                     }

@@ -13,6 +13,7 @@ release notes the app shows.
   press on the power button, the assistant gesture or a headset's voice button starts Talk in the last chat, also
   on the lock screen, where only the Talk panel shows (Unlock for the chats).
 - An approval while the phone is locked waits: Talk says to unlock and approve, and carries on after.
+- A short two-note tone when Talk opens the mic again, so you know it's your turn.
 
 ## [0.2.0-beta.13] - 2026-10-06
 

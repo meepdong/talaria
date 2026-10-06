@@ -104,3 +104,29 @@ class CloudSpeech(
         private const val MAX_FETCHED = 8
     }
 }
+
+/**
+ * The "your turn" tone (Talk 2): two short rising notes, played when Talk opens the mic again after Hermes has
+ * spoken. Made here as a WAV (24 kHz, 16-bit mono), so it needs nothing from the network.
+ */
+val LISTEN_CUE: ByteArray by lazy {
+    val rate = 24_000
+    val notes = listOf(660.0 to 0.09, 990.0 to 0.14)
+    val samples = ArrayList<Short>()
+    for ((hz, seconds) in notes) {
+        val n = (rate * seconds).toInt()
+        for (i in 0 until n) {
+            val t = i.toDouble() / rate
+            val envelope = minOf(1.0, i / (rate * 0.01), (n - i) / (rate * 0.03))  // soft start and end, no clicks
+            samples += (kotlin.math.sin(2 * Math.PI * hz * t) * envelope * 0.28 * Short.MAX_VALUE).toInt().toShort()
+        }
+    }
+    val pcm = java.nio.ByteBuffer.allocate(samples.size * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    samples.forEach { pcm.putShort(it) }
+    val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+        put("RIFF".toByteArray()); putInt(36 + pcm.capacity()); put("WAVEfmt ".toByteArray())
+        putInt(16); putShort(1); putShort(1); putInt(rate); putInt(rate * 2); putShort(2); putShort(16)
+        put("data".toByteArray()); putInt(pcm.capacity())
+    }
+    header.array() + pcm.array()
+}

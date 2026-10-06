@@ -150,4 +150,13 @@ class CloudSpeechTest {
         for (u in listOf("", "what is it", "yes no", "no, yes")) assertEquals(null, TalariaController.approvalAnswer(u), u)
         assertEquals("I need your okay for this. Say yes to allow it once, or no.", TalariaController.approvalLine(null))
     }
+
+    @Test
+    fun theYourTurnToneIsAShortWav() {
+        val wav = LISTEN_CUE
+        assertEquals("RIFF", String(wav, 0, 4))
+        assertEquals("WAVE", String(wav, 8, 4))
+        val seconds = (wav.size - 44) / 2.0 / 24_000
+        assertTrue(seconds in 0.2..0.3, "about a quarter of a second, was $seconds")
+    }
 }
