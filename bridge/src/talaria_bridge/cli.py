@@ -142,11 +142,14 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     talk_agent = next((a for a in agents if a.voice_key_file and a.id in clients), None)
     if talk_agent is not None and voice is not None:
         try:
-            chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)), chat, name=talk_agent.name,
+            chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)), chat,
+                                 name=talk_agent.talk_name or talk_agent.name, worker=talk_agent.name,
+                                 persona=talk_agent.talk_persona or "",
                                  voice=talk_agent.talk_voice or VOICES[0],
                                  transcriber=talk_agent.talk_transcriber or TRANSCRIBERS[0])
         except (OSError, ValueError) as exc:
             print(f"WARNING: no Talk 3 talker: {exc}", file=sys.stderr)
+    chat.agent_names = {a.id: a.name for a in agents}
     chat.hermes_watch = HermesWatch(clients, chat.automations, home / "hermes-check.json")
     return chat
 

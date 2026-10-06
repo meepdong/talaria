@@ -9,6 +9,9 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
@@ -178,6 +181,62 @@ class ChatScreensTest {
         onNodeWithTag("bots").assertDoesNotExist()
         onNodeWithTag("composer").performTextInput("@sc")
         onNodeWithTag("mentions").assertDoesNotExist()
+    }
+
+    private fun jobState(reply: MessageState, approval: Boolean = false) = state().copy(threads = mapOf("c-1" to ConversationThread(
+        messages = listOf(
+            ChatMessage("t:1", Role.USER, "🎙 Read me the invoice", 1_700_000_000_000),
+            ChatMessage("user:t-5", Role.USER, "Read the invoice and tell me the total.", 1_700_000_001_000, turnId = "t-5", worker = "Hermes"),
+            ChatMessage("reply:t-5", Role.ASSISTANT, if (reply == MessageState.DONE) "Total 42,300 rupees, due 15 Oct." else "", null, reply,
+                turnId = "t-5", worker = "Hermes", waitingForApproval = approval,
+                approval = if (approval) PendingApproval(listOf("once", "deny"), "pdftotext invoice.pdf", null) else null),
+            ChatMessage("t:2", Role.ASSISTANT, "It's forty-two thousand three hundred, due the fifteenth.", 1_700_000_002_000),
+        ), loaded = true)))
+
+    @Test
+    fun aJobIsOneCardBetweenTheSpokenMessages() {
+        val v = view(jobState(MessageState.DONE))
+        assertEquals(listOf("t:1", "user:t-5", "t:2"), v.messages.map { it.key })
+        val job = v.messages[1]
+        assertEquals("Hermes", job.worker)
+        assertEquals("Total 42,300 rupees, due 15 Oct.", job.report?.text)
+        // a report whose order is on an older page still shows as a card
+        val alone = foldJobs(listOf(MessageItem("r", false, "done", null, ItemState.DONE, worker = "Hermes")))
+        assertEquals(listOf("r"), alone.map { it.key })
+        assertNull(alone.single().report)
+    }
+
+    @Test
+    fun theJobCardOpensAndShowsApprovalsWhileFolded() = runComposeUiTest {
+        val actions = Recorder()
+        var s by mutableStateOf(jobState(MessageState.STREAMING, approval = true))
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) { ChatHome(view(s), actions) }
+        }
+        onNode(hasText("🔧 Hermes · needs you") and hasAnyAncestor(hasTestTag("job-user:t-5"))).assertExists()
+        onNodeWithText("Allow once").performClick()
+        assertEquals("approve t-5 once", actions.calls.last())
+        s = jobState(MessageState.DONE)
+        waitForIdle()
+        onNode(hasText("🔧 Hermes · done") and hasAnyAncestor(hasTestTag("job-user:t-5"))).assertExists()
+        onNodeWithTag("job-report", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("job-user:t-5").performClick()
+        onNodeWithTag("job-brief", useUnmergedTree = true).assertTextContains("Read the invoice and tell me the total.")
+        onNodeWithTag("job-report", useUnmergedTree = true).assertExists()
+        onNodeWithText("It's forty-two thousand three hundred, due the fifteenth.").assertExists()
+    }
+
+    @Test
+    fun aBotsRepliesCarryItsName() = runComposeUiTest {
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 800.dp)) {
+                ChatHome(view(withBots(state(), openBot = true).let { st ->
+                    st.copy(threads = st.threads + ("c-bot" to ConversationThread(messages = listOf(
+                        ChatMessage("h:9", Role.ASSISTANT, "Found three cafes", 1_700_000_000_000)), loaded = true)))
+                }), Recorder())
+            }
+        }
+        onNode(hasText("Scout") and hasAnyAncestor(hasTestTag("reply-h:9"))).assertExists()
     }
 
     @Test

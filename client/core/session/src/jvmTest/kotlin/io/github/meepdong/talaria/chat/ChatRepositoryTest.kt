@@ -119,6 +119,25 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun aJobFromTalkCarriesItsWorker() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Talk","created_at":1,"updated_at":2}]}""") }
+        api.answers["chat.history"] = { json("""{"messages":[{"id":"7","role":"user","text":"Find flights","ts":1,"worker":"Hermes"},
+            {"id":"8","role":"assistant","text":"Two flights","ts":2,"worker":"Hermes"}],"next_before":null}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.open("c-1")
+        advanceUntilIdle()
+        assertEquals(listOf("Hermes", "Hermes"), repo.state.value.openMessages.map { it.worker })
+        api.push("chat.started", """{"conversation_id":"c-1","turn_id":"t-2","agent_id":"hermes","title":"Talk","user_text":"Book the 6 pm one","started_at":3,"worker":"Hermes"}""")
+        advanceUntilIdle()
+        val live = repo.state.value.openMessages.filter { it.turnId == "t-2" }
+        assertEquals(listOf(Role.USER to "Hermes", Role.ASSISTANT to "Hermes"), live.map { it.role to it.worker })
+    }
+
+    @Test
     fun hidingMessagesAndPinning() = chatTest { scope ->
         val api = FakeApi()
         api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }

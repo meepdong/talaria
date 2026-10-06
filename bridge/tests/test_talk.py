@@ -229,8 +229,8 @@ async def test_ticking_off_by_name_and_briefing_the_agent(tmp_path: Path):
     sent.clear()
     briefs: list[dict] = []
 
-    async def send(p):
-        briefs.append(p)
+    async def send(p, **kw):
+        briefs.append((p, kw))
         return {"conversation_id": "c-1", "turn_id": "t-9"}, None
 
     chat.send = send
@@ -240,7 +240,11 @@ async def test_ticking_off_by_name_and_briefing_the_agent(tmp_path: Path):
     await done(sent)
     order = [x["method"] for x in sent if x["method"] in ("chat.talk", "talk.done")]
     assert order == ["chat.talk", "chat.talk", "talk.done"]
-    assert briefs == [{"text": "🎙 From Talk: Add 'Dentist' to the calendar for Fri 9 Oct 17:00 IST.", "conversation_id": "c-1"}]
+    (params, kw), = briefs
+    assert params == {"text": "Add 'Dentist' to the calendar for Fri 9 Oct 17:00 IST.", "conversation_id": "c-1"}
+    assert kw["worker"] == "Hermes" and kw["order"].startswith("🎙 Work order from Hermes")
+    assert kw["order"].endswith("---\nAdd 'Dentist' to the calendar for Fri 9 Oct 17:00 IST.")
+    assert "t-9" in chat.talker.work
     await chat.close()
 
 
@@ -341,8 +345,8 @@ async def test_talk_asks_a_bot_and_says_its_reply_where_talk_is(tmp_path: Path):
     chat, fake, sent = setup(tmp_path)
     asked: list[dict] = []
 
-    async def send(p):
-        asked.append(p)
+    async def send(p, **kw):
+        asked.append((p, kw["worker"]))
         return {"conversation_id": "c-bot", "turn_id": "t-b"}, None
 
     chat.send = send
@@ -360,20 +364,22 @@ async def test_talk_asks_a_bot_and_says_its_reply_where_talk_is(tmp_path: Path):
     body = fake.bodies[-2]
     assert "ask_bot" in [t["function"]["name"] for t in body["tools"]]
     assert "Scout (Finds things)" in body["messages"][0]["content"]
-    assert asked == [{"agent_id": "bot:scout", "text": "🎙 From Talk: Find a quiet cafe near Indiranagar"}]
+    assert asked == [({"agent_id": "bot:scout", "text": "Find a quiet cafe near Indiranagar"}, "Scout")]
     tool_result = [x for x in fake.bodies[-1]["messages"] if x["role"] == "tool"][0]["content"]
-    assert tool_result.startswith("Sent to Scout")
+    assert tool_result.startswith("Gave Scout the job")
 
     sent.clear()
     fake.replies += [voice_says("Scout found Dyu Art Cafe on twelfth main.")]
-    chat.talker.on_reply("c-bot", "Dyu Art Cafe, 12th Main, quiet in the mornings.", "completed")
+    chat.talker.on_reply("c-bot", "Dyu Art Cafe, 12th Main, quiet in the mornings.", "completed", "t-b")
     end = await done(sent)
     assert end["unprompted"] is True and "Dyu Art Cafe" in end["text"]
-    assert "The bot Scout finished" in fake.bodies[-1]["messages"][-1]["content"]
+    assert "Report from your worker Scout, finished" in fake.bodies[-1]["messages"][-1]["content"]
     assert {x["params"].get("conversation_id") for x in sent if x["method"] in ("chat.talk", "talk.done")} == {"c-1"}
-    chat.talker.on_reply("c-bot", "again", "completed")  # answered once: not said twice
+    kept = [x["params"]["message"] for x in sent if x["method"] == "chat.talk"]
+    assert [(k["role"], k["text"]) for k in kept] == [("assistant", "Scout found Dyu Art Cafe on twelfth main.")]
+    chat.talker.on_reply("c-bot", "again", "completed", "t-b")  # answered once: not said twice
     await asyncio.sleep(0.05)
-    assert len(fake.replies) == 0 and len([b for b in fake.bodies if "Scout finished" in str(b["messages"][-1])]) == 1
+    assert len(fake.replies) == 0 and len([b for b in fake.bodies if "worker Scout" in str(b["messages"][-1])]) == 1
 
     sent.clear()
     fake.replies += [calls(("ask_bot", {"bot": "nobody", "message": "hi"})), voice_says("There's no bot called nobody.")]
@@ -381,4 +387,95 @@ async def test_talk_asks_a_bot_and_says_its_reply_where_talk_is(tmp_path: Path):
     await done(sent)
     result = [x for x in fake.bodies[-1]["messages"] if x["role"] == "tool"][-1]["content"]
     assert result.startswith("Error: no bot called 'nobody'") and "Scout" in result
+    await chat.close()
+
+
+async def test_tally_leads_gives_hermes_a_work_order_with_files_and_retells_the_report(tmp_path: Path):
+    """End to end with a fake Hermes: the talker is Tally, the agent is her worker, the files go by name."""
+    from talaria_bridge.chat import ChatService, ChatStore
+    from talaria_bridge.hermes import HermesClient
+    from talaria_bridge.workorders import WORK_ORDER
+    from test_chat import KEY, FakeHermes
+
+    hermes = FakeHermes()
+    hermes.final = "Read the PDF: the invoice total is 42,300 rupees, due 15 October."
+    sent: list[dict] = []
+
+    async def broadcast(msg):
+        sent.append(msg)
+
+    inbox = tmp_path / "inbox"
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), {"hermes": HermesClient("http://hermes.test", KEY, transport=hermes.transport())},
+                       broadcast, inboxes={"hermes": inbox})
+    chat.agent_names = {"hermes": "Hermes"}
+    await hermes_session(chat)
+    (inbox / "c-1").mkdir(parents=True)
+    (inbox / "c-1" / "b1-invoice.pdf").write_bytes(b"%PDF-1.7 " + b"x" * 2000)
+    (inbox / "c-1" / "b2-dog.jpg").write_bytes(b"\xff\xd8" + b"x" * 500)
+    fake = FakeOpenRouter(calls(("ask_hermes", {"brief": "Read the invoice and tell me the total and due date.",
+                                               "files": ["invoice.pdf"]})),
+                          voice_says("I've given Hermes the invoice; I'll tell you the total."),
+                          voice_says("The total's forty-two thousand three hundred rupees, due the fifteenth."))
+    chat.talker = Talker("sk", chat, name="Tally", worker="Hermes", persona="Sharp, warm, a little witty.",
+                         transport=httpx.MockTransport(fake))
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    system = fake.bodies[0]["messages"][0]["content"]
+    assert system.startswith("You are Tally, the owner's personal assistant") and "Sharp, warm, a little witty." in system
+    assert "Hermes: the full agent" in system and "invoice.pdf (PDF, 2 KB)" in system and "dog.jpg (picture" in system
+    assert {"check_work", "add_to_work", "stop_work", "ask_hermes"} <= {t["function"]["name"] for t in fake.bodies[0]["tools"]}
+
+    for _ in range(300):  # the job runs, the report comes back to Tally, she says it and it's kept
+        if any(x["method"] == "chat.talk" and "forty-two" in x["params"]["message"]["text"] for x in sent):
+            break
+        await asyncio.sleep(0.01)
+    order = hermes.messages[-1]
+    assert order.startswith(WORK_ORDER + "Tally") and "---\nRead the invoice and tell me the total and due date." in order
+    assert f"Attached file: {inbox / 'c-1' / 'b1-invoice.pdf'} (application/pdf, 2009 bytes)" in order
+    started = [x["params"] for x in sent if x["method"] == "chat.started"][-1]
+    check("chat.started", m.notification("chat.started", started))
+    assert started["worker"] == "Hermes" and started["user_text"] == "Read the invoice and tell me the total and due date."
+    report = [b for b in fake.bodies if "Report from your worker Hermes" in str(b["messages"][-1]["content"])]
+    assert report and "42,300 rupees" in report[0]["messages"][-1]["content"]
+    assert chat.talker.work == {}
+
+    history = check("chat.history.result", m.result("1", await chat.history({"conversation_id": "c-1"})))["result"]["messages"]
+    agent_rows = [x for x in history if not x["id"].startswith("t-")]
+    assert [(x["role"], x.get("worker")) for x in agent_rows] == [("user", "Hermes"), ("assistant", "Hermes")]
+    assert agent_rows[0]["text"].startswith("Read the invoice")  # the brief, not the instructions
+    kept = [x for x in history if x["id"].startswith("t-") and x["role"] == "assistant"]
+    assert kept and "forty-two" in kept[-1]["text"]
+    await chat.close()
+
+
+async def hermes_session(chat):
+    """A Talk conversation c-1 on the fake Hermes."""
+    from talaria_bridge.chat import Conversation
+    await chat.agents["hermes"].create_session("talaria_1", "Plans")
+    chat.store.add(Conversation("c-1", "hermes", "talaria_1", "Plans", 1, 2))
+
+
+async def test_check_add_to_and_stop_work(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path)
+    steered, cancelled = [], []
+
+    async def steer(p):
+        steered.append(p)
+        return {}
+
+    async def cancel(p):
+        cancelled.append(p)
+        return {}
+
+    chat.steer, chat.cancel = steer, cancel
+    chat.talker.work = {"t-1": {"worker": "Hermes", "conv": "c-1", "talk": "c-1", "brief": "Find flights to Goa", "at": 0},
+                        "t-2": {"worker": "Research", "conv": "c-r", "talk": "c-1", "brief": "Compare hotels", "at": 1}}
+    status = json.loads(chat.talker._check_work("c-1"))["running"]
+    assert [s["worker"] for s in status] == ["Research", "Hermes"]
+    assert await chat.talker._add_to_work({"text": "only after 6 pm", "worker": "hermes"}, "c-1") == "Added to Hermes's job."
+    assert steered == [{"turn_id": "t-1", "text": "From Hermes: only after 6 pm"}]
+    assert await chat.talker._stop_work({}, "c-1") == "Stopped Research's job."
+    assert cancelled == [{"turn_id": "t-2"}]
+    assert (await chat.talker._add_to_work({"text": "x"}, "c-other")).startswith("Error: no job")
+    assert json.loads(chat.talker._check_work("c-other")) == {"running": [], "note": "No jobs are running."}
     await chat.close()

@@ -153,6 +153,8 @@ data class ChatMessage(
     val attachments: List<Attachment> = emptyList(),
     /** 0..1 while this message's files upload. */
     val progress: Float? = null,
+    /** A job the Talk voice gave a worker (its order and the worker's report): the worker's name (§9). */
+    val worker: String? = null,
 )
 
 /** An approval a running reply waits for (§9): answer it with one of [choices] through [ChatRepository.approve]. */

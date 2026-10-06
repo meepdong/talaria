@@ -31,6 +31,7 @@ from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .bots import profile_of
+from .workorders import mark_workers
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
 
@@ -300,6 +301,7 @@ class Turn:
     content: str | list | None = None  # what goes to the agent, when it differs from user_text
     run_id: str | None = None
     resolves: tuple[str, int] | None = None  # (job id, at): the blocked run this turn retries
+    worker: str | None = None  # a work order from the talker (Talk, §9): the worker's name
     task: asyncio.Task | None = None
 
     def snapshot(self) -> dict:
@@ -311,7 +313,7 @@ class Turn:
             snap["attachments"] = [dict(a) for a in self.attachments]
         if self.waiting_for_approval and self.approval is not None:
             snap["approval"] = dict(self.approval)
-        for key in ("error", "usage", "runtime"):
+        for key in ("error", "usage", "runtime", "worker"):
             if getattr(self, key) is not None:
                 snap[key] = getattr(self, key)
         return snap
@@ -474,6 +476,7 @@ class ChatService:
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         self.hermes_watch = None  # checks Hermes still answers as the bridge expects (hermes_check.py), set by make_chat
         self.bots = None  # Hermes's bots as chats (bots.py, §18), set by the server when the doorway is on
+        self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
             automations.notify = lambda msg: self.broadcast(msg)
@@ -527,7 +530,14 @@ class ChatService:
 
     # chat.send
 
-    async def send(self, p: dict, resolves: tuple[str, int] | None = None) -> tuple[dict, Turn | None]:
+    def agent_name(self, agent_id: str | None) -> str:
+        """How the owner knows this agent or bot: "Hermes", "Research"."""
+        if self.bots is not None and profile_of(agent_id) is not None:
+            return self.bots.name(agent_id)
+        return self.agent_names.get(agent_id or "", agent_id or "the agent")
+
+    async def send(self, p: dict, resolves: tuple[str, int] | None = None, *, worker: str | None = None,
+                   order: str | None = None) -> tuple[dict, Turn | None]:
         """Validate and register a turn. The caller sends the result, then calls `start`.
         Returns (result, None) for a retried client_msg_id."""
         text = p.get("text", "")
@@ -565,7 +575,7 @@ class ChatService:
         found = await asyncio.to_thread(self._server_files, p, file_refs or [])
         blobs = self._blobs(refs or [])
         try:
-            result, turn = await self._send(p, text, blobs, client_msg_id, found, resolves)
+            result, turn = await self._send(p, text, blobs, client_msg_id, found, resolves, worker, order)
         except BaseException:
             for blob in blobs:
                 self.blobs.release(blob)  # not sent: the device may retry with the same blobs
@@ -632,7 +642,8 @@ class ChatService:
             raise RpcError(exc.code, exc.message) from None
 
     async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None,
-                    found: list[Found] = (), resolves: tuple[str, int] | None = None) -> tuple[dict, Turn]:
+                    found: list[Found] = (), resolves: tuple[str, int] | None = None, worker: str | None = None,
+                    order: str | None = None) -> tuple[dict, Turn]:
         model = _model(p["model"]) if p.get("model") is not None else None
         conv_id = p.get("conversation_id")
         if conv_id is not None:
@@ -667,7 +678,7 @@ class ChatService:
         if model is not None and conv.model != {"provider": model[0], "model": model[1]}:
             await self._pin(conv, client, *model)
         self._check_queue(conv_id)  # again: other sends may have come in while this one waited
-        content = await asyncio.to_thread(self._content, conv, text, blobs, found) if blobs or found else None
+        content = await asyncio.to_thread(self._content, conv, text, blobs, found) if blobs or found else order
         self._check_queue(conv_id)
         queued = conv_id in self._active
         now_s = int(time.time())
@@ -677,7 +688,7 @@ class ChatService:
                         {"kind": "file", "name": f.name, "mime": f.mime, "size": f.size} for f in found],
                     content=content,
                     status="queued" if queued else "running",
-                    resolves=resolves)
+                    resolves=resolves, worker=worker)
         if queued:
             self._queues.setdefault(conv_id, []).append(turn)
         else:
@@ -897,6 +908,8 @@ class ChatService:
                    "title": turn.title, "user_text": turn.user_text, "started_at": turn.started_at}
         if turn.client_msg_id is not None:
             started["client_msg_id"] = turn.client_msg_id
+        if turn.worker is not None:
+            started["worker"] = turn.worker
         if turn.attachments:
             started["attachments"] = [dict(a) for a in turn.attachments]
         await self._emit(turn, "chat.started", started)
@@ -1004,7 +1017,7 @@ class ChatService:
             log.info("turn %s in %s: %s", turn.turn_id, turn.conversation_id, turn.status)
             if self.talker is not None and turn.status in ("completed", "failed"):
                 # a conversation being talked in hears the agent's reply (Talk 3)
-                self.talker.on_reply(turn.conversation_id, turn.text or (turn.error or ""), turn.status)
+                self.talker.on_reply(turn.conversation_id, turn.text or (turn.error or ""), turn.status, turn.turn_id)
             if turn.resolves is not None and turn.status == "completed" and self.automations is not None:
                 with contextlib.suppress(Exception):  # the blocked run worked in a chat: Home lets it go (§14)
                     await asyncio.shield(self.automations.dismiss_run(*turn.resolves))
@@ -1101,7 +1114,7 @@ class ChatService:
         except HermesUnavailable as exc:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
         hidden = self.store.hidden(conv.id)
-        page = history_messages(rows)
+        page = mark_workers(history_messages(rows), self.agent_name(conv.agent_id))
         kept = self.store.agent_files(conv.id) + self.store.talk_messages(conv.id)
         messages = with_files(page, kept, upper=upper, oldest=len(rows) < limit)
         start = page_start(page)

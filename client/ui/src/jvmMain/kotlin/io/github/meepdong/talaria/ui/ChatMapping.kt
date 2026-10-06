@@ -80,6 +80,7 @@ private fun ChatMessage.item(nowMs: Long, images: ImageCache) = MessageItem(
     error = error,
     attachments = attachments.map { it.chip(images) },
     progress = progress,
+    worker = worker,
 )
 
 /** Turn the chat state into the chat screens (UI.md §3–4). */
@@ -118,7 +119,7 @@ fun chatView(
         openId = state.openId,
         conversationOpen = conversationOpen,
         title = state.openSummary?.title ?: "New chat",
-        messages = state.openMessages.map { it.item(nowMs, images) },
+        messages = foldJobs(state.openMessages.map { it.item(nowMs, images) }),
         hasOlder = thread?.nextBefore != null,
         loading = thread?.loading == true,
         historyError = thread?.error,

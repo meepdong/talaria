@@ -4,6 +4,18 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Changed
+- Talk: Tally leads. The voice is Tally (her name and manner) and she does all the talking; Hermes and your bots are
+  her workers. She gives them jobs (several at once if needed), hands them files you sent in the chat by name,
+  checks on them, adds to a running job ("also check tomorrow") or stops it, and tells you each result in her own
+  words when it comes. In the chat each job is one folded card ("🔧 Hermes · done"): tap it for the brief and the
+  report; an approval it needs shows on the card.
+
+### Fixed
+- Replies in a bot's chat were labelled "Hermes"; they carry the bot's name now.
+
 ## [0.2.0-beta.19] - 2026-10-06
 
 ### Added

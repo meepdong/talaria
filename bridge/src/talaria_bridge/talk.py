@@ -18,11 +18,13 @@ import contextlib
 import datetime as dt
 import json
 import logging
+import mimetypes
 import secrets
 import time
 
 import httpx
 
+from .workorders import work_order
 from .protocol import messages as m
 
 log = logging.getLogger("talaria.talk")
@@ -54,14 +56,17 @@ HEAR = ("Write down exactly what is said in this recording, word for word, in th
         "spoken, in Latin letters). Don't answer it or add anything: output only the words, or nothing if no words "
         "are said.")
 
-SYSTEM = """You are the voice of {name}, the owner's personal assistant, in a spoken conversation. The owner talks \
-to you; you answer out loud. Behind you is {name}'s full agent, which has the owner's memory, email, calendar, \
-files, the web and a server. It's {now}.
+SYSTEM = """You are {name}, the owner's personal assistant, talking with them out loud. {persona}It's {now}.
+
+You lead. You do the talking; your workers do the heavy work and report back to you, never to the owner:
+- {worker}: the full agent on the owner's server, with their memory, email, calendar, files, the web and the \
+server. Your main worker: ask_hermes.{bots}
 
 How you talk:
 - One or two short spoken sentences. Plain speech: no lists, Markdown, links or emoji. Say times and dates the way \
 people say them ("ten thirty tomorrow").
-- Warm, quick and natural; no filler like "Great question".
+- Warm, quick and natural; no filler like "Great question". You're one assistant: speak as yourself ("I've asked \
+{worker} to…", "Research found…"), never like a relay.
 
 What you do yourself, with your tools:
 - To-dos: add_todo, complete_todos (tick off by what the owner calls them), list_todos.
@@ -69,39 +74,62 @@ What you do yourself, with your tools:
 - After you change something, read back exactly what you did and check: "Added: send Shreyas the humanoid files. \
 Did I get that right?"
 
-What you hand to the agent, with ask_hermes:
+What you hand to a worker:
 - Anything else: the web, email, calendar changes, files, the server, the owner's history and memory, or anything \
-that needs thinking. Say in a few words that you've asked it ("I've asked {name} to add that to your calendar; I'll \
-tell you when it's done") and carry on.
-- Write the brief so it stands on its own; the agent can't hear the audio:
+that needs thinking. Pick the worker that fits; you can ask several at once. Say in a few words who you asked \
+("I've asked {worker} to add that; I'll tell you when it's done") and carry on talking.
+- Write the brief so it stands on its own; workers can't hear the audio:
   1. What the owner said, in plain words, with names spelled as heard and the likely spelling.
   2. The goal and what "done" looks like (for example: event created, with its time).
   3. Details: names, dates, times, amounts; and what you already did, so it isn't done twice.
   4. Relevant context from this conversation.
-  5. Ask it to reply in one to three plain sentences saying what it did and what it checked, and to ask if \
-something essential is missing rather than guess, above all before anything risky.
+- Files: you can't open files yourself (pictures, PDFs, videos, documents). {files}Hand the ones a job needs to \
+the worker with `files` (their names as listed): {worker} reads PDFs and documents, sees pictures, and works with \
+videos using its tools. Say what you're sending where.
+- While work runs: check_work when the owner asks how it's going; add_to_work for a change or follow-up to running \
+work ("also check tomorrow"); stop_work when they say stop.
+- When a report arrives, tell the owner the result briefly in your own words and offer more if there's more. If a \
+worker asks a question, ask the owner, then pass the answer on with add_to_work (or a new job if it finished).
 
 Rules:
-- Never make up facts: no invented meetings, times, numbers or results. If you don't know, use a tool or ask the \
-agent.
-- Never approve anything for the owner and never ask the agent to approve or "always allow" anything: approvals are \
+- Never make up facts: no invented meetings, times, numbers or results. If you don't know, use a tool or ask a \
+worker.
+- Never approve anything for the owner and never ask a worker to approve or "always allow" anything: approvals are \
 the owner's, on screen or by saying yes.
-- When a result from the agent arrives, say it briefly in your own words and offer more if there's more.
-{bots}{context}"""
+{context}"""
 
 BOTS_PROMPT = """
-The owner's bots, which you can ask with ask_bot when the owner asks for one by name (or says "ask the …"): \
-{roster}. Write the message as the owner would, self-contained. Say you've asked it and carry on; its reply is \
-spoken when it comes.
-"""
+- The owner's bots, each a worker of its own (ask_bot), for when the job fits one or the owner names it: {roster}."""
 
-ASK_BOT = {"type": "function", "function": {
-    "name": "ask_bot",
-    "description": "Send a message to one of the owner's bots (Hermes Desktop's Bots) in its own chat; its reply is "
-                   "spoken when it comes. Only when the owner asks for that bot.",
-    "parameters": {"type": "object", "properties": {
-        "bot": {"type": "string", "description": "the bot's name, as listed"},
-        "message": {"type": "string", "description": "what to send, self-contained"}}, "required": ["bot", "message"]}}}
+FILES_PROMPT = "The owner sent these in this chat (newest first): {files}. "
+NO_FILES = "The owner hasn't sent any in this chat. "
+
+FILES_PARAM = {"type": "array", "items": {"type": "string"},
+               "description": "optional: names of files the owner sent in this chat, as listed, for the worker"}
+
+ASK_HERMES = {"type": "function", "function": {
+    "name": "ask_hermes",
+    "description": "Give your main worker (the full agent) a job; it runs in the background and reports back to you. "
+                   "Use for anything beyond to-dos and the agenda. Write a self-contained brief (see the rules).",
+    "parameters": {"type": "object", "properties": {"brief": {"type": "string"}, "files": FILES_PARAM},
+                   "required": ["brief"]}}}
+
+WORK_TOOLS = [
+    {"type": "function", "function": {
+        "name": "check_work", "description": "How the jobs you gave workers are going: who, what, how long, what they're doing.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "add_to_work",
+        "description": "Add a note to a worker's running job (a change, a follow-up, the owner's answer to its question).",
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string"},
+            "worker": {"type": "string", "description": "optional: which worker; the latest job otherwise"}},
+            "required": ["text"]}}},
+    {"type": "function", "function": {
+        "name": "stop_work", "description": "Stop a worker's running job when the owner says so.",
+        "parameters": {"type": "object", "properties": {
+            "worker": {"type": "string", "description": "optional: which worker; the latest job otherwise"}}}}},
+]
 
 TOOLS = [
     {"type": "function", "function": {
@@ -120,12 +148,18 @@ TOOLS = [
         "name": "get_agenda", "description": "The owner's agenda for a day: calendar events and to-dos due.",
         "parameters": {"type": "object", "properties": {
             "day": {"type": "string", "enum": ["today", "tomorrow"]}}, "required": ["day"]}}},
-    {"type": "function", "function": {
-        "name": "ask_hermes",
-        "description": "Hand a task to the full agent, which runs in the background and reports back. Use for "
-                       "anything beyond to-dos and the agenda. Write a self-contained brief (see the rules).",
-        "parameters": {"type": "object", "properties": {"brief": {"type": "string"}}, "required": ["brief"]}}},
-]
+    ASK_HERMES,
+] + WORK_TOOLS
+
+ASK_BOT = {"type": "function", "function": {
+    "name": "ask_bot",
+    "description": "Give one of the owner's bots (a worker of its own, Hermes Desktop's Bots) a job in its own chat; it "
+                   "reports back to you. When the job fits the bot or the owner names it.",
+    "parameters": {"type": "object", "properties": {
+        "bot": {"type": "string", "description": "the bot's name, as listed"},
+        "message": {"type": "string", "description": "the brief, self-contained"}, "files": FILES_PARAM},
+        "required": ["bot", "message"]}}}
+
 
 
 class TalkError(Exception):
@@ -151,7 +185,8 @@ class _Dropped(Exception):
 
 class Talker:
     def __init__(self, api_key: str, chat, *, voice: str = VOICES[0], name: str = "Hermes",
-                 transcriber: str = TRANSCRIBERS[0], transport: httpx.AsyncBaseTransport | None = None):
+                 transcriber: str = TRANSCRIBERS[0], transport: httpx.AsyncBaseTransport | None = None,
+                 worker: str | None = None, persona: str = ""):
         if voice not in VOICES:
             raise ValueError(f"talk voice must be one of {', '.join(VOICES)}")
         if transcriber not in TRANSCRIBERS:
@@ -162,9 +197,11 @@ class Talker:
             voice = chosen
         self.chat = chat  # ChatService: to-dos, the calendar, sending briefs, broadcasting
         self.voice = voice
-        self.name = name
+        self.name = name  # who the owner talks to: the assistant's own name ("Tally"), agents.json talk_name
+        self.worker = worker or name  # the main worker, the agent ("Hermes")
+        self.persona = persona.strip()
+        self.work: dict[str, dict] = {}  # turn id of a job given to a worker -> {worker, conv, talk, brief, at}
         self.active: dict[str, float] = {}  # conversation_id -> when it was last talked in
-        self.asked: dict[str, tuple[str | None, str, float]] = {}  # a bot's conversation -> (Talk's, bot name, when)
         self.memory: dict[str, list[dict]] = {}  # conversation_id -> recent exchanges, as text
         self._tasks: set[asyncio.Task] = set()
         self._holds: dict[str, _Hold] = {}  # talk_id -> an early turn not yet committed
@@ -265,21 +302,27 @@ class Talker:
 
     # the agent's replies
 
-    def on_reply(self, conversation_id: str, text: str, status: str) -> None:
-        """The agent finished a turn: if it's a conversation being talked in, say the result."""
+    def on_reply(self, conversation_id: str, text: str, status: str, turn_id: str | None = None) -> None:
+        """A turn finished: a worker's report on a job the talker gave it is said where the talker is; otherwise,
+        in a conversation being talked in, the agent's reply is said."""
         word = "finished" if status == "completed" else f"stopped ({status})"
-        asked = self.asked.pop(conversation_id, None)
-        if asked is not None and time.time() - asked[2] <= ACTIVE_S and text.strip():
-            # a bot answered what Talk asked it: say it in the conversation Talk was in
-            user = {"role": "user", "content": f"[The bot {asked[1]} {word}. Its reply, for you to tell the owner "
-                                               f"briefly in your own words:]\n{text.strip()[:4000]}"}
-            self._spawn(self._run("tk_" + secrets.token_hex(8), asked[0], user, tools=False, unprompted=True))
+        job = self.work.pop(turn_id, None) if turn_id else None
+        if job is not None:
+            if time.time() - job["at"] > 6 * 3600 or not (text.strip() or status != "completed"):
+                return
+            still = [w["worker"] for w in self.work.values() if w["talk"] == job["talk"]]
+            note = f" Still working: {', '.join(still)}." if still else ""
+            user = {"role": "user", "content": f"[Report from your worker {job['worker']}, {word}, on: "
+                                               f"{job['brief'][:300]}.{note} Tell the owner briefly in your own "
+                                               f"words:]\n{(text.strip() or '(no report)')[:4000]}"}
+            self._spawn(self._run("tk_" + secrets.token_hex(8), job["talk"], user, tools=True, unprompted=True,
+                                  keep=True))
             return
         at = self.active.get(conversation_id)
         if at is None or time.time() - at > ACTIVE_S or not text.strip():
             return
         talk_id = "tk_" + secrets.token_hex(8)
-        user = {"role": "user", "content": f"[{self.name} {word}. Its reply, for you to tell the owner briefly in "
+        user = {"role": "user", "content": f"[{self.worker} {word}. Its reply, for you to tell the owner briefly in "
                                            f"your own words:]\n{text.strip()[:4000]}"}
         self._spawn(self._run(talk_id, conversation_id, user, tools=False, unprompted=True))
 
@@ -327,7 +370,46 @@ class Talker:
         bots = BOTS_PROMPT.format(roster="; ".join(
             b["name"] + (f" ({b.get('description') or b.get('role')})" if b.get("description") or b.get("role") else "")
             for b in roster)) if roster else ""
-        return {"role": "system", "content": SYSTEM.format(name=self.name, now=now, context=context, bots=bots)}
+        files = self._files(conv)
+        listed = FILES_PROMPT.format(files="; ".join(f"{f['name']} ({f['kind']}, {f['size']})" for f in files)) \
+            if files else NO_FILES
+        persona = self.persona + " " if self.persona else ""
+        return {"role": "system", "content": SYSTEM.format(name=self.name, worker=self.worker, persona=persona, now=now,
+                                                           context=context, bots=bots, files=listed)}
+
+    def _files(self, conv: str | None) -> list[dict]:
+        """Files the owner sent in this chat, newest first: they're in the agent's inbox, under the chat's id (§10)."""
+        inbox = self.chat.inboxes.get(self.chat.default_agent) if conv else None
+        folder = inbox / conv if inbox is not None else None
+        if folder is None or not folder.is_dir():
+            return []
+        out = []
+        for path in sorted(folder.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)[:30]:
+            if not path.is_file():
+                continue
+            name = path.name.split("-", 1)[1] if "-" in path.name else path.name  # "<blob id>-<name>"
+            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            kind = ("picture" if mime.startswith("image/") else "video" if mime.startswith("video/") else
+                    "audio" if mime.startswith("audio/") else "PDF" if mime == "application/pdf" else "file")
+            size = path.stat().st_size
+            out.append({"name": name, "kind": kind, "mime": mime, "bytes": size, "path": str(path),
+                        "size": f"{max(1, round(size / 1024))} KB" if size < 1024 * 1024 else f"{size / 1048576:.1f} MB"})
+        return out
+
+    def _file_lines(self, conv: str | None, names) -> tuple[list[str], list[str]]:
+        """The workers' lines for the files named (as _files lists them), and the names not found."""
+        if not isinstance(names, list):
+            return [], []
+        files, lines, missing = self._files(conv), [], []
+        for wanted in names:
+            w = str(wanted).strip().lower()
+            f = next((f for f in files if f["name"].lower() == w), None) or next(
+                (f for f in files if w and w in f["name"].lower()), None)
+            if f is None:
+                missing.append(str(wanted))
+            else:
+                lines.append(f"Attached file: {f['path']} ({f['mime']}, {f['bytes']} bytes)")
+        return lines, missing
 
     def _bots(self) -> list[dict]:
         bots = getattr(self.chat, "bots", None)
@@ -335,10 +417,10 @@ class Talker:
 
     async def _run(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool = True,
                    unprompted: bool = False, hearing: asyncio.Task | None = None, system: dict | None = None,
-                   voice: str | None = None, hold: _Hold | None = None) -> None:
+                   voice: str | None = None, hold: _Hold | None = None, keep: bool = False) -> None:
         try:
             await self._talk(talk_id, conv, user, tools=tools, remember=remember, unprompted=unprompted,
-                             hearing=hearing, system=system, voice=voice or self.voice, hold=hold)
+                             hearing=hearing, system=system, voice=voice or self.voice, hold=hold, keep=keep)
         except _Dropped:
             log.info("talk %s: early turn never committed, dropped", talk_id)
             if hearing is not None:
@@ -348,7 +430,8 @@ class Talker:
                 self._holds.pop(talk_id, None)
 
     async def _talk(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool, unprompted: bool,
-                    hearing: asyncio.Task | None, system: dict | None, voice: str, hold: _Hold | None) -> None:
+                    hearing: asyncio.Task | None, system: dict | None, voice: str, hold: _Hold | None,
+                    keep: bool = False) -> None:
         messages = [system or self._system(conv), *self.memory.get(conv or "", []), user]
         said_all, error = [], None
         try:
@@ -363,7 +446,7 @@ class Talker:
                         await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": i, "data": chunk,
                                                                             **({"conversation_id": conv} if conv else {})}))
                 await self._go_ahead(hold)
-                if hearing is not None and any(c["function"]["name"] == "ask_hermes" for c in calls):
+                if hearing is not None and any(c["function"]["name"] in ("ask_hermes", "ask_bot") for c in calls):
                     conv = (await hearing)[0]  # the owner's words go in the chat before the brief
                 messages.append({"role": "assistant", "content": said or None, "tool_calls": calls})
                 for call in calls:
@@ -384,6 +467,8 @@ class Talker:
             conv = conv or heard_in
             if conv and said:
                 await self._keep(conv, "assistant", said)
+        elif keep and conv and said:
+            await self._keep(conv, "assistant", said)  # retelling a worker's report: it's the chat's message
         if remember and said:
             # the owner's audio isn't kept: their words as written down, or what the talker answered says what it heard
             if heard is None:
@@ -572,6 +657,12 @@ class Talker:
                 return await self._ask(args, conv, talk_id)
             if name == "ask_bot":
                 return await self._ask_bot(args, conv), conv
+            if name == "check_work":
+                return self._check_work(conv), conv
+            if name == "add_to_work":
+                return await self._add_to_work(args, conv), conv
+            if name == "stop_work":
+                return await self._stop_work(args, conv), conv
         except Exception as exc:  # noqa: BLE001 (the model hears what went wrong and says so)
             log.warning("talk tool %s failed: %s", name, exc)
             return f"Error: {getattr(exc, 'message', None) or exc}", conv
@@ -633,16 +724,20 @@ class Talker:
         brief = str(args.get("brief") or "").strip()
         if not brief:
             return "Error: the brief is empty.", conv
-        params = {"text": f"🎙 From Talk: {brief}"}
+        lines, missing = self._file_lines(conv, args.get("files"))
+        if missing:
+            return f"Error: no file called {', '.join(missing)} in this chat. {self._listed(conv)}", conv
+        params = {"text": brief}
         if conv:
             params["conversation_id"] = conv
-        result, turn = await self.chat.send(params)
+        result, turn = await self.chat.send(params, worker=self.worker, order=work_order(self.name, brief, lines))
         if turn is not None:
             self.chat.start(turn)
         conv = result["conversation_id"]
         self.active[conv] = time.time()
-        return f"Sent to {self.name}; it's working on it and its reply will be spoken when it comes.", conv
-
+        self._job(result, self.worker, conv, brief)
+        sent = f" with {len(lines)} file{'s' if len(lines) != 1 else ''}" if lines else ""
+        return f"Gave {self.worker} the job{sent}; its report comes to you when it's done.", conv
 
     async def _ask_bot(self, args: dict, conv: str | None) -> str:
         wanted = str(args.get("bot") or "").strip().lower().lstrip("@")
@@ -655,11 +750,72 @@ class Talker:
             return f"Error: no bot called {args.get('bot')!r}. The bots are: {names}."
         if not message:
             return "Error: the message is empty."
-        result, turn = await self.chat.send({"agent_id": bot["id"], "text": f"🎙 From Talk: {message}"})
+        lines, missing = self._file_lines(conv, args.get("files"))
+        if missing:
+            return f"Error: no file called {', '.join(missing)} in this chat. {self._listed(conv)}"
+        result, turn = await self.chat.send({"agent_id": bot["id"], "text": message}, worker=bot["name"],
+                                            order=work_order(self.name, message, lines))
         if turn is not None:
             self.chat.start(turn)
-        self.asked[result["conversation_id"]] = (conv, bot["name"], time.time())
-        return f"Sent to {bot['name']}; its reply will be spoken when it comes."
+        self._job(result, bot["name"], result["conversation_id"], message, talk=conv)
+        return f"Gave {bot['name']} the job; its report comes to you when it's done."
+
+    def _listed(self, conv: str | None) -> str:
+        files = self._files(conv)
+        return f"The files are: {', '.join(f['name'] for f in files)}." if files else "The owner sent no files here."
+
+    def _job(self, result: dict, worker: str, conv: str, brief: str, talk: str | None = None) -> None:
+        turn_id = result.get("turn_id")
+        if isinstance(turn_id, str):
+            self.work[turn_id] = {"worker": worker, "conv": conv, "talk": talk if talk is not None else conv,
+                                  "brief": brief, "at": time.time()}
+
+    def _jobs(self, talk: str | None, worker: str | None) -> list[tuple[str, dict]]:
+        """The jobs still running that the talker gave from this conversation, newest first (by worker if named)."""
+        w = (worker or "").strip().lower()
+        jobs = [(tid, j) for tid, j in self.work.items() if j["talk"] == talk or talk is None]
+        if w:
+            jobs = [(tid, j) for tid, j in jobs if w in j["worker"].lower()]
+        return sorted(jobs, key=lambda x: x[1]["at"], reverse=True)
+
+    def _check_work(self, conv: str | None) -> str:
+        out = []
+        for tid, job in self._jobs(conv, None):
+            turn = self.chat._turns.get(tid)
+            item = {"worker": job["worker"], "job": job["brief"][:200], "minutes": round((time.time() - job["at"]) / 60, 1),
+                    "status": turn.status if turn is not None else "unknown"}
+            if turn is not None:
+                if turn.tools:
+                    item["doing"] = [t.get("preview") or t["name"] for t in turn.tools[-3:]]
+                if turn.waiting_for_approval:
+                    item["waiting_for"] = "the owner's approval"
+            out.append(item)
+        return json.dumps({"running": out} if out else {"running": [], "note": "No jobs are running."})
+
+    async def _add_to_work(self, args: dict, conv: str | None) -> str:
+        text = str(args.get("text") or "").strip()
+        jobs = self._jobs(conv, args.get("worker"))
+        if not text:
+            return "Error: the note is empty."
+        if not jobs:
+            return "Error: no job is running for that; give a new job instead."
+        tid, job = jobs[0]
+        try:
+            await self.chat.steer({"turn_id": tid, "text": f"From {self.name}: {text}"})
+        except Exception as exc:  # noqa: BLE001 (the talker hears why)
+            return f"Error: couldn't add it ({getattr(exc, 'message', exc)}); give a new job instead."
+        return f"Added to {job['worker']}'s job."
+
+    async def _stop_work(self, args: dict, conv: str | None) -> str:
+        jobs = self._jobs(conv, args.get("worker"))
+        if not jobs:
+            return "Error: no job is running for that."
+        tid, job = jobs[0]
+        try:
+            await self.chat.cancel({"turn_id": tid})
+        except Exception as exc:  # noqa: BLE001
+            return f"Error: couldn't stop it ({getattr(exc, 'message', exc)})."
+        return f"Stopped {job['worker']}'s job."
 
 
 TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end", "talk.voices", "talk.voice", "talk.commit", "talk.cancel"})

@@ -41,8 +41,14 @@ class AgentConfig:
     voice_name: str | None = None  # one of that engine's voices; its first by default
     talk_voice: str | None = None  # Talk 3's talker voice (talk.py VOICES); shimmer by default; devices can change it
     talk_transcriber: str | None = None  # who writes down what was said in Talk: "whisper" (default) or "talker"
+    talk_name: str | None = None  # who the owner talks to in Talk ("Tally"); the agent's name by default (§9)
+    talk_persona: str | None = None  # a line or two of how they are ("sharp, warm, a little witty")
     serve_url: str | None = None  # Hermes's other backend (§18), on this machine only: ws://127.0.0.1:9119/api/ws
     serve_key_file: str | None = None  # the token for it (Hermes keeps its own copy)
+
+
+def _text(value, most: int) -> str | None:
+    return value.strip()[:most] if isinstance(value, str) and value.strip() else None
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -95,7 +101,8 @@ def load_agents(path: Path) -> list[AgentConfig]:
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
                                   tuple(files), tuple(calendar), tools_key, voice_key,
                                   entry.get("voice_engine"), entry.get("voice_name"), entry.get("talk_voice"),
-                                  entry.get("talk_transcriber"), serve_url, serve_key if serve_url else None))
+                                  entry.get("talk_transcriber"), _text(entry.get("talk_name"), 40),
+                                  _text(entry.get("talk_persona"), 600), serve_url, serve_key if serve_url else None))
     return agents
 
 

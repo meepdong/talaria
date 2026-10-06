@@ -491,7 +491,13 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
                 }
             }
             items(view.messages, key = { it.key }) { m ->
-                WithMessageMenu(m, view, actions) { MessageBubble(m, view.voice, actions, view.openingFile, view.openingProgress) }
+                if (m.worker != null) {
+                    JobCard(m, actions)
+                } else {
+                    WithMessageMenu(m, view, actions) {
+                        MessageBubble(m, view.voice, actions, view.openingFile, view.openingProgress, view.openBot?.name ?: "Hermes")
+                    }
+                }
             }
             items(view.asides, key = { "aside:" + it.id }) { a -> AsideCard(a, actions) }
             // server operations (PROTOCOL §10.8): where the owner is looking, below the newest message
@@ -502,7 +508,8 @@ private fun Messages(view: ChatView, actions: TalariaActions, modifier: Modifier
 }
 
 @Composable
-private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActions, opening: String? = null, openingProgress: Float? = null) {
+private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActions, opening: String? = null,
+                          openingProgress: Float? = null, speaker: String = "Hermes") {
     if (m.fromUser) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
             m.attachments.forEach { a ->
@@ -534,7 +541,7 @@ private fun MessageBubble(m: MessageItem, voice: VoiceView, actions: TalariaActi
         return
     }
     Column(Modifier.fillMaxWidth().testTag("reply-${m.key}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Hermes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(speaker, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         m.tools.forEach { t ->
             val mark = when (t.state) { "completed" -> "✓"; "failed" -> "✗"; else -> "…" }
             Text("🔧 ${t.name} $mark", style = MaterialTheme.typography.bodySmall,
@@ -797,6 +804,58 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
 
 /** Hermes wants to run something it flags as risky; any paired device can answer (spec §9). */
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * A job the Talk voice gave a worker (§9): one line ("🔧 Hermes · working · find flights to Goa"), tap to open the
+ * brief and the worker's report. An approval it waits for shows even while it's folded.
+ */
+@Composable
+private fun JobCard(m: MessageItem, actions: TalariaActions) {
+    var open by remember(m.key) { mutableStateOf(false) }
+    val report = m.report ?: m.takeIf { !it.fromUser }
+    val brief = if (m.fromUser) m.text else null
+    val status = when (report?.state) {
+        null, ItemState.STREAMING, ItemState.SENDING, ItemState.QUEUED -> if (report?.waitingForApproval == true) "needs you" else "working"
+        ItemState.FAILED -> "failed"
+        ItemState.CANCELLED -> "stopped"
+        else -> "done"
+    }
+    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().testTag("job-${m.key}")) {
+        Column(Modifier.clickable { open = !open }.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🔧 ${m.worker} · $status", style = MaterialTheme.typography.labelMedium,
+                    color = if (status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text((brief ?: report?.text.orEmpty()).replace('\n', ' '), style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp))
+                Text(if (open) "▴" else "▾", style = MaterialTheme.typography.labelMedium)
+            }
+            val approval = report?.approval
+            val turn = report?.turnId
+            if (approval != null && turn != null) ApprovalCard(approval) { choice -> actions.approve(turn, choice) }
+            if (open) {
+                brief?.let {
+                    Text("Asked", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("job-brief"))
+                }
+                report?.let { r ->
+                    r.tools.forEach { t ->
+                        val mark = when (t.state) { "completed" -> "✓"; "failed" -> "✗"; else -> "…" }
+                        Text("🔧 ${t.name} $mark", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (r.text.isNotEmpty()) {
+                        Text("Report", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(Modifier.testTag("job-report")) { MarkdownText(r.text) }
+                    }
+                    r.error?.let { Text("✗ $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ApprovalCard(a: ApprovalItem, onAnswer: (String) -> Unit) {
     Card(Modifier.fillMaxWidth().testTag("approval"),

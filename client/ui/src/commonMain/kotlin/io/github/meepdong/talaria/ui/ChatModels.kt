@@ -72,7 +72,33 @@ data class MessageItem(
     val attachments: List<AttachmentChip> = emptyList(),
     /** 0..1 while this message's files upload. */
     val progress: Float? = null,
+    /** A job the Talk voice gave a worker (§9): the worker's name. Shown as one collapsed card, not a message. */
+    val worker: String? = null,
+    /** On a job's order: the worker's report, folded into the same card. */
+    val report: MessageItem? = null,
 )
+
+/**
+ * A job's order and the worker's report after it become one item (the order, with [MessageItem.report]), so a
+ * Talk conversation shows the owner's and the voice's words as messages and each job as one card.
+ */
+fun foldJobs(items: List<MessageItem>): List<MessageItem> {
+    val out = mutableListOf<MessageItem>()
+    var i = 0
+    while (i < items.size) {
+        val m = items[i]
+        val next = items.getOrNull(i + 1)
+        if (m.worker != null && m.fromUser && next != null && !next.fromUser && next.worker == m.worker &&
+            (m.turnId == null || next.turnId == null || m.turnId == next.turnId)) {
+            out += m.copy(report = next)
+            i += 2
+        } else {
+            out += m
+            i += 1
+        }
+    }
+    return out
+}
 
 /** An approval card: [choices] are (choice, button label), in Hermes's order. */
 data class ApprovalItem(val command: String?, val description: String?, val choices: List<Pair<String, String>>)

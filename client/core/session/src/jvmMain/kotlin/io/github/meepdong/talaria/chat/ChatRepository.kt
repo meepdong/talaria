@@ -842,7 +842,7 @@ class ChatRepository(
             if (cmid != null) s = s.claimDraft(cmid, conv)
             val thread = s.threads[conv]
             if (thread != null && thread.loaded) {
-                s = s.withMessages(conv) { list -> withTurn(list, turn, userText, at, cmid, attachments) }
+                s = s.withMessages(conv) { list -> withTurn(list, turn, userText, at, cmid, attachments, p.str("worker")) }
             }
             s
         }
@@ -890,18 +890,18 @@ class ChatRepository(
     /** Make sure [list] has this turn's user message and a streaming reply after it. */
     private fun withTurn(
         list: List<ChatMessage>, turn: String, userText: String, atMs: Long, cmid: String?,
-        attachments: List<Attachment> = emptyList(),
+        attachments: List<Attachment> = emptyList(), worker: String? = null,
     ): List<ChatMessage> {
         var out = list
         val mine = out.indexOfFirst { (cmid != null && it.clientMsgId == cmid) || (it.role == Role.USER && it.turnId == turn) }
         out = if (mine >= 0) {
-            out.mapIndexed { i, m -> if (i == mine) m.copy(state = MessageState.DONE, turnId = turn, error = null) else m }
+            out.mapIndexed { i, m -> if (i == mine) m.copy(state = MessageState.DONE, turnId = turn, error = null, worker = worker ?: m.worker) else m }
         } else {
             out + ChatMessage("user:$turn", Role.USER, userText, atMs, MessageState.DONE, turnId = turn, clientMsgId = cmid,
-                attachments = attachments)
+                attachments = attachments, worker = worker)
         }
         if (out.none { it.key == "reply:$turn" }) {
-            out = out + ChatMessage("reply:$turn", Role.ASSISTANT, "", null, MessageState.STREAMING, turnId = turn)
+            out = out + ChatMessage("reply:$turn", Role.ASSISTANT, "", null, MessageState.STREAMING, turnId = turn, worker = worker)
         }
         return out
     }
@@ -1016,7 +1016,7 @@ class ChatRepository(
                     val base = if (list.none { it.turnId == turn } && list.lastOrNull { it.role == Role.USER }?.text == userText) {
                         list.mapIndexed { i, m -> if (i == list.indexOfLast { it.role == Role.USER }) m.copy(turnId = turn) else m }
                     } else list
-                    withTurn(base, turn, userText, at, null, parseAttachments(t)).map { m ->
+                    withTurn(base, turn, userText, at, null, parseAttachments(t), t.str("worker")).map { m ->
                         if (m.key != "reply:$turn") m
                         else m.copy(text = t.str("text").orEmpty(), tools = tools,
                             commentary = if (status == "running") commentary else null,
@@ -1061,6 +1061,7 @@ class ChatRepository(
             atMs = m.long("ts")?.times(1000),
             toolNames = (m["tools"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content },
             attachments = parseAttachments(m),
+            worker = m.str("worker"),
         )
     }
 
