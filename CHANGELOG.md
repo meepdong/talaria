@@ -4,7 +4,7 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
-## [Unreleased]
+## [0.2.0-beta.19] - 2026-10-06
 
 ### Added
 - Hermes compatibility check: when Hermes updates itself (and once a day), the bridge checks every Hermes call
@@ -13,9 +13,9 @@ release notes the app shows.
   By hand: `talaria doctor --hermes`.
 - The bridge is a doorway to Hermes's other backend (`hermes serve`, what Hermes Desktop uses): bots, group chats,
   jobs, skills and helper agents, through an allowlist (never shell commands, settings, secrets or the vault),
-  with Hermes's approvals and questions passed to your devices. Nothing to see in the app yet: the bots and
-  group chats screens come next. The compatibility check covers it too. Server side: `hermes serve` runs on
-  this machine only (`talaria-hermes-serve`, bridge/deploy).
+  with Hermes's approvals and questions passed to your devices. Bots are the first part you can see (below);
+  group chats come next. The compatibility check covers it too. Server side: `hermes serve` runs on this machine
+  only (`talaria-hermes-serve`, bridge/deploy).
 - Bots: the bots you make in Hermes Desktop (its Bots tab) show at the top of Chats. Tap one to open its
   permanent chat (the same one Hermes Desktop shows), with replies, tool progress, Stop, notes and approvals as
   with Hermes. Type @ in any chat to pick a bot: "@scout find a quiet cafe" sends that to Scout's chat and opens
