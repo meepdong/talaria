@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .hermes import HermesClient, HermesError, HermesJobs, HermesUnavailable
+from .hermes_check import CHECK_ID, CHECK_NAME
 from .protocol import messages as m
 
 log = logging.getLogger("talaria.automations")
@@ -698,11 +699,16 @@ class Automations:
         out["events"] = sorted(events, key=lambda e: (not e["all_day"], _ts(e["start"]) or 0))
         return out
 
+    def _names(self) -> dict[str, str]:
+        names = {str(j.get("id")): str(j.get("name") or "Untitled") for jobs in self._jobs.values() for j in jobs}
+        names[CHECK_ID] = CHECK_NAME  # the bridge's own card (hermes_check.py)
+        return names
+
     def home(self, p: dict) -> dict:
         today = dt.date.today()
         start = int(dt.datetime.combine(today, dt.time()).timestamp())
-        home = {meta.job_id for meta in self.store.all_meta() if meta.result_to == "home"}
-        names = {str(j.get("id")): str(j.get("name") or "Untitled") for jobs in self._jobs.values() for j in jobs}
+        home = {meta.job_id for meta in self.store.all_meta() if meta.result_to == "home"} | {CHECK_ID}
+        names = self._names()
         results, done = [], set()
         for job_id, run in self.store.runs_since(start):
             if job_id in done or run["status"] == "nothing":
@@ -717,7 +723,7 @@ class Automations:
 
     def archived(self, p: dict) -> dict:
         """home.archived: what was archived off Home in the last month, to read again or restore."""
-        names = {str(j.get("id")): str(j.get("name") or "Untitled") for jobs in self._jobs.values() for j in jobs}
+        names = self._names()
         return {"results": [{"id": job_id, "name": names.get(job_id, "Automation")[:MAX_NAME], "run": run}
                             for job_id, run in self.store.archived()]}
 

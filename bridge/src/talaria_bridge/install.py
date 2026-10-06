@@ -577,6 +577,42 @@ def doctor(plan: Plan, run: Run = run_command, http: Callable[[str, dict | None,
     return out
 
 
+def hermes_checks(plan: Plan, *, turn: bool = True) -> list[Check]:
+    """doctor --hermes: every call the bridge makes to Hermes still works as the bridge expects (hermes_check.py)."""
+    import asyncio
+
+    from .hermes import HermesClient, HermesUnavailable, read_api_key
+    from .hermes_check import check_hermes
+
+    try:
+        agents = [a for a in json.loads((plan.data / "agents.json").read_text())["agents"] if a.get("api_url")]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [Check(False, f"{plan.data / 'agents.json'} describes Hermes", "run talaria setup")]
+    out: list[Check] = []
+    for agent in agents:
+        async def one(a: dict = agent):
+            client = HermesClient(a["api_url"], read_api_key(Path(a["api_key_file"])))
+            try:
+                return await check_hermes(client, turn=turn)
+            finally:
+                await client.close()
+        try:
+            report = asyncio.run(one())
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            out.append(Check(False, f"read the API key of Hermes at {agent.get('api_url')}", f"{exc}; talaria setup repairs it"))
+            continue
+        except HermesUnavailable as exc:
+            out.append(Check(False, f"Hermes answers at {agent['api_url']} ({exc})",
+                             f"systemctl --user -M {plan.hermes_user}@ restart hermes-gateway"))
+            continue
+        good = len(report.findings) - len(report.problems)
+        out.append(Check(report.ok, f"Hermes {report.version or '(unknown version)'}: {good} of {len(report.findings)} calls"
+                         f" Talaria relies on answer as expected{'' if report.turn else ' (without a test message)'}",
+                         "Talaria needs a fix for this Hermes version; each line below says what changed"))
+        out += [Check(False, f"{f.call} ({f.affects})", f.problem) for f in report.problems]
+    return out
+
+
 def main_setup(args) -> int:
     plan = Plan(instance=args.instance or "", hermes_user=args.hermes_user or ("hermes" if not args.instance else f"hermes-{args.instance}"),
                 channel=args.channel, dns_name=args.dns_name, ops=False, install_hermes=args.install_hermes,
@@ -609,6 +645,8 @@ def main_doctor(args) -> int:
             f.read_text() for f in (plan.layout.systemd / f"{plan.unit}.service.d").glob("*.conf")))
         plan.channel = found[1] if found else plan.channel
     checks = doctor(plan)
+    if getattr(args, "hermes", False):
+        checks += hermes_checks(plan, turn=not args.no_turn)
     for c in checks:
         print(f" {'✓' if c.ok else '✗'} {c.what}" + ("" if c.ok else f"\n     → {c.fix}"))
     bad = sum(1 for c in checks if not c.ok)

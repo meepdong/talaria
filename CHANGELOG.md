@@ -4,6 +4,14 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Hermes compatibility check: when Hermes updates itself (and once a day), the bridge checks every Hermes call
+  Talaria relies on. If an update changed one, a red card on Home ("Hermes compatibility check") and a
+  notification say what changed and which feature it affects; the card goes away once a check passes again.
+  By hand: `talaria doctor --hermes`.
+
 ## [0.2.0-beta.18] - 2026-10-06
 
 ### Added

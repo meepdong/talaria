@@ -471,6 +471,7 @@ class ChatService:
         self.talker = None  # Talk 3's voice talker (talk.py), set by make_chat when it has a voice key
         self.voice = voice  # Talk's natural voice and quick first line (§9)
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
+        self.hermes_watch = None  # checks Hermes still answers as the bridge expects (hermes_check.py), set by make_chat
         if automations is not None:
             automations.notify = lambda msg: self.broadcast(msg)
             automations.on_chat = self._automation_chat
@@ -500,9 +501,11 @@ class ChatService:
         return conv.id
 
     async def run_background(self) -> None:
-        """What runs while the bridge serves: watching the agent's jobs (§14)."""
-        if self.automations is not None:
-            await self.automations.poll()
+        """What runs while the bridge serves: watching the agent's jobs (§14) and Hermes's compatibility (§9)."""
+        tasks = [t for t in (self.automations.poll() if self.automations is not None else None,
+                             self.hermes_watch.run() if self.hermes_watch is not None else None) if t is not None]
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def close(self) -> None:
         tasks = [t.task for t in self._turns.values() if t.task and not t.task.done()] + list(self._jobs)

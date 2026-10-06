@@ -19,7 +19,7 @@ sudo -u talaria /opt/talaria/.venv/bin/talaria --home /var/lib/talaria pair --na
 `talaria setup` turns on Hermes's API server, gives the bridge its key, connects Talaria's tools to Hermes (MCP),
 shares the inbox and Hermes's workspace both ways, writes `agents.json`, makes a certificate for the machine's MagicDNS
 name, and installs a sandboxed `talaria-bridge` service. Each step looks first and changes only what's missing: run it
-again to repair an install. `talaria doctor` checks a running install and says what to fix.
+again to repair an install. `talaria doctor` checks a running install and says what to fix; `talaria doctor --hermes` also checks every Hermes call the bridge relies on (a scratch chat with one tiny test message, deleted after; `--no-turn` skips the message).
 
 Install the app, open it and scan the QR code `pair` shows; updates then come through the app. For now the signed app
 comes from the person who runs the server (their bridge holds it under `/var/lib/talaria/updates/`); signed APKs on the

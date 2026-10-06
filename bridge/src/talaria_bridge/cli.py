@@ -31,6 +31,7 @@ from .ops.client import DEFAULT_SOCKET as OPS_SOCKET
 from .ops.client import OpsClient
 from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
+from .hermes_check import HermesWatch
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
 from .protocol.encoding import b64u_encode, now
@@ -130,6 +131,7 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
                                  transcriber=talk_agent.talk_transcriber or TRANSCRIBERS[0])
         except (OSError, ValueError) as exc:
             print(f"WARNING: no Talk 3 talker: {exc}", file=sys.stderr)
+    chat.hermes_watch = HermesWatch(clients, chat.automations, home / "hermes-check.json")
     return chat
 
 
@@ -374,6 +376,10 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--install-hermes", action="store_true", help="also create the Hermes user and install Hermes")
             cmd.add_argument("--model", default="qwen/qwen3.8-flash", help="their Hermes's model (with --install-hermes)")
             cmd.add_argument("--openrouter-key-file", type=Path, help="a file with their OpenRouter key (with --install-hermes)")
+        else:
+            cmd.add_argument("--hermes", action="store_true",
+                             help="also check every Hermes call Talaria relies on (a scratch chat, deleted after)")
+            cmd.add_argument("--no-turn", action="store_true", help="with --hermes: skip the one tiny test message")
         cmd.set_defaults(func=lambda a, n=name: __import__("talaria_bridge.install", fromlist=["x"]).__dict__[f"main_{n}"](a))
 
     devices = sub.add_parser("devices", help="list or revoke paired devices")
