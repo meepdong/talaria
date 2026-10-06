@@ -113,6 +113,38 @@ SERVER_OP = {
         "required": ["op"]},
 }
 
+LIST_BOTS = {
+    "name": "list_bots",
+    "description": "The owner's specialist bots (Hermes profiles made in Hermes Desktop), each with what it's for. Use it"
+                   " to pick the right bot before ask_bot.",
+    "inputSchema": {"type": "object", "properties": {}},
+}
+
+ASK_BOT = {
+    "name": "ask_bot",
+    "description": "Hand a job to one of the owner's specialist bots (list_bots says who does what: mail, calendar, Drive,"
+                   " sheets, PDFs, pictures, research, meetings, vendors...) when the job clearly fits one or the owner"
+                   " names it. The bot works in its own chat (the owner sees it there) and reports back to you; you"
+                   " then answer the owner yourself. Waits up to wait_seconds (default 240) for the report; a longer job"
+                   " returns its id: check it with bot_job. Write a self-contained brief: the bot can't see this chat.",
+    "inputSchema": {"type": "object", "properties": {
+        "bot": {"type": "string", "description": "The bot's name or profile, as list_bots gives it."},
+        "message": {"type": "string", "description": "The self-contained brief."},
+        "files": {"type": "array", "items": {"type": "string"},
+                  "description": "Optional: full paths of files the bot needs (the inbox or /workspace/projects)."},
+        "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 280}},
+        "required": ["bot", "message"]},
+}
+
+BOT_JOB = {
+    "name": "bot_job",
+    "description": "How a job you gave a bot with ask_bot is going, and its report once it's done.",
+    "inputSchema": {"type": "object", "properties": {"job": {"type": "string", "description": "The job id ask_bot gave."}},
+                    "required": ["job"]},
+}
+
+BOT_JOBS_AT_ONCE = 3  # jobs handed to bots through these tools at the same time: bots have them too, so no chains
+
 Changed = Callable[[], Awaitable[None]]
 
 
@@ -151,13 +183,79 @@ class AgentTools:
         self.changed = changed
         self.ops = ops
         self.automations = automations
-        self.chat = chat  # ChatService: send_file (§15), when it shares folders
+        self.chat = chat  # ChatService: send_file (§15), when it shares folders; bots (§18.1) when it has them
+        self._bot_jobs: list[str] = []  # turn ids of jobs handed to bots through ask_bot
 
     @property
     def tools(self) -> list[dict]:
         return (TOOLS + ([REPORT_TO] if self.automations is not None else [])
                 + ([SEND_FILE] if self.chat is not None and self.chat.files is not None else [])
-                + ([SERVER_OP] if self.ops is not None else []))
+                + ([SERVER_OP] if self.ops is not None else [])
+                + ([LIST_BOTS, ASK_BOT, BOT_JOB] if self.chat is not None and getattr(self.chat, "bots", None) is not None else []))
+
+    async def _bots_tool(self, name: str, args: dict) -> dict:
+        """Hermes hands a job to a bot (spec §15): a work order in the bot's chat, its report back here."""
+        from .chat import RpcError
+        from .workorders import work_order
+
+        bots = self.chat.bots
+        roster = bots.roster() if bots.backend.connected else []
+        if name == "list_bots":
+            if not roster:
+                return _tool_result("No bots are available right now (none made, or Hermes's backend is down).")
+            return _tool_result({"bots": [{"name": b["name"], "profile": b["profile"],
+                                           **({"for": b["description"]} if b.get("description") else {})} for b in roster]})
+        if name == "bot_job":
+            return _tool_result(self._job_state(str(args.get("job") or "")))
+        wanted = str(args.get("bot") or "").strip().lower().lstrip("@")
+        bot = next((b for b in roster if wanted in (b["name"].lower(), b["profile"].lower())), None)
+        if bot is None:
+            names = ", ".join(b["name"] for b in roster) or "none"
+            return _tool_result(f"No bot called {args.get('bot')!r}. The bots are: {names}.", is_error=True)
+        message = str(args.get("message") or "").strip()
+        if not message:
+            return _tool_result("The message is empty.", is_error=True)
+        running = [t for t in self._bot_jobs if self._running(t)]
+        if len(running) >= BOT_JOBS_AT_ONCE:
+            return _tool_result(f"{len(running)} bot jobs are already running; wait for one (bot_job) or do it yourself.",
+                                is_error=True)
+        files = [f"Attached file: {p}" for p in args.get("files") or [] if isinstance(p, str) and p.startswith("/")]
+        brief = message + "\n\nDo this job yourself: don't hand it on to another bot."
+        try:
+            result, turn = await self.chat.send({"agent_id": bot["id"], "text": message}, worker=bot["name"],
+                                                order=work_order("Hermes", brief, files, about="the owner's main agent"))
+        except RpcError as exc:
+            return _tool_result(exc.message, is_error=True)
+        if turn is not None:
+            self.chat.start(turn)
+        job = result["turn_id"]
+        self._bot_jobs = [t for t in self._bot_jobs if self._running(t)] + [job]
+        wait = args.get("wait_seconds", 240)
+        wait = wait if isinstance(wait, int) and not isinstance(wait, bool) and 0 <= wait <= 280 else 240
+        for _ in range(wait * 2):
+            if not self._running(job):
+                break
+            await asyncio.sleep(0.5)
+        return _tool_result(self._job_state(job, bot["name"]))
+
+    def _running(self, job: str) -> bool:
+        turn = self.chat._turns.get(job)
+        return turn is not None and turn.status in ("running", "queued")
+
+    def _job_state(self, job: str, bot: str | None = None) -> dict:
+        turn = self.chat._turns.get(job)
+        if turn is None:
+            return {"job": job, "status": "unknown", "note": "No such job, or it finished long ago: see the bot's chat."}
+        out = {"job": job, "bot": bot or turn.worker or turn.agent_id, "status": turn.status}
+        if turn.status in ("running", "queued"):
+            out["note"] = "Still working. Check again later with bot_job; its report also lands in the bot's chat."
+            if turn.waiting_for_approval:
+                out["waiting_for"] = "the owner's approval"
+        else:
+            out["report"] = (turn.text or "")[:6000]
+            if turn.error:
+                out["error"] = turn.error
+        return out
 
     def agent_for(self, authorization: str | None) -> str | None:
         if not authorization or not authorization.startswith("Bearer "):
@@ -188,8 +286,9 @@ class AgentTools:
                 "instructions": "Talaria is the owner's app on their phone and laptop. These tools keep its to-do list,"
                                 " shown on Home; choose where your scheduled jobs report in it (automation_report_to:"
                                 " Home also notifies their devices, so you never need to ask where to send a result);"
-                                " send them files you make (send_file); and, when offered, run operations on the"
-                                " server with the owner's approval.",
+                                " send them files you make (send_file); hand jobs to the owner's specialist bots and"
+                                " get their reports (list_bots, ask_bot, bot_job); and, when offered, run operations"
+                                " on the server with the owner's approval.",
             }}
         if method == "ping":
             return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
@@ -221,6 +320,8 @@ class AgentTools:
                 return _tool_result(await self.chat.agent_file(agent_id, args.get("path"), args.get("caption")))
             except RpcError as exc:
                 return _tool_result(exc.message, is_error=True)
+        if name in ("list_bots", "ask_bot", "bot_job") and self.chat is not None and self.chat.bots is not None:
+            return await self._bots_tool(name, args)
         if name == "server_op" and self.ops is not None:
             result, is_error = await self.ops.agent_call(args.get("op"), args.get("params"), agent_id)
             return _tool_result(result, is_error=is_error)

@@ -335,3 +335,60 @@ async def chat_bridge_plain(tmp_path: Path, settings: ServerSettings):
         yield Bridge(server, registry, f"ws://127.0.0.1:{ws_server.sockets[0].getsockname()[1]}/tnp")
     chat.store.close()
     registry.close()
+
+
+async def test_hermes_hands_a_job_to_a_bot_and_gets_the_report(bots_bridge):
+    """Item 14: Hermes's MCP tools (spec §15) — list_bots, ask_bot (waits for the report), bot_job."""
+    from talaria_bridge.agent_tools import AgentTools
+    from talaria_bridge.todos import TodoStore
+
+    bridge, fake, chat = bots_bridge
+    tools = AgentTools(TodoStore(":memory:"), {"t": "hermes"},
+                       lambda: asyncio.sleep(0), chat=chat)
+    names = {t["name"] for t in tools.tools}
+    assert {"list_bots", "ask_bot", "bot_job"} <= names
+    listed = json.loads((await tools.call("list_bots", {}))["content"][0]["text"])
+    assert {"name": "Scout", "profile": "scout", "for": "Finds things"} in listed["bots"]
+
+    phone = await connected(bridge)
+    answer = await tools.call("ask_bot", {"bot": "scout", "message": "Find a quiet cafe near Indiranagar",
+                                          "files": ["/var/lib/talaria/inbox/c-1/b1-map.png", "relative.png"]})
+    report = json.loads(answer["content"][0]["text"])
+    assert report["status"] == "completed" and report["report"] == "Hi there" and report["bot"] == "Scout"
+    order = [p["text"] for name, p in fake.calls if name == "prompt.submit"][-1]
+    assert order.startswith("🎙 Work order from Hermes, the owner's main agent.")
+    assert "don't hand it on to another bot" in order
+    assert "Attached file: /var/lib/talaria/inbox/c-1/b1-map.png" in order and "relative.png" not in order
+    started = None
+    while started is None:  # the owner sees the job as a card in Scout's chat
+        msg = await recv(phone)
+        if msg.get("method") == "chat.started":
+            started = check("chat.started", msg)["params"]
+    assert started["worker"] == "Scout" and started["user_text"] == "Find a quiet cafe near Indiranagar"
+
+    fake.ask_approval = True  # a long job: comes back running, with its id
+    long = json.loads((await tools.call("ask_bot", {"bot": "Scout", "message": "Clean up", "wait_seconds": 0}))["content"][0]["text"])
+    assert long["status"] == "running" and "bot_job" in long["note"]
+    for _ in range(100):
+        if json.loads((await tools.call("bot_job", {"job": long["job"]}))["content"][0]["text"]).get("waiting_for"):
+            break
+        await asyncio.sleep(0.02)
+    turn = chat._turns[long["job"]]
+    await chat.approve({"turn_id": turn.turn_id, "choice": "once"})
+    for _ in range(200):
+        state = json.loads((await tools.call("bot_job", {"job": long["job"]}))["content"][0]["text"])
+        if state["status"] != "running":
+            break
+        await asyncio.sleep(0.02)
+    assert state["status"] == "completed" and state["report"] == "Cleaned"
+
+    nobody = await tools.call("ask_bot", {"bot": "nobody", "message": "x"})
+    assert nobody.get("isError") and "The bots are: coder, Scout" in nobody["content"][0]["text"]
+    tools._bot_jobs = ["t-a", "t-b", "t-c"]
+    from types import SimpleNamespace
+    for t in tools._bot_jobs:
+        chat._turns[t] = SimpleNamespace(status="running")
+    busy = await tools.call("ask_bot", {"bot": "scout", "message": "one more"})
+    assert busy.get("isError") and "3 bot jobs are already running" in busy["content"][0]["text"]
+    for t in ("t-a", "t-b", "t-c"):
+        del chat._turns[t]

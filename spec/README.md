@@ -351,6 +351,14 @@ The bridge offers the agent a few tools over the Model Context Protocol (MCP), s
 
 A tool's result is one `text` content item holding JSON. A bad argument, an unknown id or a full list is a tool result with `isError: true` and a sentence saying why, so the agent can correct itself. After any change every device gets `todos.changed` (§13). The agent can't delete to-dos or comments: it ticks to-dos off instead, so nothing the agent reads (an email, a web page) can make it wipe the list.
 
+
+**Bots as helpers.** When the bridge has Hermes's bots (§18.1), the agent also gets `list_bots` (each bot's name,
+profile and what it's for), `ask_bot {bot, message, files?, wait_seconds?}` and `bot_job {job}`. `ask_bot` sends a
+work order (§9 "Tally leads Talk", from "Hermes, the owner's main agent", asking the bot to do it itself rather than
+hand it on) into the bot's own conversation, where devices show it as a job card, and waits up to `wait_seconds`
+(default 240, at most 280) for the report: `{job, bot, status, report?, error?}`; a job still running returns its
+`job` id, and `bot_job` gives its state or report later. `files` are paths the bot can read too (the inbox,
+`/workspace/projects`). At most three such jobs run at once (bots have these tools too, so chains stay short).
 ## 16. Server operations
 
 PROTOCOL §10.8 describes them. `talaria-ops` (root, `bridge/src/talaria_bridge/ops/`) owns the catalogue and checks every approval itself. It listens on the Unix socket `/run/talaria-ops/ops.sock` and accepts only the bridge's user. Requests are newline-delimited JSON:

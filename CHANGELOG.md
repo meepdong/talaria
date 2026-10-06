@@ -4,6 +4,13 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Hermes can hand jobs to your bots too, not only Tally in Talk: when you type a request that fits a bot (mail,
+  calendar, Drive, sheets, PDFs, pictures, research, meetings, vendors), Hermes gives it the job, gets the report and
+  answers you itself; the job shows as a card in that bot's chat.
+
 ## [0.2.0-beta.20] - 2026-10-06
 
 ### Changed

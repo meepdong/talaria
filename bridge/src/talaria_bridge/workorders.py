@@ -8,12 +8,13 @@ WORK_ORDER = "🎙 Work order from "  # how a work order from the talker starts 
 ORDER_SPLIT = "\n---\n"  # between the order's instructions and its brief
 
 
-def work_order(talker: str, brief: str, files: list[str] = ()) -> str:
-    """What a worker gets from the talker: who it's from, how to answer, then the brief (and the files' lines)."""
-    head = (f"{WORK_ORDER}{talker}, the voice the owner talks to in Talk. {talker} talks; you do the work. Do it, "
-            f"then reply to {talker} in plain facts: what you did, what you found, what you checked, in one to five "
-            "short sentences without Markdown. If something essential is missing, ask one clear question instead "
-            "of guessing. The owner approves risky actions as usual.")
+def work_order(talker: str, brief: str, files: list[str] = (), *, about: str | None = None) -> str:
+    """What a worker gets: who it's from, how to answer, then the brief (and the files' lines). [about] says who
+    the sender is (the Talk voice by default; "the owner's main agent" when Hermes hands a bot a job)."""
+    who = about or f"the voice the owner talks to in Talk. {talker} talks; you do the work"
+    head = (f"{WORK_ORDER}{talker}, {who}. Do it, then reply to {talker} in plain facts: what you did, what you "
+            "found, what you checked, in one to five short sentences without Markdown. If something essential is "
+            "missing, ask one clear question instead of guessing. The owner approves risky actions as usual.")
     return head + ORDER_SPLIT + brief.strip() + ("\n\n" + "\n".join(files) if files else "")
 
 
