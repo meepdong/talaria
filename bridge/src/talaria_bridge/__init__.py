@@ -1,3 +1,3 @@
 """Talaria bridge: device registry, pairing and the TNP WebSocket server."""
 
-__version__ = "0.2.0b11"
+__version__ = "0.2.0b12"

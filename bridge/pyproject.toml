@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "talaria-bridge"
-version = "0.2.0b11"
+version = "0.2.0b12"
 description = "Talaria bridge: device pairing and the TNP WebSocket server"
 readme = "README.md"
 requires-python = ">=3.12"
