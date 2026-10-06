@@ -136,6 +136,9 @@ class ChatRepositoryTest {
             "attachments":[{"kind":"file","name":"photos_signed.pdf","mime":"application/pdf","size":11,"root":"workspace","path":"photos_signed.pdf"}]}}""")
         advanceUntilIdle()
         assertEquals(3, repo.state.value.openMessages.size, "the same file isn't shown twice")
+        api.push("chat.talk", """{"conversation_id":"c-1","message":{"id":"t-1","role":"user","text":"🎙 Add milk","ts":4}}""")
+        advanceUntilIdle()
+        assertEquals(Role.USER to "🎙 Add milk", repo.state.value.openMessages.last().let { it.role to it.text }, "what was said in Talk")
     }
 
     @Test

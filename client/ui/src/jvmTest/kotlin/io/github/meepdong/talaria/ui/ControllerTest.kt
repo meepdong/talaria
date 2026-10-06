@@ -187,6 +187,9 @@ class ControllerTest {
         c.setAutoSend(true)
         assertTrue(prefs.get(TalariaController.PREF_READ_ALOUD, false))
         assertTrue(c.await<Screen.Chat> { it.view.voice.autoSend }.view.voice.readAloud)
+        c.setTalkWait(TalkWait.PATIENT)
+        assertEquals("PATIENT", prefs.getString(TalariaController.PREF_TALK_WAIT, ""))
+        c.await<Screen.Chat> { it.view.voice.talkWait == TalkWait.PATIENT }
         c.close()
     }
 

@@ -117,3 +117,10 @@ def test_history_pages_show_each_file_once():
     on_older = [x["id"] for x in with_files(older, files, upper=20, oldest=True) if x["id"].startswith("f-")]
     assert on_newer == ["f-2", "f-3"] and on_older == ["f-0", "f-1"], "15 sits between the pages: the older one has it"
     assert sorted(on_older + on_newer) == ["f-0", "f-1", "f-2", "f-3"], "every file on exactly one page"
+
+
+def test_talk_sits_around_the_agents_messages_in_the_same_second():
+    brief = {"id": "7", "role": "user", "text": "🎙 From Talk: add the dentist", "ts": 50}
+    talk = [{"id": "t-2", "role": "assistant", "text": "I've asked Hermes.", "ts": 50},
+            {"id": "t-1", "role": "user", "text": "🎙 Add the dentist on Friday", "ts": 50}]
+    assert [x["id"] for x in with_files([brief], talk, upper=None, oldest=True)] == ["t-1", "7", "t-2"]

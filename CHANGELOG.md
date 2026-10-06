@@ -4,6 +4,15 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk keeps the conversation in the chat: what you said (🎙, written down as you said it, shown in the Talk bar
+  within about two seconds) and what the voice answered. Talk with no chat open starts one, named after your first
+  words, and opens it.
+- A level bar in the Talk bar moves with your voice, so you can see it's hearing you.
+- "Talk waits" in the chat menu: Quick (half a second of quiet ends your turn), Normal (0.8 s) or Patient (1.5 s).
+
 ## [0.2.0-beta.16] - 2026-10-06
 
 ### Added

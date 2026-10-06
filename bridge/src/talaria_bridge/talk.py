@@ -6,7 +6,8 @@ agent (web, email, calendar changes, files, the server, real thinking) it hands 
 the same chat; when the agent's reply comes, the talker says it in the same voice. The OpenRouter key stays here.
 
 Devices get talk.audio (24 kHz 16-bit mono PCM, base64, in order), talk.text (what's being said) and talk.done,
-all with the talk_id from talk.turn or talk.say.
+all with the talk_id from talk.turn or talk.say. Alongside, the same model writes down what the owner said
+(talk.heard), and both sides are kept in the conversation (chat.talk), so the chat shows what was said.
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ MAX_SAY = 2000
 ACTIVE_S = 15 * 60  # a conversation talked in this recently hears its agent's replies spoken
 MAX_ROUNDS = 3
 MEMORY = 8  # recent spoken exchanges kept per conversation, as text
+MAX_KEPT = 4000  # longest spoken message kept in a chat
+HEAR = ("Write down exactly what is said in this recording, word for word, in the language spoken (Hinglish as "
+        "spoken, in Latin letters). Don't answer it or add anything: output only the words, or nothing if no words "
+        "are said.")
 
 SYSTEM = """You are the voice of {name}, the owner's personal assistant, in a spoken conversation. The owner talks \
 to you; you answer out loud. Behind you is {name}'s full agent, which has the owner's memory, email, calendar, \
@@ -133,8 +138,13 @@ class Talker:
             raise TalkError(m.INVALID_PARAMS, "format must be wav or mp3")
         conv = self._conv(p.get("conversation_id"))
         talk_id = "tk_" + secrets.token_hex(8)
-        user = {"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": audio, "format": fmt}}]}
-        self._spawn(self._run(talk_id, conv, user, tools=True))
+        sound = {"type": "input_audio", "input_audio": {"data": audio, "format": fmt}}
+        system = self._system(conv)  # before the owner's words are kept, which makes them the chat's last message
+        hearing = asyncio.create_task(self._heard(talk_id, conv, sound, int(time.time())))
+        self._tasks.add(hearing)
+        hearing.add_done_callback(self._tasks.discard)
+        self._spawn(self._run(talk_id, conv, {"role": "user", "content": [sound]}, tools=True, hearing=hearing,
+                              system=system))
         return {"talk_id": talk_id}
 
     async def say(self, p: dict) -> dict:
@@ -195,8 +205,8 @@ class Talker:
         return {"role": "system", "content": SYSTEM.format(name=self.name, now=now, context=context)}
 
     async def _run(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool = True,
-                   unprompted: bool = False) -> None:
-        messages = [self._system(conv), *self.memory.get(conv or "", []), user]
+                   unprompted: bool = False, hearing: asyncio.Task | None = None, system: dict | None = None) -> None:
+        messages = [system or self._system(conv), *self.memory.get(conv or "", []), user]
         said_all, error = [], None
         try:
             for _ in range(MAX_ROUNDS):
@@ -205,6 +215,8 @@ class Talker:
                     said_all.append(said)
                 if not calls:
                     break
+                if hearing is not None and any(c["function"]["name"] == "ask_hermes" for c in calls):
+                    conv = (await hearing)[0]  # the owner's words go in the chat before the brief
                 messages.append({"role": "assistant", "content": said or None, "tool_calls": calls})
                 for call in calls:
                     result, conv = await self._tool(call, conv, talk_id)
@@ -215,9 +227,16 @@ class Talker:
             log.exception("talk %s failed", talk_id)
             error = f"Talk failed: {type(exc).__name__}"
         said = " ".join(said_all).strip()
+        heard = None
+        if hearing is not None:
+            heard_in, heard = await hearing
+            conv = conv or heard_in
+            if conv and said:
+                await self._keep(conv, "assistant", said)
         if remember and said:
-            # the owner's audio isn't kept; what the talker answered says what it heard
-            heard = user["content"][:500] if isinstance(user["content"], str) else "(the owner spoke)"
+            # the owner's audio isn't kept: their words as written down, or what the talker answered says what it heard
+            if heard is None:
+                heard = user["content"][:500] if isinstance(user["content"], str) else "(the owner spoke)"
             kept = self.memory.setdefault(conv or "", [])
             kept += [{"role": "user", "content": heard}, {"role": "assistant", "content": said}]
             del kept[:-2 * MEMORY]
@@ -229,6 +248,49 @@ class Talker:
         if error:
             done["error"] = error
         await self.chat.broadcast(m.notification("talk.done", done))
+
+    async def _heard(self, talk_id: str, conv: str | None, sound: dict, at: int) -> tuple[str | None, str]:
+        """Write down what the owner said and keep it in the chat (starting one if needed): (conversation, words).
+        Never raises: without the words, Talk carries on."""
+        words = ""
+        try:
+            resp = await self._http.post("/chat/completions", timeout=httpx.Timeout(30, connect=5), json={
+                "model": TALKER_MODEL, "modalities": ["text"],
+                "messages": [{"role": "system", "content": HEAR},
+                             {"role": "user", "content": [{"type": "text", "text": "The recording:"}, sound]}]})
+            if resp.status_code == 200:
+                words = str(resp.json()["choices"][0]["message"].get("content") or "").strip()
+            else:
+                log.warning("talker couldn't write down the words (%s)", resp.status_code)
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+            log.warning("talker couldn't write down the words: %s", type(exc).__name__)
+        words = words.strip('"“” ')[:MAX_KEPT - 2]
+        try:
+            if conv is None:
+                conv = await self._new_chat(words or "Talk")
+            if conv is not None and words:
+                await self._keep(conv, "user", "🎙 " + words, at)
+                await self.chat.broadcast(m.notification("talk.heard", {"talk_id": talk_id, "text": words,
+                                                                        "conversation_id": conv}))
+        except Exception:  # noqa: BLE001 (keeping it is a nicety; Talk goes on)
+            log.exception("talk %s: couldn't keep what was said", talk_id)
+        return conv, words
+
+    async def _new_chat(self, words: str) -> str | None:
+        agent = self.chat.default_agent
+        if agent is None or agent not in self.chat.agents:
+            return None
+        conv = await self.chat._new_conversation(agent, self.chat.agents[agent], words)
+        self.active[conv.id] = time.time()
+        return conv.id
+
+    async def _keep(self, conv: str, role: str, text: str, at: int | None = None) -> None:
+        at = at or int(time.time())
+        message = self.chat.store.add_talk(conv, at, role, text[:MAX_KEPT])
+        if role == "user":
+            self.chat.store.archive(conv, False)  # talking in an archived chat brings it back, as writing does
+        self.chat.store.touch(conv, role, text, max(at, int(time.time())))
+        await self.chat.broadcast(m.notification("chat.talk", {"conversation_id": conv, "message": message}))
 
     async def _stream(self, talk_id: str, conv: str | None, messages: list[dict], tools: bool) -> tuple[str, list[dict]]:
         """One model call: its audio and words go to the devices as they come; returns what it said and its tool calls."""

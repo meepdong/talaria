@@ -178,7 +178,8 @@ class TalariaController(
     /** Speech-to-text, set while the app can listen (on Android, while it's on screen). */
     private val speechInput = MutableStateFlow<SpeechInput?>(null)
     private val voice = MutableStateFlow(
-        VoiceView(readAloud = prefs.get(PREF_READ_ALOUD, false), autoSend = prefs.get(PREF_AUTO_SEND, false)),
+        VoiceView(readAloud = prefs.get(PREF_READ_ALOUD, false), autoSend = prefs.get(PREF_AUTO_SEND, false),
+            talkWait = TalkWait.entries.firstOrNull { it.name == prefs.getString(PREF_TALK_WAIT, "") } ?: TalkWait.NORMAL),
     )
     private var dictations = 0L
 
@@ -218,16 +219,20 @@ class TalariaController(
         }
         val session = TalkerSession(scope, api, recorder, player, cue = ::listenCue,
             onPhase = { phase, text ->
-                voice.update { if (talker != null) it.copy(talk = phase, heard = text, listening = phase == TalkPhase.LISTENING) else it }
+                voice.update {
+                    if (talker != null) it.copy(talk = phase, heard = text, listening = phase == TalkPhase.LISTENING, level = 0f) else it
+                }
             },
             onConversation = { id -> openConversation(id) },
             onEnd = { error ->
                 talker = null
                 talkerApprovals?.cancel()
                 talkOn = false
-                voice.update { it.copy(talk = null, listening = false, heard = "") }
+                voice.update { it.copy(talk = null, listening = false, heard = "", level = 0f) }
                 if (error != null) chat?.notice(error)
-            })
+            },
+            endQuietMs = { voice.value.talkWait.quietMs },
+            onLevel = { level -> voice.update { if (it.talk == TalkPhase.LISTENING) it.copy(level = level) else it } })
         talker = session
         session.start(chat?.state?.value?.openId)
         talkerApprovals = scope.launch { watchTalkerApprovals(session) }
@@ -1277,6 +1282,11 @@ class TalariaController(
         voice.update { it.copy(autoSend = on) }
     }
 
+    override fun setTalkWait(wait: TalkWait) {
+        prefs.setString(PREF_TALK_WAIT, wait.name)
+        voice.update { it.copy(talkWait = wait) }
+    }
+
     override fun retryMessage(key: String) {
         chat?.retry(key)
     }
@@ -1544,6 +1554,7 @@ class TalariaController(
 
         const val PREF_READ_ALOUD = "voice.read_aloud"
         const val PREF_AUTO_SEND = "voice.auto_send"
+        const val PREF_TALK_WAIT = "voice.talk_wait"
         /** Home's tile order on this device, as "DAY,NEXT,…" (see [homeOrder]). */
         const val PREF_HOME_ORDER = "home.order"
         /** The chat last open on this device, for Chat with Hermes and Talk. */

@@ -128,7 +128,18 @@ data class VoiceView(
     val autoSend: Boolean = false,
     /** Talk is on, and what it's doing; null when it's off. */
     val talk: TalkPhase? = null,
+    /** How loud the microphone hears them while Talk listens, 0 to 1. */
+    val level: Float = 0f,
+    /** How long Talk waits after they stop before it answers. */
+    val talkWait: TalkWait = TalkWait.NORMAL,
 )
+
+/** How long a pause ends the owner's turn in Talk. */
+enum class TalkWait(val label: String, val quietMs: Int) {
+    QUICK("Quick", 500), NORMAL("Normal", 800), PATIENT("Patient", 1500);
+
+    fun next() = entries[(ordinal + 1) % entries.size]
+}
 
 /** Talk's state (Talk 2): it listens, waits for Hermes, speaks its reply, then listens again. */
 enum class TalkPhase(val label: String) {

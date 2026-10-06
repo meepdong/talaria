@@ -26,7 +26,8 @@ class TalkerSessionTest {
         var starts = 0
         var cancels = 0
         var stops = 0
-        override fun start(listener: VoiceRecorder.Listener) { this.listener = listener; starts++ }
+        var quietMs = 0
+        override fun start(listener: VoiceRecorder.Listener, endQuietMs: Int) { this.listener = listener; starts++; quietMs = endQuietMs }
         override fun stop() { stops++ }
         override fun cancel() { cancels++; listener = null }
     }
@@ -93,6 +94,32 @@ class TalkerSessionTest {
         mic.listener!!.done(null)
         assertEquals(listOf<String?>(null), ends)
         assertEquals(listOf("c-7"), talker.ended)
+    }
+
+    @Test
+    fun theirWordsShowAndOpenTheChatTheWaitIsTheirsAndTheLevelMoves() = runBlocking {
+        val mic = Mic(); val speaker = Speaker(); val talker = Talker()
+        val phases = mutableListOf<Pair<TalkPhase, String>>(); val opened = mutableListOf<String>()
+        val levels = mutableListOf<Float>()
+        var wait = TalkWait.PATIENT
+        val s = TalkerSession(scope, talker, mic, speaker, cue = {}, onPhase = { p, t -> phases += p to t },
+            onConversation = { opened += it }, onEnd = {}, endQuietMs = { wait.quietMs }, onLevel = { levels += it })
+        s.start(null)
+        assertEquals(1500, mic.quietMs, "Patient waits longer before it answers")
+        mic.listener!!.level(0.4f)
+        mic.listener!!.done("hello".toByteArray())
+        assertEquals(listOf(0.4f, 0f), levels, "the level moves while listening, and drops when they're done")
+        talker.events.emit(TalkEvent.Heard("t1", "c-9", "Add milk to my list"))
+        assertEquals(TalkPhase.THINKING to "“Add milk to my list”", phases.last(), "their words show at once")
+        assertEquals(listOf("c-9"), opened, "the chat they're kept in opens")
+        assertEquals("c-9", s.conversationId)
+        talker.events.emit(TalkEvent.Audio("t1", "c-9", 0, "pcm".toByteArray()))
+        talker.events.emit(TalkEvent.Done("t1", "c-9", "Added milk.", unprompted = false, error = null))
+        assertEquals(listOf("c-9"), opened, "opened once")
+        wait = TalkWait.QUICK
+        speaker.drained()
+        assertEquals(500, mic.quietMs, "a change applies to the next turn")
+        s.end()
     }
 
     @Test

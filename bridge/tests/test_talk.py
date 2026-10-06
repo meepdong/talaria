@@ -32,12 +32,19 @@ def calls(*tool_calls: tuple[str, dict]) -> bytes:
 
 
 class FakeOpenRouter:
-    def __init__(self, *replies: bytes):
+    """The talker's streamed answers, in order; and what it writes down, for the requests that aren't streamed."""
+    def __init__(self, *replies: bytes, heard: str = "Add send Shreyas the humanoid files to my to-dos"):
         self.replies = list(replies)
+        self.heard = heard
         self.bodies: list[dict] = []
+        self.hearing: list[dict] = []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
-        self.bodies.append(json.loads(req.content))
+        body = json.loads(req.content)
+        if not body.get("stream"):
+            self.hearing.append(body)
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": self.heard}}]})
+        self.bodies.append(body)
         return httpx.Response(200, content=self.replies.pop(0), headers={"content-type": "text/event-stream"})
 
 
@@ -89,6 +96,77 @@ async def test_it_hears_does_the_quick_things_and_reads_them_back(tmp_path: Path
     await chat.close()
 
 
+async def test_what_was_said_is_written_down_and_kept_in_the_chat(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, voice_says("Added it. Anything else?"), voice_says("You've got the BOM review."))
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    await done(sent)
+    hear = fake.hearing[0]
+    assert hear["model"] == "openai/gpt-audio-mini" and hear["modalities"] == ["text"] and "stream" not in hear
+    assert "word for word" in hear["messages"][0]["content"]
+    assert hear["messages"][1]["content"][1] == {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
+    heard = [check("talk.heard", x)["params"] for x in sent if x["method"] == "talk.heard"]
+    assert heard[0]["text"] == "Add send Shreyas the humanoid files to my to-dos" and heard[0]["conversation_id"] == "c-1"
+    kept = [check("chat.talk", x)["params"] for x in sent if x["method"] == "chat.talk"]
+    assert [(k["conversation_id"], k["message"]["role"], k["message"]["text"]) for k in kept] == [
+        ("c-1", "user", "🎙 Add send Shreyas the humanoid files to my to-dos"), ("c-1", "assistant", "Added it. Anything else?")]
+    assert [x["text"] for x in chat.store.talk_messages("c-1")] == [k["message"]["text"] for k in kept]
+    assert chat.store.get("c-1").last_text == "Added it. Anything else?"
+
+    # the next turn remembers the words, not "(the owner spoke)"
+    fake.heard = "What's on today?"
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    for _ in range(200):
+        if len(chat.store.talk_messages("c-1")) == 4:
+            break
+        await asyncio.sleep(0.01)
+    remembered = fake.bodies[1]["messages"][1:-1]
+    assert remembered == [{"role": "user", "content": "Add send Shreyas the humanoid files to my to-dos"},
+                          {"role": "assistant", "content": "Added it. Anything else?"}]
+
+    # an approval's question and the retelling of the agent's replies aren't kept
+    fake.replies += [voice_says("I need your okay.")]
+    sent.clear()
+    await chat.handle("talk.say", {"text": "I need your okay.", "conversation_id": "c-1"})
+    await done(sent)
+    assert not [x for x in sent if x["method"] in ("chat.talk", "talk.heard")]
+    await chat.close()
+
+
+async def test_talk_without_a_chat_starts_one_titled_with_the_first_words(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, voice_says("Added it."))
+    sessions: list[tuple[str, str]] = []
+
+    class Agent:
+        async def create_session(self, session_id: str, title: str) -> dict:
+            sessions.append((session_id, title))
+            return {}
+
+        async def close(self) -> None:
+            pass
+
+    chat.agents = {"hermes": Agent()}
+    chat.default_agent = "hermes"
+    await chat.handle("talk.turn", {"audio": "UklGRg=="})
+    end = await done(sent)
+    conv = end["conversation_id"]
+    assert conv != "c-1" and sessions[0][0] == chat.store.get(conv).hermes_session_id
+    assert chat.store.get(conv).title.startswith("Add send Shreyas")
+    assert [x["role"] for x in chat.store.talk_messages(conv)] == ["user", "assistant"]
+    assert conv in chat.talker.active, "the agent's replies there are spoken"
+    await chat.close()
+
+
+async def test_without_the_words_talk_carries_on(tmp_path: Path):
+    chat, fake, sent = setup(tmp_path, voice_says("Sorry, say that again?"))
+    fake.heard = ""
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
+    end = await done(sent)
+    assert end["text"] == "Sorry, say that again?" and "error" not in end
+    assert not [x for x in sent if x["method"] == "talk.heard"]
+    assert [x["role"] for x in chat.store.talk_messages("c-1")] == ["assistant"]
+    await chat.close()
+
+
 async def test_ticking_off_by_name_and_briefing_the_agent(tmp_path: Path):
     chat, fake, sent = setup(tmp_path,
                              calls(("complete_todos", {"items": ["the bank", "passport"]})),
@@ -114,6 +192,8 @@ async def test_ticking_off_by_name_and_briefing_the_agent(tmp_path: Path):
                      voice_says("I've asked Hermes to add the dentist; I'll tell you when it's done.")]
     await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
     await done(sent)
+    order = [x["method"] for x in sent if x["method"] in ("chat.talk", "talk.done")]
+    assert order == ["chat.talk", "chat.talk", "talk.done"]
     assert briefs == [{"text": "🎙 From Talk: Add 'Dentist' to the calendar for Fri 9 Oct 17:00 IST.", "conversation_id": "c-1"}]
     await chat.close()
 

@@ -22,7 +22,8 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * Talk 3's ears: the microphone at 16 kHz until the owner stops talking (0.8 s of quiet after speech), as WAV. A
+ * Talk 3's ears: the microphone at 16 kHz until the owner stops talking (0.5, 0.8 or 1.5 s of quiet after speech,
+ * as they chose), as WAV, with how loud it is a few times a second. A
  * quarter of a second before the first word is kept so it isn't clipped; 7 s with nothing said gives null (Talk
  * ends); 20 s is the most one turn records.
  */
@@ -33,13 +34,13 @@ class AndroidRecorder(
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var state = IDLE
 
-    override fun start(listener: VoiceRecorder.Listener) {
+    override fun start(listener: VoiceRecorder.Listener, endQuietMs: Int) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            begin(listener)
+            begin(listener, endQuietMs)
         } else {
             main.post {
                 askPermission { granted ->
-                    if (granted) begin(listener) else listener.failed("Talaria needs the microphone to talk")
+                    if (granted) begin(listener, endQuietMs) else listener.failed("Talaria needs the microphone to talk")
                 }
             }
         }
@@ -53,12 +54,12 @@ class AndroidRecorder(
         if (state == RUNNING) state = CANCELLED
     }
 
-    private fun begin(listener: VoiceRecorder.Listener) {
+    private fun begin(listener: VoiceRecorder.Listener, endQuietMs: Int) {
         state = RUNNING
-        Thread({ record(listener) }, "talaria-talk-mic").start()
+        Thread({ record(listener, endQuietMs) }, "talaria-talk-mic").start()
     }
 
-    private fun record(listener: VoiceRecorder.Listener) {
+    private fun record(listener: VoiceRecorder.Listener, endQuietMs: Int) {
         val frame = RATE / 50  // 20 ms
         val rec = try {
             AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
@@ -90,6 +91,10 @@ class AndroidRecorder(
                 for (s in chunk) sum += s.toDouble() * s
                 val rms = sqrt(sum / n)
                 ms += 20
+                if (ms % LEVEL_EVERY_MS == 0) {
+                    val level = sqrt((rms / LOUD).coerceIn(0.0, 1.0)).toFloat()
+                    main.post { listener.level(level) }
+                }
                 if (ms <= 300) floor = if (floor == 0.0) rms else floor * 0.8 + rms * 0.2  // the room, before they speak
                 val loud = rms > max(MIN_SPEECH, floor * 2.5)
                 if (!speaking) {
@@ -104,7 +109,7 @@ class AndroidRecorder(
                 } else {
                     out.write(pcm(chunk))
                     quietMs = if (loud) 0 else quietMs + 20
-                    if (quietMs >= END_QUIET_MS || ms >= MAX_MS) break
+                    if (quietMs >= endQuietMs || ms >= MAX_MS) break
                 }
             }
         } finally {
@@ -136,7 +141,8 @@ class AndroidRecorder(
         const val CANCELLED = 3
         const val MIN_SPEECH = 600.0
         const val PRE_FRAMES = 12  // 240 ms
-        const val END_QUIET_MS = 800
+        const val LEVEL_EVERY_MS = 60
+        const val LOUD = 6_000.0  // as loud as the level shows
         const val NOTHING_MS = 7_000
         const val MAX_MS = 20_000
     }

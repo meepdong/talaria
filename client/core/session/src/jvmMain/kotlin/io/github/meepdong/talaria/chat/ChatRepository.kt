@@ -721,7 +721,7 @@ class ChatRepository(
                 "chat.queued" -> onQueued(p)
                 "chat.aside.done" -> onAside(p)
                 "chat.hidden" -> onHidden(p)
-                "chat.file" -> onFile(p)
+                "chat.file", "chat.talk" -> onFile(p)  // a message the bridge keeps: a file, or what was said in Talk
                 "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
             }
         }

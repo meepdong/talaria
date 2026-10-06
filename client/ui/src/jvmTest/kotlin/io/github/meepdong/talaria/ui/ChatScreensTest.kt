@@ -324,6 +324,7 @@ class ChatScreensTest {
         onNodeWithTag("dictate").performClick()  // while dictating, a tap stops it
         onNodeWithTag("speak-h:2").performClick()
         onNodeWithTag("menu").performClick()
+        onNodeWithTag("talk-wait").assertTextContains("Talk waits: Normal")
         onNodeWithTag("read-aloud").performClick()
 
         // what was heard goes into the composer to edit, and isn't sent yet

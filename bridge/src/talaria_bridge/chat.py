@@ -132,6 +132,13 @@ CREATE TABLE IF NOT EXISTS agent_files (
     size INTEGER NOT NULL,
     caption TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS talk_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL
+);
 """
 COLUMNS = ("id", "agent_id", "hermes_session_id", "title", "created_at", "updated_at", "last_role", "last_text",
            "model_provider", "model_name", "pinned", "archived")
@@ -207,6 +214,16 @@ class ChatStore:
         rows = self.db.execute("SELECT * FROM agent_files WHERE conversation_id = ? ORDER BY at, id", (conversation_id,))
         return [file_message(r) for r in rows]
 
+    def add_talk(self, conversation_id: str, at: int, role: str, text: str) -> dict:
+        """A spoken exchange from Talk (§9 chat.talk), kept with the conversation; returns it as a message."""
+        cur = self.db.execute("INSERT INTO talk_messages (conversation_id, at, role, text) VALUES (?, ?, ?, ?)",
+                              (conversation_id, at, role, text))
+        return {"id": f"t-{cur.lastrowid}", "role": role, "text": text, "ts": at}
+
+    def talk_messages(self, conversation_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT * FROM talk_messages WHERE conversation_id = ? ORDER BY at, id", (conversation_id,))
+        return [{"id": f"t-{r['id']}", "role": r["role"], "text": r["text"], "ts": r["at"]} for r in rows]
+
     def set_model(self, conversation_id: str, provider: str, model: str) -> None:
         self.db.execute("UPDATE conversations SET model_provider = ?, model_name = ? WHERE id = ?",
                         (provider, model, conversation_id))
@@ -243,6 +260,7 @@ class ChatStore:
     def delete(self, conversation_id: str) -> None:
         self.db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
         self.db.execute("DELETE FROM hidden_messages WHERE conversation_id = ?", (conversation_id,))
+        self.db.execute("DELETE FROM talk_messages WHERE conversation_id = ?", (conversation_id,))
 
 
 # turns
@@ -376,17 +394,24 @@ def page_start(messages: list[dict]) -> int | None:
     return min(times) if times else None
 
 
+def _rank(x: dict) -> int:
+    """Within a second: what the owner said in Talk, then the agent's files, then the agent's session, then the talker."""
+    if x["id"].startswith("t-"):
+        return 0 if x["role"] == "user" else 3
+    return 1 if x["id"].startswith("f-") else 2
+
+
 def with_files(messages: list[dict], files: list[dict], upper: int | None, oldest: bool) -> list[dict]:
-    """A history page with the agent's files at their time: those from its first message's time (or any, on the
-    oldest page) up to [upper], the first time of the newer page (none on the newest). So pages split the files
-    with no gap and nothing twice."""
+    """A history page with the bridge's own messages (the agent's files, Talk) at their time: those from its first
+    message's time (or any, on the oldest page) up to [upper], the first time of the newer page (none on the
+    newest). So pages split them with no gap and nothing twice."""
     lo = page_start(messages)
     page = [f for f in files if (upper is None or f["ts"] < upper) and (oldest or (lo is not None and f["ts"] >= lo))]
     if not page:
         return messages
     merged = messages + page
     # stable: a file sent while a reply ran sorts before the reply that finished after it
-    return sorted(merged, key=lambda x: (x["ts"] if isinstance(x.get("ts"), int) else 0, 0 if x["id"].startswith("f-") else 1))
+    return sorted(merged, key=lambda x: (x["ts"] if isinstance(x.get("ts"), int) else 0, _rank(x)))
 
 
 def history_messages(rows: list[dict]) -> list[dict]:
@@ -961,7 +986,8 @@ class ChatService:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
         hidden = self.store.hidden(conv.id)
         page = history_messages(rows)
-        messages = with_files(page, self.store.agent_files(conv.id), upper=upper, oldest=len(rows) < limit)
+        kept = self.store.agent_files(conv.id) + self.store.talk_messages(conv.id)
+        messages = with_files(page, kept, upper=upper, oldest=len(rows) < limit)
         start = page_start(page)
         cursor = f"{offset + len(rows)}" + (f":{start}" if start is not None else "")
         return {"messages": [x for x in messages if x["id"] not in hidden],

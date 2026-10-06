@@ -8,8 +8,11 @@ import kotlinx.coroutines.launch
 
 /** Records what the owner says, until they stop talking. The platform's own (Android: the microphone). */
 interface VoiceRecorder {
-    /** Records; [Listener.done] gets WAV once they've finished, or null if nothing was said. */
-    fun start(listener: Listener)
+    /**
+     * Records; [Listener.done] gets WAV once they've finished ([endQuietMs] of quiet after speech), or null if
+     * nothing was said.
+     */
+    fun start(listener: Listener, endQuietMs: Int = TalkWait.NORMAL.quietMs)
     /** Stop now and deliver what was said so far. */
     fun stop()
     /** Stop now and drop it. */
@@ -18,6 +21,8 @@ interface VoiceRecorder {
     interface Listener {
         /** They started speaking. */
         fun speaking() {}
+        /** How loud it is now, 0 to 1, a few times a second. */
+        fun level(level: Float) {}
         fun done(wav: ByteArray?)
         fun failed(message: String)
     }
@@ -59,6 +64,10 @@ class TalkerSession(
     private val onConversation: (String) -> Unit,
     /** Talk is over; with why, if it failed. */
     private val onEnd: (String?) -> Unit,
+    /** How long a pause ends their turn, in ms (Quick, Normal, Patient). */
+    private val endQuietMs: () -> Int = { TalkWait.NORMAL.quietMs },
+    /** How loud the microphone hears them, while listening. */
+    private val onLevel: (Float) -> Unit = {},
 ) {
     @Volatile var conversationId: String? = null
         private set
@@ -159,7 +168,10 @@ class TalkerSession(
         }
         onPhase(TalkPhase.LISTENING, "")
         recorder.start(object : VoiceRecorder.Listener {
+            override fun level(level: Float) = onLevel(level)
+
             override fun done(wav: ByteArray?) {
+                onLevel(0f)
                 val busy = synchronized(lock) {
                     listening = false
                     mine.isNotEmpty() || playing.isNotEmpty()
@@ -172,7 +184,7 @@ class TalkerSession(
             }
 
             override fun failed(message: String) = end(message)
-        })
+        }, endQuietMs())
     }
 
     private fun send(wav: ByteArray) {
@@ -184,6 +196,14 @@ class TalkerSession(
                 return@launch
             }
             synchronized(lock) { mine += id }
+        }
+    }
+
+    /** The talker started a chat for this Talk: talk on in it, and open it. */
+    private fun adopt(started: String?) {
+        if (conversationId == null && started != null) {
+            conversationId = started
+            onConversation(started)
         }
     }
 
@@ -207,12 +227,13 @@ class TalkerSession(
                 val text = synchronized(lock) { said.getOrPut(e.talkId) { StringBuilder() }.append(e.text).toString() }
                 onPhase(TalkPhase.SPEAKING, text)
             }
+            is TalkEvent.Heard -> {
+                adopt(e.conversationId)
+                // their words show until the answer starts (they're kept in the chat too)
+                if (synchronized(lock) { e.talkId !in playing && !listening }) onPhase(TalkPhase.THINKING, "“${e.text}”")
+            }
             is TalkEvent.Done -> {
-                val started = e.conversationId
-                if (conversationId == null && started != null) {
-                    conversationId = started
-                    onConversation(started)
-                }
+                adopt(e.conversationId)
                 val (idle, then) = synchronized(lock) {
                     mine -= e.talkId
                     playing -= e.talkId

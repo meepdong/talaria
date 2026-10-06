@@ -262,6 +262,7 @@ interface TalariaActions {
     fun setReadAloud(on: Boolean) {}
     /** Send dictated text as soon as it's heard, rather than leaving it to edit. */
     fun setAutoSend(on: Boolean) {}
+    fun setTalkWait(wait: TalkWait) {}
 
     fun pickModel(provider: String, model: String) {}
 

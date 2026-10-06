@@ -30,6 +30,8 @@ class VoiceApi(private val api: ChatApi) {
         /** 24 kHz 16-bit mono PCM. */
         data class Audio(override val talkId: String, override val conversationId: String?, val seq: Int, val pcm: ByteArray) : TalkEvent
         data class Text(override val talkId: String, override val conversationId: String?, val text: String) : TalkEvent
+        /** What the owner said, written down; [conversationId] is the chat it's kept in. */
+        data class Heard(override val talkId: String, override val conversationId: String?, val text: String) : TalkEvent
         data class Done(override val talkId: String, override val conversationId: String?, val text: String,
                         val unprompted: Boolean, val error: String?) : TalkEvent
     }
@@ -44,6 +46,7 @@ class VoiceApi(private val api: ChatApi) {
             "talk.audio" -> runCatching { Base64.getDecoder().decode(str("data")) }.getOrNull()
                 ?.let { TalkEvent.Audio(id, conv, (p["seq"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0, it) }
             "talk.text" -> TalkEvent.Text(id, conv, str("text").orEmpty())
+            "talk.heard" -> TalkEvent.Heard(id, conv, str("text").orEmpty())
             "talk.done" -> TalkEvent.Done(id, conv, str("text").orEmpty(),
                 (p["unprompted"] as? JsonPrimitive)?.content == "true", str("error"))
             else -> null

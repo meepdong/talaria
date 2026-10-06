@@ -1,5 +1,6 @@
 package io.github.meepdong.talaria.ui
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -343,6 +345,11 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
                     modifier = Modifier.testTag("auto-send"),
                     onClick = { open = false; actions.setAutoSend(!voice.autoSend) })
             }
+            if (voice.canDictate) {
+                DropdownMenuItem(text = { Text("Talk waits: ${voice.talkWait.label}") },
+                    modifier = Modifier.testTag("talk-wait"),
+                    onClick = { actions.setTalkWait(voice.talkWait.next()) })
+            }
             if (id == null) return@DropdownMenu
             DropdownMenuItem(text = { Text("Rename") }, onClick = { open = false; onRename() })
             DropdownMenuItem(
@@ -587,7 +594,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         if (d.send) send()
     }
     voice.talk?.let { phase ->
-        TalkBar(phase, voice.heard, actions)
+        TalkBar(phase, voice.heard, voice.level, actions)
         return
     }
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
@@ -741,7 +748,7 @@ private fun ApprovalCard(a: ApprovalItem, onAnswer: (String) -> Unit) {
  * was heard while listening, and interrupts Hermes (stopping its reply) while it thinks or speaks; End stops Talk.
  */
 @Composable
-private fun TalkBar(phase: TalkPhase, heard: String, actions: TalariaActions) {
+private fun TalkBar(phase: TalkPhase, heard: String, level: Float, actions: TalariaActions) {
     Surface(
         color = if (phase == TalkPhase.LISTENING || phase == TalkPhase.APPROVING) Color(0xFFB4531A) else MaterialTheme.colorScheme.primaryContainer,
         shape = RoundedCornerShape(16.dp),
@@ -759,6 +766,13 @@ private fun TalkBar(phase: TalkPhase, heard: String, actions: TalariaActions) {
                     },
                     color = on, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
+                if (phase == TalkPhase.LISTENING) {
+                    // the microphone hears them: a bar that moves with their voice
+                    val shown by animateFloatAsState(level.coerceIn(0f, 1f), label = "talk-level")
+                    Box(Modifier.padding(top = 6.dp).fillMaxWidth(0.6f).height(4.dp).background(on.copy(alpha = 0.25f), RoundedCornerShape(2.dp))) {
+                        Box(Modifier.fillMaxWidth(shown).height(4.dp).background(on, RoundedCornerShape(2.dp)).testTag("talk-level"))
+                    }
+                }
             }
             TextButton(onClick = actions::endTalk, modifier = Modifier.testTag("talk-end")) {
                 Text("End", color = on, fontWeight = FontWeight.SemiBold)
