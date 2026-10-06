@@ -297,6 +297,27 @@ def fmt_time(ts: int | None) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "never"
 
 
+def cmd_hermes_serve_probe(args: argparse.Namespace) -> int:
+    """talaria hermes-serve probe: what Hermes's other backend offers (HANDOFF item 11, step 0)."""
+    import asyncio
+
+    from .hermes_serve import ServeUnavailable, probe, read_token
+
+    try:
+        token = read_token(args.key_file)
+    except OSError as exc:
+        print(f"cannot read {args.key_file}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        lines = asyncio.run(probe(args.url, token))
+    except ServeUnavailable as exc:
+        print(f" ✗ hermes serve at {args.url}: {exc}", file=sys.stderr)
+        return 1
+    for what, ok, said in lines:
+        print(f" {'✓' if ok else '✗'} {what}: {said}")
+    return 0 if all(ok for _, ok, _ in lines) else 1
+
+
 def cmd_devices_list(args: argparse.Namespace) -> int:
     registry, _ = open_home(args.home)
     devices = registry.list_devices()
@@ -382,6 +403,13 @@ def build_parser() -> argparse.ArgumentParser:
     revoke = dsub.add_parser("revoke")
     revoke.add_argument("device_id", help="device id or a unique prefix of it")
     revoke.set_defaults(func=cmd_devices_revoke)
+
+    serve_cmd = sub.add_parser("hermes-serve", help="Hermes's other backend (hermes serve): the doorway trial")
+    ssub = serve_cmd.add_subparsers(dest="serve_command", required=True)
+    probe_cmd = ssub.add_parser("probe", help="connect and list what it offers: bots, group chats, jobs, skills, Kanban")
+    probe_cmd.add_argument("--url", default="ws://127.0.0.1:9119/api/ws")
+    probe_cmd.add_argument("--key-file", type=Path, default=Path("/etc/talaria/hermes-serve.key"))
+    probe_cmd.set_defaults(func=cmd_hermes_serve_probe)
     return parser
 
 
