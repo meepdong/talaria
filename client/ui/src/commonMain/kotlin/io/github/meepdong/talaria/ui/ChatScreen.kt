@@ -676,8 +676,17 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                         },
                     )
                     if (voice.canDictate) {
-                        IconButton(onClick = actions::toggleDictation,
-                            modifier = Modifier.padding(vertical = 4.dp).testTag("dictate")) {
+                        // tap: Talk, a spoken conversation in this chat; long press: dictate into the box to edit first
+                        Box(
+                            Modifier.padding(vertical = 4.dp).size(48.dp).clip(CircleShape)
+                                .combinedClickable(
+                                    onClickLabel = if (voice.listening) "Stop dictating" else "Talk",
+                                    onLongClickLabel = "Dictate",
+                                    onLongClick = actions::toggleDictation,
+                                    onClick = { if (voice.listening) actions.toggleDictation() else actions.talk() },
+                                ).testTag("dictate"),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Text(if (voice.listening) "■" else "🎤")
                         }
                     }
@@ -734,17 +743,18 @@ private fun ApprovalCard(a: ApprovalItem, onAnswer: (String) -> Unit) {
 @Composable
 private fun TalkBar(phase: TalkPhase, heard: String, actions: TalariaActions) {
     Surface(
-        color = if (phase == TalkPhase.LISTENING) Color(0xFFB4531A) else MaterialTheme.colorScheme.primaryContainer,
+        color = if (phase == TalkPhase.LISTENING || phase == TalkPhase.APPROVING) Color(0xFFB4531A) else MaterialTheme.colorScheme.primaryContainer,
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth().padding(8.dp).clickable(onClick = actions::talk).testTag("talk-bar"),
     ) {
-        val on = if (phase == TalkPhase.LISTENING) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+        val on = if (phase == TalkPhase.LISTENING || phase == TalkPhase.APPROVING) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
         Row(Modifier.padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(phase.label, color = on, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("talk-phase"))
                 Text(
                     when (phase) {
                         TalkPhase.LISTENING -> heard.ifEmpty { "Say something, or stay quiet to finish" }
+                        TalkPhase.APPROVING -> heard.ifEmpty { "Yes allows it once, no stops it; or answer on screen" }
                         else -> "Tap to interrupt"
                     },
                     color = on, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,

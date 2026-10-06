@@ -56,6 +56,7 @@ class ChatScreensTest {
         override fun attachFiles(photos: Boolean) { calls += "attach $photos" }
         override fun removeAttachment(index: Int) { calls += "remove $index" }
         override fun toggleDictation() { calls += "dictate" }
+        override fun talk() { calls += "talk" }
         override fun dictationTaken(id: Long) { calls += "taken $id" }
         override fun speak(key: String, text: String) { calls += "speak $key" }
         override fun stopSpeaking() { calls += "stop speaking" }
@@ -299,6 +300,19 @@ class ChatScreensTest {
     }
 
     @Test
+    fun theMicTalksAndALongPressDictates() = runComposeUiTest {
+        val actions = Recorder()
+        setContent {
+            androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) {
+                ChatHome(view(state()).copy(voice = VoiceView(canDictate = true)), actions)
+            }
+        }
+        onNodeWithTag("dictate").performClick()
+        onNodeWithTag("dictate").performTouchInput { longClick() }
+        assertEquals(listOf("talk", "dictate"), actions.calls)
+    }
+
+    @Test
     fun voice() = runComposeUiTest {
         val actions = Recorder()
         val base = view(state())
@@ -307,7 +321,7 @@ class ChatScreensTest {
             androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 800.dp)) { ChatHome(v, actions) }
         }
         onNodeWithTag("heard").assertTextContains("🎤 book a")
-        onNodeWithTag("dictate").performClick()
+        onNodeWithTag("dictate").performClick()  // while dictating, a tap stops it
         onNodeWithTag("speak-h:2").performClick()
         onNodeWithTag("menu").performClick()
         onNodeWithTag("read-aloud").performClick()

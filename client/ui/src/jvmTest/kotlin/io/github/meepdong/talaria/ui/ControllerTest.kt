@@ -272,7 +272,7 @@ class ControllerTest {
         assertNull(talking.view.openId, "with no chat to go back to, Talk starts one")
         input.listener!!.done("what's on today")
         // sent straight away, then Talk waits for Hermes's reply to speak it
-        val sent = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.THINKING }
+        val sent = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.THINKING && it.view.messages.isNotEmpty() }
         assertEquals("🎙 what's on today", sent.view.messages.last().text, "marked as spoken, for Hermes and in the chat")
         assertNull(sent.view.voice.dictation, "not left in the composer")
 
@@ -283,6 +283,15 @@ class ControllerTest {
         assertTrue(input.listener !== first)
         input.listener!!.done("")
         c.await<Screen.Chat> { it.view.voice.talk == null && !it.view.voice.listening }
+
+        // in an open chat, Talk continues that chat
+        c.openConversation("c-9")
+        c.await<Screen.Chat> { it.view.openId == "c-9" }
+        c.talk()
+        val inChat = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING }
+        assertEquals("c-9", inChat.view.openId, "not a new chat")
+        c.endTalk()
+        c.await<Screen.Chat> { it.view.voice.talk == null }
 
         // End stops it from any state
         c.talk()

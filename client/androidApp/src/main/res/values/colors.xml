@@ -3,4 +3,6 @@
     <color name="ink">#141A33</color>
     <color name="brass">#E7B04A</color>
     <color name="paper">#F3F5FB</color>
+    <!-- the app's own background (Theme.kt), behind the status and navigation bars -->
+    <color name="app_background">#EEF0F2</color>
 </resources>

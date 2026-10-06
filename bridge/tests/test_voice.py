@@ -17,6 +17,9 @@ from talaria_bridge.voice import VoiceError, VoiceService
 
 def fake_openrouter(seen: list, *, speech_status=200, ack="  Sure, *checking* your calendar now. "):
     def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET" and req.url.path.endswith("/models/user"):
+            seen.append((req.url.path, None, None))
+            return httpx.Response(200, json={"data": [{"id": "qwen/qwen3.8-flash"}, {"id": "qwen/qwen3.7-flash"}]})
         body = json.loads(req.content)
         seen.append((req.url.path, body, req.headers.get("authorization")))
         if req.url.path.endswith("/audio/speech"):
@@ -105,3 +108,36 @@ async def test_chat_routes_voice_and_gives_the_quick_line_the_last_answer(tmp_pa
     assert err.value.code == m.METHOD_NOT_FOUND, "no voice key: the app uses the phone's own voice"
     await chat.close()
     store.close()
+
+
+class FakeHermes:
+    async def model_options(self):
+        return {"provider": "openrouter", "model": "qwen/qwen3.8-flash", "providers": [
+            {"slug": "openrouter", "name": "OpenRouter",
+             "models": ["anthropic/claude-sonnet-5.5", "qwen/qwen3.8-flash", "qwen/qwen3.7-flash", "openai/gpt-6"]},
+            {"slug": "nous", "name": "Nous Portal", "models": ["hermes-5"]}]}
+
+    async def close(self):
+        pass
+
+
+async def test_the_model_picker_lists_only_what_the_key_may_use(tmp_path: Path):
+    seen: list = []
+
+    async def unused(msg: dict) -> None:
+        pass
+
+    voice = VoiceService("sk", transport=fake_openrouter(seen))
+    chat = ChatService(ChatStore(tmp_path / "chat.db"), {"hermes": FakeHermes()}, unused, voice=voice)
+    res, _ = await chat.handle("agent.models", {})
+    check("agent.models.result", m.result("1", res))
+    by = {p["id"]: p["models"] for p in res["providers"]}
+    assert by["openrouter"] == ["qwen/qwen3.8-flash", "qwen/qwen3.7-flash"], "the guardrail's list, Hermes's order"
+    assert by["nous"] == ["hermes-5"], "other providers as Hermes lists them"
+    await chat.handle("agent.models", {})
+    assert sum(1 for path, _, _ in seen if path.endswith("/models/user")) == 1, "cached"
+
+    without = ChatService(ChatStore(tmp_path / "other.db"), {"hermes": FakeHermes()}, unused)
+    res, _ = await without.handle("agent.models", {})
+    assert len(res["providers"][0]["models"]) == 4, "no key on the bridge: everything Hermes lists"
+    await chat.close()

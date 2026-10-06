@@ -24,6 +24,8 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
     private var replyStarted = false
     private var lastSoundMs = 0L
     private var nudges = 0
+    /** Waiting for the owner (an approval on screen): no "still working" lines meanwhile. */
+    private var held = false
 
     /** The reply so far: its text, its tool steps, and whether it has ended. */
     fun update(text: String, tools: List<ToolStep>, over: Boolean) {
@@ -69,7 +71,8 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
      */
     fun nudge(nowMs: Long) {
         val nextUp = synchronized(lock) {
-            if (stopped || finished || replyOver || speaking || waiting.isNotEmpty() || nudges >= MAX_NUDGES) return
+            if (held) lastSoundMs = 0L
+            if (held || stopped || finished || replyOver || speaking || waiting.isNotEmpty() || nudges >= MAX_NUDGES) return
             if (lastSoundMs == 0L) lastSoundMs = nowMs
             if (nowMs - lastSoundMs < QUIET_MS) return
             waiting.append(NUDGES[nudges % NUDGES.size]).append(' ')
@@ -78,6 +81,25 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
         }
         nextUp?.let(::say)
     }
+
+    /**
+     * Something Talk says itself, in the same voice: after what's waiting, before what comes next. [then] runs
+     * once it has been said (such as listening for a yes or no).
+     */
+    fun note(line: String, then: (() -> Unit)? = null) {
+        val nextUp = synchronized(lock) {
+            if (stopped || finished) return
+            waiting.append(line).append(' ')
+            afterSaid = then
+            takeNext()
+        }
+        nextUp?.let(::say)
+    }
+
+    private var afterSaid: (() -> Unit)? = null
+
+    /** Hold while the owner answers something on screen (no nudges), and carry on after. */
+    fun hold(on: Boolean) = synchronized(lock) { held = on }
 
     /** While something is said, the next batch is frozen so its audio can be fetched now. */
     private fun freezeNext() {
@@ -120,12 +142,15 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
         synchronized(lock) { saidAnything = true }
         onSpeak()
         out.speak(words) {
-            val following = synchronized(lock) {
+            val (following, then) = synchronized(lock) {
                 speaking = false
                 lastSoundMs = 0L  // the quiet is counted from the next nudge() on
                 if (stopped) return@speak
-                takeNext()
+                // a note's follow-up runs once nothing more is queued behind it
+                val then = afterSaid.takeIf { next == null && waiting.isEmpty() }?.also { afterSaid = null }
+                takeNext() to then
             }
+            then?.invoke()
             following?.let(::say) ?: maybeFinish()
         }
         freezeNext()

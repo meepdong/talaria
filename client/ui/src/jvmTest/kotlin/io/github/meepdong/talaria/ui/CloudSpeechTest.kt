@@ -114,4 +114,40 @@ class CloudSpeechTest {
         loop.nudge(1_000 + TalkLoop.QUIET_MS)
         assertEquals("Still working on it.", said.last())
     }
+
+    @Test
+    fun anApprovalIsSaidInTheSameVoiceAndTalkCarriesOn() {
+        val said = mutableListOf<String>()
+        var onDone: (() -> Unit)? = null
+        val out = object : SpeechOutput {
+            override fun speak(text: String, onDone: () -> Unit) { said += text; setDone(onDone) }
+            override fun stop() {}
+            fun setDone(d: () -> Unit) { onDone = d }
+        }
+        var finished = false
+        val loop = TalkLoop(out) { finished = true }
+        loop.hold(true)
+        var listening = false
+        loop.note(TalariaController.approvalLine("Run **curl wttr.in**")) { listening = true }
+        assertEquals(listOf("I need your okay for this: Run curl wttr.in. Say yes to allow it once, or no."), said)
+        assertTrue(!listening, "listens only once the question has been said")
+        onDone!!.invoke()
+        assertTrue(listening)
+        loop.nudge(1)
+        loop.nudge(1 + TalkLoop.QUIET_MS * 3)
+        assertEquals(1, said.size, "no 'still working' while waiting for the owner")
+        loop.hold(false)
+        loop.update("The hottest part is around two.", emptyList(), over = true)
+        assertEquals("The hottest part is around two.", said.last(), "after the approval, the answer, in the same voice")
+        onDone!!.invoke()
+        assertTrue(finished, "then it listens again")
+    }
+
+    @Test
+    fun yesAllowsOnceAndNoDenies() {
+        for (y in listOf("yes", "Yeah go ahead", "okay do it", "sure")) assertEquals("once", TalariaController.approvalAnswer(y), y)
+        for (n in listOf("no", "nope", "don't do that", "stop")) assertEquals("deny", TalariaController.approvalAnswer(n), n)
+        for (u in listOf("", "what is it", "yes no", "no, yes")) assertEquals(null, TalariaController.approvalAnswer(u), u)
+        assertEquals("I need your okay for this. Say yes to allow it once, or no.", TalariaController.approvalLine(null))
+    }
 }

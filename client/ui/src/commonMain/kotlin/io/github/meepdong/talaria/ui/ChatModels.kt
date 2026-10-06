@@ -131,4 +131,8 @@ data class VoiceView(
 )
 
 /** Talk's state (Talk 2): it listens, waits for Hermes, speaks its reply, then listens again. */
-enum class TalkPhase(val label: String) { LISTENING("Listening…"), THINKING("Hermes is thinking…"), SPEAKING("Hermes is speaking…") }
+enum class TalkPhase(val label: String) {
+    LISTENING("Listening…"), THINKING("Hermes is thinking…"), SPEAKING("Hermes is speaking…"),
+    /** Hermes asked for an approval: "yes" allows it once, "no" denies it. */
+    APPROVING("Say yes or no…"),
+}

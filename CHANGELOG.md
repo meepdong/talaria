@@ -4,6 +4,23 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Approve by voice in Talk: Talk says what Hermes wants to do; "yes" allows it once, "no" stops it, and you can
+  still answer on screen. "Always" stays an on-screen choice, and server operations still need a tap.
+- The mic in a chat starts Talk in that chat; a long press dictates into the box as before.
+
+### Changed
+- Talk from Home continues the chat last open, whatever its age (long chats are compressed now).
+- Talk stays on through an approval and keeps its voice; Read aloud uses the same natural voice. The phone's own
+  voice is no longer used where the natural voice can play: a piece that can't be fetched is skipped.
+- The quick first line is only said when Hermes takes more than about a second to start.
+- The model picker lists only the models your OpenRouter key may use.
+
+### Fixed
+- The status bar was unreadable (white on white); it now takes the app's background in light and dark mode.
+
 ## [0.2.0-beta.11] - 2026-10-06
 
 ### Added

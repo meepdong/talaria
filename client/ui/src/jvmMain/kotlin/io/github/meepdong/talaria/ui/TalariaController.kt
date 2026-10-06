@@ -193,8 +193,9 @@ class TalariaController(
     /** The platform's audio player, for Talk's natural voice; without one Talk uses the device's own voice. */
     fun setAudioPlayer(player: AudioPlayer?) {
         talkVoice = player?.let {
+            // no fallback to the device's own voice: the owner would rather miss a piece than hear it robotic
             CloudSpeech(scope, fetch = { text -> (mode.value as? Mode.Connected)?.voice?.speech(text) }, player = it,
-                fallback = speechOutput)
+                fallback = null)
         }
     }
     private var pairJob: Job? = null
@@ -544,12 +545,13 @@ class TalariaController(
         }
         when (voice.value.talk) {
             null -> {
-                // the last chat, if it's recent: an old long chat would make every spoken reply slow
-                resumeChat(maxAgeS = TALK_RESUME_S)
+                // in a chat, Talk continues that chat; elsewhere, the chat last open here (compression keeps it small)
+                val here = page.value.conversationOpen && page.value.tab == Tab.CHATS && chat?.state?.value?.openId != null
+                if (!here) resumeChat()
                 talkOn = true
                 listenForTalk()
             }
-            TalkPhase.LISTENING -> speechInput.value?.stop()
+            TalkPhase.LISTENING, TalkPhase.APPROVING -> speechInput.value?.stop()
             else -> interruptTalk()
         }
     }
@@ -609,27 +611,80 @@ class TalariaController(
         talkFollow?.cancel()
         talkFollow = scope.launch {
             // a quick line from a fast model while Hermes starts, and "still on it" while its tools run
-            launch { (mode.value as? Mode.Connected)?.voice?.ack(text, conversationId)?.let(loop::opening) }
+            launch {
+                // the quick line only when Hermes is slow to start: not said if its answer has begun by then
+                val sentAt = nowMs()
+                val line = (mode.value as? Mode.Connected)?.voice?.ack(text, conversationId) ?: return@launch
+                delay((QUICK_LINE_AFTER_MS - (nowMs() - sentAt)).coerceAtLeast(0))
+                loop.opening(line)
+            }
             launch {
                 while (true) {
                     delay(NUDGE_TICK_MS)
                     loop.nudge(nowMs())
                 }
             }
+            var askedApproval = false
             c.state.map { talkReply(it, cmid) }
                 .filterNotNull().distinctUntilChanged().collect { m ->
-                    if (m.waitingForApproval) {
-                        // approvals are answered on screen, not by voice
-                        loop.stop()
-                        endTalk()
-                        say(READ_ALOUD_KEY, "Hermes needs your approval for this. It's on screen.")
-                        return@collect
+                    // an approval: Talk says what it's for in its own voice and takes a yes or no (or a tap on screen),
+                    // waits meanwhile, and carries on after
+                    loop.hold(m.waitingForApproval)
+                    if (m.waitingForApproval && !askedApproval) {
+                        askedApproval = true
+                        val turn = m.turnId
+                        loop.note(approvalLine(m.approval?.description ?: m.approval?.command)) {
+                            if (turn != null) scope.launch { listenForApproval(turn, loop) }
+                        }
+                    }
+                    if (!m.waitingForApproval && approvingTurn != null) {
+                        approvingTurn = null  // answered on screen: what's heard now doesn't count
+                        speechInput.value?.stop()
+                        voice.update { if (it.talk == TalkPhase.APPROVING) it.copy(talk = TalkPhase.THINKING) else it }
                     }
                     val over = m.state == MessageState.DONE || m.state == MessageState.FAILED || m.state == MessageState.CANCELLED
                     val text = if (m.state == MessageState.FAILED && m.text.isBlank()) "Sorry, that didn't go through." else m.text
                     loop.update(text, m.tools, over)
                 }
         }
+    }
+
+    /** The turn whose approval Talk is listening for, or null. */
+    @Volatile private var approvingTurn: String? = null
+
+    /** Listen for a yes (allow once) or a no (deny). Never "always": that stays a choice made on screen. */
+    private fun listenForApproval(turnId: String, loop: TalkLoop) {
+        val input = speechInput.value ?: return
+        if (!talkOn) return
+        approvingTurn = turnId
+        voice.update { it.copy(listening = true, heard = "", talk = TalkPhase.APPROVING) }
+        input.start(object : SpeechInput.Listener {
+            override fun partial(text: String) {
+                voice.update { if (it.listening) it.copy(heard = text) else it }
+            }
+
+            override fun done(text: String) {
+                voice.update { it.copy(listening = false, heard = "", talk = if (it.talk != null) TalkPhase.THINKING else null) }
+                if (approvingTurn != turnId) return
+                approvingTurn = null
+                when (approvalAnswer(text)) {
+                    "once" -> {
+                        chat?.approve(turnId, "once")
+                        loop.note("Okay, going ahead.")
+                    }
+                    "deny" -> {
+                        chat?.approve(turnId, "deny")
+                        loop.note("Okay, I won't.")
+                    }
+                    else -> loop.note("I didn't catch a yes or no. It's on screen.")
+                }
+            }
+
+            override fun failed(message: String) {
+                approvingTurn = null
+                voice.update { it.copy(listening = false, heard = "", talk = if (it.talk != null) TalkPhase.THINKING else null) }
+            }
+        })
     }
 
     override fun sendMessage(text: String) {
@@ -1063,7 +1118,7 @@ class TalariaController(
     }
 
     private fun say(key: String, text: String) {
-        val out = speechOutput ?: return
+        val out = talkVoice ?: speechOutput ?: return  // the natural voice, as in Talk, where the app can play it
         val words = speakable(text)
         if (words.isEmpty()) return
         voice.update { it.copy(speakingKey = key) }
@@ -1071,6 +1126,7 @@ class TalariaController(
     }
 
     override fun stopSpeaking() {
+        talkVoice?.stop()
         speechOutput?.stop()
         voice.update { it.copy(speakingKey = null) }
     }
@@ -1368,8 +1424,31 @@ class TalariaController(
         /** Marks a message as spoken in Talk, for Hermes (SOUL.md) and in the chat. */
         const val SPOKEN = "🎙"
 
-        /** Talk continues the last chat only if it was active this recently, to keep spoken replies quick. */
-        const val TALK_RESUME_S = 3_600L
+        /** What Talk says when Hermes needs an approval: what it's for, then how to answer. */
+        fun approvalLine(what: String?): String {
+            val thing = what?.let { speakable(it).replace('\n', ' ').trim() }?.takeIf { it.isNotEmpty() }
+                ?.let { if (it.length > 140) it.take(140).substringBeforeLast(' ') + "…" else it }
+            return (if (thing != null) "I need your okay for this: $thing. " else "I need your okay for this. ") +
+                "Say yes to allow it once, or no."
+        }
+
+        private val YES = Regex("""\b(yes|yeah|yep|yup|sure|ok|okay|approve|approved|allow|go ahead|do it|go for it)\b""")
+        private val NO = Regex("""\b(no|nope|nah|deny|don't|do not|stop|cancel|never)\b""")
+
+        /** "once" for a clear yes, "deny" for a clear no, null when it's neither or both. */
+        fun approvalAnswer(heard: String): String? {
+            val t = heard.lowercase()
+            val yes = YES.containsMatchIn(t)
+            val no = NO.containsMatchIn(t)
+            return when {
+                yes && !no -> "once"
+                no && !yes -> "deny"
+                else -> null
+            }
+        }
+
+        /** How long Talk waits for Hermes's own words before saying the quick line instead. */
+        const val QUICK_LINE_AFTER_MS = 1_200L
         private const val NUDGE_TICK_MS = 1_000L
 
         /** How long Undo shows after a swipe. */

@@ -1092,12 +1092,16 @@ class ChatService:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent error: {exc.message}") from None
         except HermesUnavailable as exc:
             raise RpcError(m.AGENT_UNAVAILABLE, f"Agent unavailable: {exc}") from None
+        # only what the OpenRouter key may use (its guardrail), when the bridge holds that key (§11)
+        allowed = await self.voice.allowed_models() if self.voice is not None else None
         providers = []
         for row in data.get("providers") or []:
             if not isinstance(row, dict) or row.get("authenticated") is False:
                 continue  # Hermes lists providers it has no key for, to set up in `hermes model`
             slug = row.get("slug")
             models = [x for x in row.get("models") or [] if isinstance(x, str) and 0 < len(x) <= 200]
+            if slug == "openrouter" and allowed:
+                models = [x for x in models if x in allowed]
             if isinstance(slug, str) and 0 < len(slug) <= 200 and models:
                 providers.append({"id": slug, "name": str(row.get("name") or slug), "models": models})
         result = {"agent_id": agent_id, "providers": providers}

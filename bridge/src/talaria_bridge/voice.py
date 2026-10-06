@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 import struct
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -36,6 +37,7 @@ SPEECH_MODELS = {
 }
 VOICES = tuple(v for s in SPEECH_MODELS.values() for v in s.voices)
 ACK_MODEL = "qwen/qwen3.7-flash"
+MODELS_TTL_S = 600
 MAX_SPEECH = 150  # characters per voice.speech: about 10 s, some 500 KB of WAV, inside a 1 MiB frame once encoded
 PCM_RATE = 24_000
 MAX_ACK_INPUT = 2000
@@ -64,6 +66,7 @@ class VoiceService:
         if voice is not None and voice not in self.engine.voices:
             raise ValueError(f"voice must be one of {', '.join(self.engine.voices)}")
         self.voice = voice or self.engine.voices[0]
+        self._allowed: tuple[float, set[str]] | None = None
         self._http = httpx.AsyncClient(base_url=OPENROUTER, transport=transport,
                                        timeout=httpx.Timeout(20, connect=5),
                                        headers={"Authorization": f"Bearer {api_key}", "User-Agent": "talaria-bridge",
@@ -71,6 +74,20 @@ class VoiceService:
 
     async def close(self) -> None:
         await self._http.aclose()
+
+    async def allowed_models(self) -> set[str] | None:
+        """The models this key may use (OpenRouter applies its guardrail), cached for [MODELS_TTL_S]; None if unknown."""
+        if self._allowed is not None and time.monotonic() - self._allowed[0] < MODELS_TTL_S:
+            return self._allowed[1]
+        try:
+            resp = await self._http.get("/models/user", timeout=httpx.Timeout(10, connect=5))
+            resp.raise_for_status()
+            ids = {m["id"] for m in resp.json()["data"] if isinstance(m.get("id"), str)}
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            log.warning("allowed models unknown: %s", exc)
+            return self._allowed[1] if self._allowed else None
+        self._allowed = (time.monotonic(), ids)
+        return ids
 
     async def speech(self, p: dict) -> dict:
         """voice.speech {text, voice?} → {format: "mp3" | "wav", audio: base64}."""

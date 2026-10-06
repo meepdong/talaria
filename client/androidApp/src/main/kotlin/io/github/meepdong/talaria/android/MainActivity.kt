@@ -60,6 +60,17 @@ class MainActivity : ComponentActivity() {
             val screen by controller.screen.collectAsState()
             var scanning by rememberSaveable { mutableStateOf(false) }
 
+            // the clock and battery stay readable: dark icons on the light theme, light ones on the dark, and the strip
+            // behind them the app's own background, also when dark mode changes while the app is open
+            val dark = androidx.compose.foundation.isSystemInDarkTheme()
+            LaunchedEffect(dark) {
+                window.decorView.setBackgroundColor(if (dark) 0xFF12171D.toInt() else 0xFFEEF0F2.toInt())
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+
             // Once paired, the service holds the session in the background.
             val paired = screen.paired
             LaunchedEffect(paired) { if (paired) ConnectionService.start(this@MainActivity) }
