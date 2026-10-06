@@ -44,6 +44,11 @@ class ConnectionService : Service() {
     private val app get() = application as TalariaApplication
     private val controller get() = app.controller
 
+    /** Talk is on (with its phase): the service also holds the microphone and the voice, with the screen off. */
+    private var talking: io.github.meepdong.talaria.ui.TalkPhase? = null
+    private var lastState: Pair<Health, String> = Health.UNKNOWN to "Starting"
+    private var wake: android.os.PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -63,7 +68,8 @@ class ConnectionService : Service() {
                 .collectLatest { state ->
                     if (state != null) {
                         paired = true
-                        getSystemService(NotificationManager::class.java)
+                        lastState = state
+                        if (talking == null) getSystemService(NotificationManager::class.java)
                             .notify(NOTIFICATION_ID, notification(state.first, state.second))
                     } else {
                         // Not paired (or just forgotten). Right after a restart the saved
@@ -72,6 +78,19 @@ class ConnectionService : Service() {
                         stopSelf()
                     }
                 }
+        }
+
+        // Talk: keep listening and speaking with the screen off, and say so in the notification.
+        scope.launch {
+            controller.screen.map { (it as? Screen.Chat)?.view?.voice?.talk }.distinctUntilChanged().collect { phase ->
+                val was = talking
+                talking = phase
+                when {
+                    phase != null && was == null -> foreground(talk = true)
+                    phase == null && was != null -> foreground(talk = false)
+                    phase != null -> getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, talkNotification(phase))
+                }
+            }
         }
 
         // Replies that finish while their conversation isn't on screen.
@@ -111,6 +130,7 @@ class ConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_RECONNECT) controller.reconnectNow()
+        if (intent?.action == ACTION_END_TALK) controller.endTalk()
         if (intent?.action == OpsNotifier.ACTION_ANSWER) {
             // Allow or Deny from an approval notification; the notification closes on ops.approval.done
             val request = intent.getStringExtra(OpsNotifier.EXTRA_REQUEST)
@@ -133,7 +153,54 @@ class ConnectionService : Service() {
         return START_STICKY
     }
 
+    /**
+     * While Talk is on, the service also declares the microphone and media playback (Android lets it take the
+     * microphone only if Talk started while the app was in front, which it does) and holds a partial wake lock;
+     * after Talk, back to the connection alone.
+     */
+    private fun foreground(talk: Boolean) {
+        var type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+        if (talk && Build.VERSION.SDK_INT >= 30) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        }
+        val n = if (talk) talkNotification(talking) else notification(lastState.first, lastState.second)
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, n, type)
+        } catch (e: Exception) {
+            // refused (Talk started while the app was in the background): Talk still works with the screen on
+            android.util.Log.w("Talaria", "Talk can't keep the microphone with the screen off: ${e.message}")
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, n)
+        }
+        if (talk) {
+            if (wake?.isHeld != true) {
+                wake = getSystemService(android.os.PowerManager::class.java)
+                    .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "talaria:talk").apply { acquire(TALK_WAKE_MS) }
+            }
+        } else {
+            wake?.takeIf { it.isHeld }?.release()
+            wake = null
+        }
+    }
+
+    private fun talkNotification(phase: io.github.meepdong.talaria.ui.TalkPhase?): Notification {
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val end = PendingIntent.getService(this, 2,
+            Intent(this, ConnectionService::class.java).setAction(ACTION_END_TALK), PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Talking with Hermes")
+            .setContentText(phase?.label ?: "Talk is on")
+            .setContentIntent(open)
+            .addAction(0, "End", end)
+            .setOngoing(true)
+            .setSilent(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
     override fun onDestroy() {
+        wake?.takeIf { it.isHeld }?.release()
         networkCallback?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
         scope.cancel()
         super.onDestroy()
@@ -171,6 +238,9 @@ class ConnectionService : Service() {
         private const val CHANNEL = "connection"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_RECONNECT = "io.github.meepdong.talaria.RECONNECT"
+        private const val ACTION_END_TALK = "io.github.meepdong.talaria.END_TALK"
+        /** The longest Talk keeps the phone awake in one go. */
+        private const val TALK_WAKE_MS = 30 * 60_000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, ConnectionService::class.java))

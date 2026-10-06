@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Talaria as the default assistant: Settings › Apps › Default apps › Digital assistant app. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="io.github.meepdong.talaria.android.TalariaSessionService"
+    android:recognitionService="io.github.meepdong.talaria.android.TalariaRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

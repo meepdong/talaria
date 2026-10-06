@@ -48,6 +48,16 @@ class MainActivity : ComponentActivity() {
     private val app get() = application as TalariaApplication
     private var resumed by mutableIntStateOf(0)
 
+    /** Talk asked for from outside (assistant, headset), waiting for the microphone to be ready here. */
+    private var pendingTalk by mutableStateOf(false)
+
+    /** Shown over the lock screen for Talk: only the Talk panel, never the chats. */
+    private var overLock by mutableStateOf(false)
+    private val keyguard get() = getSystemService(android.app.KeyguardManager::class.java)
+    private val unlocked = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) = leaveLockScreen()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // after a rotation the same intent comes back; it was handled the first time
@@ -55,6 +65,9 @@ class MainActivity : ComponentActivity() {
             handleLink(intent)
             OpenedFiles.clear(this)
         }
+        androidx.core.content.ContextCompat.registerReceiver(this, unlocked,
+            android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        app.controller.setLockCheck { keyguard.isKeyguardLocked }
         setContent {
             val controller = app.controller
             val screen by controller.screen.collectAsState()
@@ -139,6 +152,14 @@ class MainActivity : ComponentActivity() {
                 }
                 onDispose { controller.setSpeechInput(null) }
             }
+            // Talk from the assistant or a headset, once the microphone above is ready
+            LaunchedEffect(pendingTalk) {
+                if (pendingTalk) {
+                    kotlinx.coroutines.delay(150)
+                    controller.talkFromAssistant()
+                    pendingTalk = false
+                }
+            }
 
             // Back: closes the menu, then a conversation, then Connection, then any page to Home.
             // The last BackHandler declared wins.
@@ -180,6 +201,16 @@ class MainActivity : ComponentActivity() {
                         },
                         onCancel = { scanning = false },
                     )
+                } else if (overLock) {
+                    val voice = (screen as? Screen.Chat)?.view?.voice
+                    LockedTalk(voice?.talk, voice?.heard.orEmpty(), onTap = controller::talk, onEnd = controller::endTalk,
+                        onUnlock = { keyguard.requestDismissKeyguard(this@MainActivity, null) })
+                    // Talk over: back to the lock screen
+                    var started by remember { mutableStateOf(false) }
+                    LaunchedEffect(voice?.talk) {
+                        if (voice?.talk != null) started = true
+                        else if (started) finish()
+                    }
                 } else {
                     TalariaApp(
                         screen = screen,
@@ -198,6 +229,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (overLock && !keyguard.isKeyguardLocked) leaveLockScreen()
         resumed++
         app.controller.resumeUpdate()  // back from "Install unknown apps": the update carries on
     }
@@ -212,6 +244,29 @@ class MainActivity : ComponentActivity() {
         app.visible = false
         app.controller.setForeground(false)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(unlocked) }
+        super.onDestroy()
+    }
+
+    /** Talk from the assistant button or a headset: over the lock screen when locked, with only the Talk panel. */
+    private fun startTalk() {
+        if (keyguard.isKeyguardLocked) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            overLock = true
+        }
+        app.controller.showChats()
+        pendingTalk = true
+    }
+
+    private fun leaveLockScreen() {
+        if (!overLock) return
+        overLock = false
+        setShowWhenLocked(false)
+        setTurnScreenOn(false)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -243,6 +298,10 @@ class MainActivity : ComponentActivity() {
 
     /** A tapped talaria://pair#… link starts pairing, if this phone isn't paired yet. */
     private fun handleLink(intent: Intent?) {
+        if (intent?.action in setOf(ACTION_TALK, Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND)) {
+            startTalk()
+            return
+        }
         if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
             receiveShare(intent)
             return
@@ -271,5 +330,10 @@ class MainActivity : ComponentActivity() {
         if (!link.startsWith(PairingPayload.LINK_PREFIX)) return
         val screen = app.controller.screen.value
         if (screen is Screen.Connect && !screen.busy) app.controller.pairWithLink(link, screen.deviceName)
+    }
+
+    companion object {
+        /** Start Talk (TalariaSession, the assistant). */
+        const val ACTION_TALK = "io.github.meepdong.talaria.TALK"
     }
 }

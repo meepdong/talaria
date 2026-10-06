@@ -4,6 +4,16 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk keeps going with the screen off: once started, it listens and speaks in your pocket, with "Talking with
+  Hermes" and End in the notification.
+- Talaria can be the phone's default assistant (Settings › Apps › Default apps › Digital assistant app): a long
+  press on the power button, the assistant gesture or a headset's voice button starts Talk in the last chat, also
+  on the lock screen, where only the Talk panel shows (Unlock for the chats).
+- An approval while the phone is locked waits: Talk says to unlock and approve, and carries on after.
+
 ## [0.2.0-beta.13] - 2026-10-06
 
 ### Fixed

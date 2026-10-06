@@ -46,7 +46,8 @@ class AndroidDictation(
 
     private fun begin(listener: SpeechInput.Listener) {
         recognizer?.destroy()
-        val r = SpeechRecognizer.createSpeechRecognizer(context)
+        val r = recognizer(context)?.let { SpeechRecognizer.createSpeechRecognizer(context, it) }
+            ?: SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
         var finished = false
         fun finish(report: () -> Unit) {
@@ -92,7 +93,20 @@ class AndroidDictation(
         results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
 
     companion object {
-        fun isAvailable(context: Context) = SpeechRecognizer.isRecognitionAvailable(context)
+        fun isAvailable(context: Context) = recognizer(context) != null || SpeechRecognizer.isRecognitionAvailable(context)
+
+        /**
+         * The phone's real recogniser, never Talaria's own: as the default assistant, Talaria names a stub
+         * recogniser (TalariaRecognitionService), and Android may make it the default. Google's first.
+         */
+        fun recognizer(context: Context): android.content.ComponentName? {
+            val found = context.packageManager.queryIntentServices(
+                android.content.Intent(android.speech.RecognitionService.SERVICE_INTERFACE), 0)
+                .map { it.serviceInfo }.filter { it.packageName != context.packageName }
+            val best = found.firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
+                ?: found.firstOrNull { it.packageName.startsWith("com.google") } ?: found.firstOrNull()
+            return best?.let { android.content.ComponentName(it.packageName, it.name) }
+        }
     }
 }
 
@@ -161,6 +175,7 @@ class AndroidVoice(context: Context) : SpeechOutput {
  * and still calls its onDone, as [io.github.meepdong.talaria.ui.AudioPlayer] asks.
  */
 class AndroidAudio(context: Context) : io.github.meepdong.talaria.ui.AudioPlayer {
+    private val appContext = context.applicationContext
     private val dir = java.io.File(context.cacheDir, "talk").apply { mkdirs() }
     private val lock = Any()
     private var player: android.media.MediaPlayer? = null
@@ -178,6 +193,7 @@ class AndroidAudio(context: Context) : io.github.meepdong.talaria.ui.AudioPlayer
         }
         try {
             file.writeBytes(audio)
+            p.setWakeMode(appContext, android.os.PowerManager.PARTIAL_WAKE_LOCK)  // keeps playing with the screen off
             p.setAudioAttributes(android.media.AudioAttributes.Builder()
                 .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
                 .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())

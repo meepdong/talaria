@@ -190,6 +190,18 @@ class TalariaController(
     /** Talk's natural voice (Talk 2): speech from the bridge, played here; null where the app can't play audio. */
     @Volatile private var talkVoice: SpeechOutput? = null
 
+    /** True while the phone is locked: Talk then takes no spoken approvals (anyone nearby could say yes). */
+    @Volatile private var isLocked: () -> Boolean = { false }
+
+    fun setLockCheck(check: (() -> Boolean)?) {
+        isLocked = check ?: { false }
+    }
+
+    /** Talk started from outside the app (the assistant button, a headset): starts it unless it's already on. */
+    fun talkFromAssistant() {
+        if (voice.value.talk == null) talk()
+    }
+
     /** The platform's audio player, for Talk's natural voice; without one Talk uses the device's own voice. */
     fun setAudioPlayer(player: AudioPlayer?) {
         talkVoice = player?.let {
@@ -633,8 +645,13 @@ class TalariaController(
                     if (m.waitingForApproval && !askedApproval) {
                         askedApproval = true
                         val turn = m.turnId
-                        loop.note(approvalLine(m.approval?.description ?: m.approval?.command)) {
-                            if (turn != null) scope.launch { listenForApproval(turn, loop) }
+                        if (isLocked()) {
+                            // locked: no spoken yes; it waits, and Talk carries on once it's approved on screen
+                            loop.note(LOCKED_APPROVAL_LINE)
+                        } else {
+                            loop.note(approvalLine(m.approval?.description ?: m.approval?.command)) {
+                                if (turn != null && !isLocked()) scope.launch { listenForApproval(turn, loop) }
+                            }
                         }
                     }
                     if (!m.waitingForApproval && approvingTurn != null) {
@@ -1426,6 +1443,9 @@ class TalariaController(
 
         /** Talk started on [tab] stays in the chat on screen (new or not) rather than going back to the last one. */
         fun talksInChatOnScreen(tab: Tab) = tab == Tab.CHATS
+
+        /** What Talk says about an approval while the phone is locked. */
+        const val LOCKED_APPROVAL_LINE = "This needs your okay. Unlock your phone to approve it, and I'll pick up from there."
 
         /** What Talk says when Hermes needs an approval: what it's for, then how to answer. */
         fun approvalLine(what: String?): String {
