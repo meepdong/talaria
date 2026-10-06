@@ -42,6 +42,15 @@ def profile_of(agent_id: str | None) -> str | None:
     return None
 
 
+def _stored_id(snap: dict) -> str | None:
+    """A session's stored id: session.create says stored_session_id; resuming an existing one says resumed and
+    session_key instead (Hermes 0.21.5)."""
+    for key in ("stored_session_id", "resumed", "session_key"):
+        if isinstance(snap.get(key), str) and snap[key]:
+            return snap[key]
+    return None
+
+
 def _hermes_error(exc: ServeError) -> HermesError:
     status = 404 if "not found" in exc.message.lower() else 409 if exc.code in (4009, 4007) else 400
     return HermesError(status, str(exc.code), exc.message)
@@ -72,7 +81,7 @@ class BotChatClient:
             if exc.status != 404:
                 raise
             snap = await self._rpc("session.create", {"title": BOT_CHAT})
-        stored, live = snap.get("stored_session_id"), snap.get("session_id")
+        stored, live = _stored_id(snap), snap.get("session_id")
         if not (isinstance(stored, str) and stored and isinstance(live, str) and live):
             raise HermesError(502, "bad_response", "Hermes didn't say which session is the bot's chat")
         self._live[stored] = (self.backend.generation, live)

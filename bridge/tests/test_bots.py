@@ -87,7 +87,8 @@ class FakeBotServe:
         if method == "session.resume":
             if chat is None or p["session_id"] not in ("Bot Chat", chat["stored"]) or chat["title"] != "Bot Chat":
                 return await err(4007, "session not found")
-            return await ok({"session_id": self.live(profile), "stored_session_id": chat["stored"],
+            # as Hermes 0.21.5 answers a resume: the stored id as `resumed` and `session_key`, no stored_session_id
+            return await ok({"session_id": self.live(profile), "resumed": chat["stored"], "session_key": chat["stored"],
                              "message_count": len(chat["messages"]), "messages": [], "info": {}})
         live_profile = next((name for name in self.chats if self.live(name) == p.get("session_id")), None)
         if method in ("session.history", "prompt.submit", "session.interrupt", "session.steer", "session.usage") \
@@ -294,6 +295,18 @@ async def test_after_a_reconnect_the_bots_chat_is_resumed_again(bots_bridge):
     assert events[-1]["params"]["status"] == "completed"
     assert ("session.resume", {"session_id": "stored-scout", "omit_messages": True, "profile": "scout"}) in fake.calls
     assert [p["session_id"] for name, p in fake.calls if name == "prompt.submit"] == ["live-scout-2"]
+
+
+async def test_a_bot_chat_made_in_hermes_desktop_is_found(bots_bridge):
+    """The owner's bots already have a Bot Chat from Hermes Desktop: Talaria resumes it, never makes another."""
+    bridge, fake, _ = bots_bridge
+    fake.chats["scout"] = {"stored": "desktop-scout", "title": "Bot Chat",
+                           "messages": [{"role": "user", "text": "From the laptop", "timestamp": 1.0, "row_id": 1}]}
+    phone = await connected(bridge)
+    conv = (await call(phone, "1", "bots.open", {"bot_id": "bot:scout"}))["result"]["conversation_id"]
+    assert fake.count("session.create") == 0
+    history = (await call(phone, "2", "chat.history", {"conversation_id": conv}))["result"]["messages"]
+    assert [x["text"] for x in history] == ["From the laptop"]
 
 
 async def test_unknown_bots_and_attachments_are_refused(bots_bridge):

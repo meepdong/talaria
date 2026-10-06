@@ -11,6 +11,10 @@ release notes the app shows.
   calendar, Drive, sheets, PDFs, pictures, research, meetings, vendors), Hermes gives it the job, gets the report and
   answers you itself; the job shows as a card in that bot's chat.
 
+### Fixed
+- Opening a bot made in Hermes Desktop failed ("The bot's chat isn't available"): Talaria now finds the bot's existing
+  chat the way Hermes reports it.
+
 ## [0.2.0-beta.20] - 2026-10-06
 
 ### Changed

@@ -225,7 +225,9 @@ class AgentTools:
             result, turn = await self.chat.send({"agent_id": bot["id"], "text": message}, worker=bot["name"],
                                                 order=work_order("Hermes", brief, files, about="the owner's main agent"))
         except RpcError as exc:
-            return _tool_result(exc.message, is_error=True)
+            return _tool_result(f"{bot['name']} isn't available right now ({exc.message}). Tell the owner so, or do the"
+                                " job yourself if you can; don't try to repair Hermes, the bots or the server.",
+                                is_error=True)
         if turn is not None:
             self.chat.start(turn)
         job = result["turn_id"]
