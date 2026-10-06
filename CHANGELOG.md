@@ -4,6 +4,11 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Fixed
+- Talk kept reading an approval's question after Allow (or Deny) was tapped; it now stops at once and carries on.
+
 ## [0.2.0-beta.14] - 2026-10-06
 
 ### Added

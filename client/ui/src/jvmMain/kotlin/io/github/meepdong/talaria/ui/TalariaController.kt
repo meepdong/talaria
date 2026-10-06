@@ -675,6 +675,9 @@ class TalariaController(
                             }
                         }
                     }
+                    if (!m.waitingForApproval && askedApproval) {
+                        loop.cutNote()  // answered on screen: stop asking at once and carry on
+                    }
                     if (!m.waitingForApproval && approvingTurn != null) {
                         approvingTurn = null  // answered on screen: what's heard now doesn't count
                         speechInput.value?.stop()

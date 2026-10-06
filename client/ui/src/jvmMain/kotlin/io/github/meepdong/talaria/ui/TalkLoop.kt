@@ -91,9 +91,31 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
             if (stopped || finished) return
             waiting.append(line).append(' ')
             afterSaid = then
+            noteLine = line
             takeNext()
         }
         nextUp?.let(::say)
+    }
+
+    /** The note being said or about to be, until it's been said; [cutNote] can drop it. */
+    private var noteLine: String? = null
+    private var sayingNote = false
+
+    /**
+     * The note isn't needed any more (the approval it asks for was answered on screen): stop saying it now, drop
+     * it if it hasn't started, and skip what was to follow it (listening for a yes or no).
+     */
+    fun cutNote() {
+        val stopNow = synchronized(lock) {
+            val line = noteLine ?: return
+            noteLine = null
+            afterSaid = null
+            val at = waiting.indexOf(line)
+            if (at >= 0) waiting.delete(at, at + line.length + 1)
+            if (next?.contains(speakable(line)) == true) next = null
+            sayingNote
+        }
+        if (stopNow) out.stop()
     }
 
     private var afterSaid: (() -> Unit)? = null
@@ -139,11 +161,16 @@ class TalkLoop(private val out: SpeechOutput, private val onSpeak: () -> Unit = 
     }
 
     private fun say(words: String) {
-        synchronized(lock) { saidAnything = true }
+        synchronized(lock) {
+            saidAnything = true
+            sayingNote = noteLine?.let { words.contains(speakable(it)) } == true
+        }
         onSpeak()
         out.speak(words) {
             val (following, then) = synchronized(lock) {
                 speaking = false
+                if (sayingNote) noteLine = null
+                sayingNote = false
                 lastSoundMs = 0L  // the quiet is counted from the next nudge() on
                 if (stopped) return@speak
                 // a note's follow-up runs once nothing more is queued behind it

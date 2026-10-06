@@ -159,4 +159,29 @@ class CloudSpeechTest {
         val seconds = (wav.size - 44) / 2.0 / 24_000
         assertTrue(seconds in 0.2..0.3, "about a quarter of a second, was $seconds")
     }
+
+    @Test
+    fun anApprovalAnsweredOnScreenStopsTheQuestionAtOnce() {
+        val said = mutableListOf<String>()
+        var stops = 0
+        var onDone: (() -> Unit)? = null
+        val out = object : SpeechOutput {
+            override fun speak(text: String, onDone: () -> Unit) { said += text; setDone(onDone) }
+            override fun stop() { stops++; onDone?.also { onDone = null }?.invoke() }
+            fun setDone(d: () -> Unit) { onDone = d }
+        }
+        val loop = TalkLoop(out) {}
+        loop.hold(true)
+        var listened = false
+        loop.note(TalariaController.approvalLine("Run a long command that takes a while to describe")) { listened = true }
+        assertEquals(1, said.size, "the question is being said")
+        loop.hold(false)
+        loop.cutNote()  // Allow tapped
+        assertEquals(1, stops, "cut off at once")
+        assertTrue(!listened, "no yes-or-no listening after an on-screen answer")
+        loop.update("It's thirty-two degrees at two.", emptyList(), over = true)
+        assertEquals("It's thirty-two degrees at two.", said.last(), "straight on to the answer")
+        loop.cutNote()
+        assertEquals(1, stops, "nothing more to cut")
+    }
 }
