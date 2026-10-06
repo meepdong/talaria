@@ -4,6 +4,11 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Fixed
+- The mic in a new chat started Talk in the last chat (the one Home's Talk uses) instead of the chat on screen.
+
 ## [0.2.0-beta.12] - 2026-10-06
 
 ### Added

@@ -293,6 +293,16 @@ class ControllerTest {
         c.endTalk()
         c.await<Screen.Chat> { it.view.voice.talk == null }
 
+        // in a fresh chat (no id yet), Talk stays in it instead of going back to the last chat
+        c.newConversation()
+        c.await<Screen.Chat> { it.view.openId == null && it.view.conversationOpen }
+        c.talk()
+        val fresh = c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING }
+        assertNull(fresh.view.openId, "still the fresh chat")
+        assertTrue(TalariaController.talksInChatOnScreen(Tab.CHATS) && !TalariaController.talksInChatOnScreen(Tab.HOME))
+        c.endTalk()
+        c.await<Screen.Chat> { it.view.voice.talk == null }
+
         // End stops it from any state
         c.talk()
         c.await<Screen.Chat> { it.view.voice.talk == TalkPhase.LISTENING }

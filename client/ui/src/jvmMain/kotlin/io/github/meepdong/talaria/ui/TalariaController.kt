@@ -545,9 +545,9 @@ class TalariaController(
         }
         when (voice.value.talk) {
             null -> {
-                // in a chat, Talk continues that chat; elsewhere, the chat last open here (compression keeps it small)
-                val here = page.value.conversationOpen && page.value.tab == Tab.CHATS && chat?.state?.value?.openId != null
-                if (!here) resumeChat()
+                // on the Chats page, Talk is in the chat on screen, a fresh one too (it has no id until its first
+                // message); from Home and elsewhere, in the chat last open here (compression keeps it small)
+                if (!talksInChatOnScreen(page.value.tab)) resumeChat()
                 talkOn = true
                 listenForTalk()
             }
@@ -1423,6 +1423,9 @@ class TalariaController(
 
         /** Marks a message as spoken in Talk, for Hermes (SOUL.md) and in the chat. */
         const val SPOKEN = "🎙"
+
+        /** Talk started on [tab] stays in the chat on screen (new or not) rather than going back to the last one. */
+        fun talksInChatOnScreen(tab: Tab) = tab == Tab.CHATS
 
         /** What Talk says when Hermes needs an approval: what it's for, then how to answer. */
         fun approvalLine(what: String?): String {
