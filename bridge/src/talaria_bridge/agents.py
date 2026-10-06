@@ -41,6 +41,8 @@ class AgentConfig:
     voice_name: str | None = None  # one of that engine's voices; its first by default
     talk_voice: str | None = None  # Talk 3's talker voice (talk.py VOICES); shimmer by default; devices can change it
     talk_transcriber: str | None = None  # who writes down what was said in Talk: "whisper" (default) or "talker"
+    serve_url: str | None = None  # Hermes's other backend (§18), on this machine only: ws://127.0.0.1:9119/api/ws
+    serve_key_file: str | None = None  # the token for it (Hermes keeps its own copy)
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -79,6 +81,13 @@ def load_agents(path: Path) -> list[AgentConfig]:
         voice_key = entry.get("voice_key_file")
         if voice_key is not None and not (isinstance(voice_key, str) and Path(voice_key).is_absolute()):
             raise ValueError(f"{path}: an agent's voice_key_file must be an absolute path")
+        serve_url, serve_key = entry.get("serve_url"), entry.get("serve_key_file")
+        if serve_url is not None:
+            from .hermes_serve import is_local_url
+            if not (isinstance(serve_url, str) and is_local_url(serve_url)):
+                raise ValueError(f"{path}: serve_url must be ws:// on this machine (127.0.0.1, localhost or ::1) with a port")
+            if not (isinstance(serve_key, str) and Path(serve_key).is_absolute()):
+                raise ValueError(f"{path}: an agent with serve_url needs an absolute serve_key_file")
         tools_key = entry.get("tools_key_file")
         if tools_key is not None and not (isinstance(tools_key, str) and Path(tools_key).is_absolute()):
             raise ValueError(f"{path}: an agent's tools_key_file must be an absolute path")
@@ -86,7 +95,7 @@ def load_agents(path: Path) -> list[AgentConfig]:
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
                                   tuple(files), tuple(calendar), tools_key, voice_key,
                                   entry.get("voice_engine"), entry.get("voice_name"), entry.get("talk_voice"),
-                                  entry.get("talk_transcriber")))
+                                  entry.get("talk_transcriber"), serve_url, serve_key if serve_url else None))
     return agents
 
 

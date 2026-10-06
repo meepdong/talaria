@@ -335,6 +335,33 @@ async def _check_jobs(c: _Checker) -> None:
         c.note("GET /api/sessions?source=cron", "automation results on Home", problem)
 
 
+async def check_serve(backend) -> list[Finding]:
+    """The doorway to Hermes's other backend (§18): connected, every allowlisted method there, and the answers the
+    phone reads still shaped as expected. `backend` is a hermes_serve.HermesBackend."""
+    from .hermes_serve import BackendError
+
+    affects = "bots and group chats on the phone"
+    if not backend.connected:
+        return [Finding("hermes serve", affects, "isn't connected (Talaria's hermes serve service; the bridge keeps retrying)")]
+    out = [Finding("hermes serve methods", affects,
+                   f"gone in this Hermes, so hidden on the phone: {', '.join(sorted(backend.missing))}" if backend.missing else "")]
+    for method, params, key, wanted in (("profiles.list", {"include_sessions": False}, "profiles", {"name": STR}),
+                                        ("groups.list", {}, "rooms", {}),
+                                        ("session.list", {"limit": 3}, "sessions", {"id": STR})):
+        if method not in backend.methods:
+            continue
+        try:
+            answer = await backend.call(method, params)
+        except BackendError as exc:
+            out.append(Finding(f"hermes serve {method}", affects, f"failed ({exc.message[:200]})"))
+            continue
+        rows = answer.get(key) if isinstance(answer, dict) else None
+        problem = f"'{key}' is missing or not a list" if not isinstance(rows, list) else next(
+            (p for p in (_fields(r, wanted, f"one of '{key}'") for r in rows) if p), "")
+        out.append(Finding(f"hermes serve {method}", affects, problem))
+    return out
+
+
 # the bridge watching by itself
 
 CHECK_ID = "hermes-check"  # its Home card's id (spec/README.md §14: a system card, not one of Hermes's jobs)
@@ -357,6 +384,7 @@ class HermesWatch:
         self.turn = turn
         self.now = now
         self.bridge_version = bridge_version  # a new bridge (maybe the fix) checks again at once
+        self.backend = None  # the doorway to hermes serve (§18), checked with the first agent, set by the server
 
     def _state(self) -> dict:
         try:
@@ -397,6 +425,8 @@ class HermesWatch:
             except HermesUnavailable as exc:
                 log.warning("Hermes went away during the check: %s", exc)
                 continue
+            if self.backend is not None and agent_id == next(iter(self.clients)):
+                report.findings += await check_serve(self.backend)
             problems = [f"{f.call} {f.problem}" for f in report.problems]
             entry = {"version": report.version or version, "bridge": self.bridge_version,
                      "checked_at": int(self.now()), "ok": report.ok,

@@ -11,6 +11,11 @@ release notes the app shows.
   Talaria relies on. If an update changed one, a red card on Home ("Hermes compatibility check") and a
   notification say what changed and which feature it affects; the card goes away once a check passes again.
   By hand: `talaria doctor --hermes`.
+- The bridge is a doorway to Hermes's other backend (`hermes serve`, what Hermes Desktop uses): bots, group chats,
+  jobs, skills and helper agents, through an allowlist (never shell commands, settings, secrets or the vault),
+  with Hermes's approvals and questions passed to your devices. Nothing to see in the app yet: the bots and
+  group chats screens come next. The compatibility check covers it too. Server side: `hermes serve` runs on
+  this machine only (`talaria-hermes-serve`, bridge/deploy).
 
 ## [0.2.0-beta.18] - 2026-10-06
 

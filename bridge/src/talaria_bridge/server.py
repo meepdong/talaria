@@ -19,6 +19,7 @@ from websockets.http11 import Request
 from . import __version__
 from .agents import AgentMonitor
 from .chat import CHAT_METHODS, ChatService, RpcError
+from .hermes_serve import BackendError, HermesBackend
 from .terminals import TERM_METHODS, Terminals
 from .updates import UPDATE_METHODS, AppUpdates, UpdateError
 from .protocol import keys
@@ -59,6 +60,7 @@ class _Session:
 
 
 OPS_METHODS = frozenset({"ops.catalogue", "ops.run", "ops.approve"})
+HERMES_METHODS = frozenset({"hermes.capabilities", "hermes.call", "hermes.respond"})  # the doorway (§18)
 
 
 class _Reject(Exception):
@@ -69,7 +71,7 @@ class _Reject(Exception):
 class BridgeServer:
     def __init__(self, registry: Registry, key: keys.PrivateKey, settings: ServerSettings | None = None,
                  agents: AgentMonitor | None = None, chat: ChatService | None = None, ops: ServerOps | None = None,
-                 updates: AppUpdates | None = None):
+                 updates: AppUpdates | None = None, hermes: HermesBackend | None = None):
         self.registry = registry
         self.key = key
         self.settings = settings or ServerSettings()
@@ -83,6 +85,9 @@ class BridgeServer:
             updates.broadcast = self.broadcast
         if ops is not None:
             ops.broadcast = self.broadcast
+        self.hermes = hermes
+        if hermes is not None:
+            hermes.broadcast = self.broadcast
         self._tasks: set[asyncio.Task] = set()
         self.bridge_pk = keys.public_key_b64u(key)
         self.bridge_id = keys.key_id(key)
@@ -108,10 +113,11 @@ class BridgeServer:
             monitor = asyncio.ensure_future(self.agents.run(self.push_status)) if self.agents.agents else None
             background = asyncio.ensure_future(self.chat.run_background()) if self.chat is not None else None
             releases = asyncio.ensure_future(self.updates.watch()) if self.updates is not None else None
+            doorway = asyncio.ensure_future(self.hermes.run()) if self.hermes is not None else None
             try:
                 yield server
             finally:
-                for task in (monitor, background, releases):
+                for task in (monitor, background, releases, doorway):
                     if task is not None:
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
@@ -160,6 +166,17 @@ class BridgeServer:
             return
         with contextlib.suppress(ConnectionClosed):
             await self._send(ws, m.result(msg_id, result) if result is not None else m.error(msg_id, *error))
+
+    async def _hermes_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
+        try:
+            answer = m.result(msg_id, await self.hermes.handle(method, params))
+        except BackendError as exc:
+            answer = m.error(msg_id, exc.code, exc.message, exc.data)
+        except Exception:
+            log.exception("%s failed", method)
+            answer = m.error(msg_id, -32603, "Internal error")
+        with contextlib.suppress(ConnectionClosed):
+            await self._send(ws, answer)
 
     async def _term_request(self, ws: ServerConnection, session: _Session, method: str, msg_id, params: dict) -> None:
         if not session.ready:
@@ -461,6 +478,16 @@ class BridgeServer:
                                                             params if isinstance(params, dict) else {}))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
+        elif method in HERMES_METHODS and msg_id is not None:
+            if not session.ready:
+                await self._send(ws, m.error(msg_id, m.INVALID_REQUEST, "Send capabilities.announce first"))
+            elif self.hermes is None:
+                await self._send(ws, m.error(msg_id, m.METHOD_NOT_FOUND, "Hermes's backend isn't set up on this bridge"))
+            else:  # a call may wait on Hermes, so it runs beside the reader
+                params = msg.get("params")
+                task = asyncio.ensure_future(self._hermes_request(ws, method, msg_id, params if isinstance(params, dict) else {}))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
         elif method in UPDATE_METHODS and msg_id is not None:
             await self._send(ws, await self._update_request(session, method, msg_id, msg.get("params")))
         elif method in CHAT_METHODS and not session.ready:

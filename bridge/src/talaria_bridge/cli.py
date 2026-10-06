@@ -32,6 +32,7 @@ from .ops.client import OpsClient
 from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
 from .hermes_check import HermesWatch
+from .hermes_serve import HermesBackend, read_token
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
 from .protocol import keys
 from .protocol.encoding import b64u_encode, now
@@ -81,6 +82,20 @@ def cert_spki_sha256(cert_path: Path) -> str:
     spki = cert.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     return b64u_encode(hashlib.sha256(spki).digest())
+
+
+def make_doorway(agents: list[AgentConfig], chat: ChatService | None) -> HermesBackend | None:
+    """The doorway to Hermes's other backend (§18), for the first agent with a serve_url."""
+    agent = next((a for a in agents if a.serve_url), None)
+    if agent is None:
+        return None
+    try:
+        token = read_token(Path(agent.serve_key_file))
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: no doorway to hermes serve: cannot read {agent.serve_key_file} ({exc})", file=sys.stderr)
+        return None
+    voice = chat.voice if chat is not None else None
+    return HermesBackend(agent.serve_url, token, allowed_models=voice.allowed_models if voice is not None else None)
 
 
 def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
@@ -222,7 +237,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # server operations (§16) when talaria-ops is installed: its socket exists
     ops = ServerOps(OpsClient(args.ops_socket)) if args.ops_socket.exists() else None
     updates = AppUpdates(args.home / "updates", args.update_channel)  # placed by talaria-publish-app (§17)
-    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates)
+    doorway = make_doorway(agents, chat)
+    if doorway is not None and chat is not None and chat.hermes_watch is not None:
+        chat.hermes_watch.backend = doorway  # the daily check covers the doorway too
+    bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates, doorway)
     tools = make_agent_tools(agents, chat, ops)
     print(f"Talaria bridge {__version__}")
     print(f"  bridge id: {bridge.bridge_id}")
@@ -236,6 +254,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"  tools:     http://127.0.0.1:{args.agent_tools_port}/mcp for {', '.join(sorted(set(tools.tokens.values())))}")
     print(f"  server:    {'operations via ' + str(args.ops_socket) if ops else 'no operations (talaria-ops not installed)'}")
     print(f"  updates:   {args.update_channel} channel, from {updates.folder}")
+    print(f"  hermes:    {'doorway to ' + doorway.url if doorway else 'no doorway (no serve_url in agents.json)'}")
     print("Pair a device from another terminal with: talaria pair --name \"My phone\"")
     sys.stdout.flush()  # under systemd stdout is a pipe, so these lines would wait in a buffer
 

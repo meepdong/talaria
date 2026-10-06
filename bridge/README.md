@@ -168,6 +168,16 @@ sudo systemctl daemon-reload && sudo systemctl enable --now talaria-ops && sudo 
 
 The bridge offers `ops.*` to devices and `server_op` to the agent once it can reach `/run/talaria-ops/ops.sock` (`--ops-socket` changes it). To upgrade talaria-ops, repeat the `pip install` and `systemctl restart talaria-ops`. The `bridge.update` operation updates only the bridge. Every operation is logged to `/var/log/talaria-ops/audit.jsonl`.
 
+## Hermes's other backend (the doorway)
+
+Hermes Desktop talks to `hermes serve`, Hermes's JSON-RPC backend for bots, group chats, jobs, skills and settings.
+The bridge can be a doorway to it (spec §18): run `hermes serve` on this machine only as a user unit of the Hermes
+user (`deploy/talaria-hermes-serve.service`, which says how to install it and its token), and give the agent in
+agents.json `"serve_url": "ws://127.0.0.1:9119/api/ws"` and `"serve_key_file"` (the bridge's copy of the token).
+The bridge then passes an allowlisted set of calls (`hermes_serve.ALLOWED`) through to devices, forwards Hermes's
+events, and lets devices answer its approvals and questions; it declines anything else Hermes asks (sudo, secrets).
+`talaria hermes-serve probe` shows what it offers; `talaria doctor --hermes` checks it.
+
 ## App updates
 
 The apps update themselves from the bridge (spec README §17). A tag `vX.Y.Z[-beta.N]` makes CI publish an unsigned

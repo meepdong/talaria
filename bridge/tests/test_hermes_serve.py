@@ -55,6 +55,11 @@ class FakeServe:
                 if "method" not in msg:
                     self.answered.append(msg)
                     continue
+                if "talaria_probe" in msg.get("params", {}):  # Hermes refuses an unknown parameter before running
+                    from talaria_bridge.hermes_serve import ALLOWED
+                    code = 4000 if msg["method"] in ALLOWED else -32601
+                    await ws.send(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": code, "message": "x"}}) + "\n")
+                    continue
                 self.calls.append(msg["method"])
                 if self.ask:
                     await ws.send(json.dumps({"jsonrpc": "2.0", "id": "srq-1", "method": self.ask,
@@ -101,7 +106,7 @@ async def test_the_servers_own_questions_are_declined(serve):
                 break
             await asyncio.sleep(0.01)
     assert serve.answered == [{"jsonrpc": "2.0", "id": "srq-1",
-                               "error": {"code": -32601, "message": "Talaria doesn't answer this yet"}}]
+                               "error": {"code": -32601, "message": "Talaria doesn't answer this"}}]
 
 
 async def test_a_wrong_token_or_no_server_is_unavailable(serve):

@@ -610,7 +610,25 @@ def hermes_checks(plan: Plan, *, turn: bool = True) -> list[Check]:
                          f" Talaria relies on answer as expected{'' if report.turn else ' (without a test message)'}",
                          "Talaria needs a fix for this Hermes version; each line below says what changed"))
         out += [Check(False, f"{f.call} ({f.affects})", f.problem) for f in report.problems]
+        if agent.get("serve_url"):
+            out += serve_checks(agent)
     return out
+
+
+def serve_checks(agent: dict) -> list[Check]:
+    """doctor --hermes: the doorway to Hermes's other backend (§18), the way the bridge sees it."""
+    import asyncio
+
+    from .hermes_serve import ServeUnavailable, probe, read_token
+
+    try:
+        lines = asyncio.run(probe(agent["serve_url"], read_token(Path(agent["serve_key_file"]))))
+    except (OSError, ValueError, KeyError) as exc:
+        return [Check(False, "read the hermes serve token", f"{exc}; check serve_key_file in agents.json")]
+    except ServeUnavailable as exc:
+        return [Check(False, f"hermes serve answers at {agent['serve_url']} ({exc})",
+                      "systemctl --user -M hermes@ status talaria-hermes-serve")]
+    return [Check(ok, f"hermes serve: {what}: {said}", "Talaria needs a fix for this Hermes version") for what, ok, said in lines]
 
 
 def main_setup(args) -> int:

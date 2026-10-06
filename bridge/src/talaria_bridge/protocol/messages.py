@@ -32,6 +32,7 @@ AGENT_UNAVAILABLE = -32010
 MODALITY_UNSUPPORTED = -32012
 CONFLICT = -32013
 NOT_FOUND = -32014
+BACKEND_ERROR = -32015  # Hermes's backend refused a call (§18)
 
 PAIR_REJECT_REASONS = (
     "invalid_request",

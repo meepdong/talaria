@@ -454,3 +454,58 @@ to the system installer. Android itself refuses an installer that isn't signed w
 is no longer the newest (the device asks `app.latest` again); `INVALID_PARAMS` for a bad platform or offset.
 
 Schemas: `app.latest`, `app.latest.result`, `app.read`, `app.read.result`, `app.available`.
+
+## 18. Hermes backend (the doorway)
+
+Hermes has a second backend, `hermes serve`, which its desktop app uses: JSON-RPC over a WebSocket, with bots (Hermes
+profiles), group chats (rooms), jobs, skills, helper agents and settings. The bridge connects to it **on the same
+machine only** (agents.json: `serve_url`, e.g. `ws://127.0.0.1:9119/api/ws`, and `serve_key_file`, the token the
+bridge and Hermes each keep in their own file) as one more client, and passes an **allowlisted** set of its calls
+through to devices. Devices never reach Hermes themselves. Everything else (chat, Talk, Home) keeps using Hermes's
+main API (§9–§14).
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `hermes.capabilities` | request | `{}` → `{connected, version?, methods, server_requests, open_requests}` |
+| `hermes.call` | request | `{method, params?}` → `{result}` |
+| `hermes.respond` | request | `{request_id, result}` → `{}` |
+| `hermes.changed` | notification | same as `hermes.capabilities`'s result |
+| `hermes.event` | notification | `{type, session_id?, payload?}` |
+| `hermes.request` | notification | `{request_id, method, params}` |
+| `hermes.request.done` | notification | `{request_id, reason}` |
+
+**What a device may call.** `methods` lists the backend's methods a device may use **and** that this Hermes has: the
+bridge checks each allowlisted method when it connects, with a call Hermes refuses before running anything (an
+unknown parameter). A device shows a feature only when its methods are listed, so a Hermes update that drops one
+hides that feature instead of breaking it (and §9 "Hermes compatibility" names it). `connected` is false while the
+backend is down; the bridge reconnects by itself and sends `hermes.changed` whenever `connected` or `methods` change.
+
+The allowlist covers reading (bots, rooms, chats, jobs, skills, helper agents, models) and talking (starting and
+resuming a chat with a bot, sending, stopping, steering, rooms' send/stop/retry/approve). It never includes running
+commands or shell, slash commands, settings or `.env` changes, the vault, passwords or secrets, connectors, billing,
+or linking machines (`groups.peer.*`, `bot_relay.*`); settings changes come later through signed approvals as in §16.
+Some calls are allowed with limits, and the bridge refuses (`INVALID_PARAMS`) params outside them: no parameter
+starting with `_`; `prompt.submit` without any rewind (`truncate_*`, `confirm_*`); `cron.manage` only `action: list`;
+`skills.manage` only `list` or `inspect`; a `model` only from the models the bridge's OpenRouter key may use
+(§11). `model.options`'s result is filtered the same way.
+
+**Calls.** `hermes.call` returns Hermes's `result` unchanged (except `model.options`). Errors: `METHOD_NOT_FOUND`
+for a method not in `methods`; `AGENT_UNAVAILABLE` while not connected; `INVALID_PARAMS` as above; `BACKEND_ERROR`
+(-32015) when Hermes answered with an error, with `data: {code, message}` from Hermes; `CONFLICT` when the result
+would not fit in one frame (ask for less, e.g. a smaller `limit`).
+
+**Events.** Every event Hermes streams on the bridge's connection (replies to chats a device started or resumed,
+tool progress, room activity, `sessions.changed`, …) goes to every device as `hermes.event`, unchanged, except
+`gateway.ready` and events too big for one frame. After `connected` turns true again, a device resumes the chats it
+was showing (`session.resume`).
+
+**Hermes's questions.** When Hermes asks its client something, the bridge passes on `approval` (`{choice}`: `once`,
+`session`, `always` or `deny`) and `clarify` (`{answers}` keyed by question id, or `{}` to cancel) as
+`hermes.request` to every device, and `hermes.respond` answers it from any one of them. Everything else Hermes may
+ask (`sudo`, `secret`, `vault.*`, reading a terminal or window, …) the bridge declines at once, so the agent doesn't
+wait. `hermes.request.done` tells every device that a question is closed (`answered`, `withdrawn` by Hermes,
+or `disconnected`); `open_requests` lists the open ones for a device that connects later. `hermes.respond` for a
+closed or unknown question is `NOT_FOUND`; a `result` of the wrong shape is `INVALID_PARAMS`.
+
+Schemas: `hermes.capabilities`, `hermes.capabilities.result`, `hermes.call`, `hermes.call.result`, `hermes.respond`,
+`hermes.respond.result`, `hermes.changed`, `hermes.event`, `hermes.request`, `hermes.request.done`.

@@ -468,6 +468,7 @@ When the bridge queues a TTL command for an offline device, it sends a push with
 | -32012 | `MODALITY_UNSUPPORTED` | The agent does not accept this attachment type |
 | -32013 | `CONFLICT` | Stale revision (e.g. `soul_rev` does not match), or a reply is still running in that conversation |
 | -32014 | `NOT_FOUND` | Unknown conversation, turn or other object |
+| -32015 | `BACKEND_ERROR` | Hermes's backend (`hermes serve`, §18) answered with an error; `data: {code, message}` |
 
 ## 14. Versioning and extensions
 

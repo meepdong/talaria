@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/hermes.event.schema.json",
+  "title": "hermes.event",
+  "description": "Bridge to every device (notification): an event Hermes's backend streamed (\u00a718).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "hermes.event"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "session_id": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "payload": {}
+      },
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+# Hermes's other backend (hermes serve) for Talaria's doorway (spec/README.md §18): bots, group chats, jobs, skills.
+# A user unit of the Hermes user, on this machine only (127.0.0.1); the bridge connects to it as a client.
+# Install as ~hermes/.config/systemd/user/talaria-hermes-serve.service, then as root:
+#   systemctl --user -M hermes@ daemon-reload && systemctl --user -M hermes@ enable --now talaria-hermes-serve
+# The token: ~hermes/.hermes/talaria-serve.env holds HERMES_DASHBOARD_SESSION_TOKEN=<token> (hermes, mode 600), and
+# the bridge keeps the same token in its serve_key_file (/etc/talaria/hermes-serve.key, talaria, mode 600).
+# HERMES_PLATFORM=api_server: Talaria's sessions here use the same skills-off list as Talaria's chats
+# (skills.platform_disabled.api_server, the Server page's switches); Hermes Desktop's own hermes serve is unaffected.
+# Paths are the owner's install; adjust ExecStart and PATH to `hermes`'s location elsewhere.
+[Unit]
+Description=Hermes backend for Talaria (hermes serve on 127.0.0.1:9119)
+After=network-online.target hermes-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.hermes
+EnvironmentFile=%h/.hermes/talaria-serve.env
+Environment=HERMES_HOME=%h/.hermes
+Environment=HERMES_PLATFORM=api_server
+Environment=PATH=%h/.hermes/hermes-agent/node_modules/.bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.hermes/hermes-agent/.hermes/bin/hermes serve --host 127.0.0.1 --port 9119 --skip-build
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
