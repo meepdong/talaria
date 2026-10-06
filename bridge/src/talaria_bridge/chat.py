@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .accounts import OpenRouterAccount
+from .talk import TALK_METHODS, TalkError
 from .voice import VOICE_METHODS, VoiceError, VoiceService
 from .automations import AUTOMATION_METHODS, AutomationError, Automations
 from .files import FILES_METHODS, FilesError, FilesService, Found
@@ -431,6 +432,7 @@ class ChatService:
                  files: FilesService | None = None, todos: TodoStore | None = None,
                  automations: Automations | None = None, voice: VoiceService | None = None):
         self.store = store
+        self.talker = None  # Talk 3's voice talker (talk.py), set by make_chat when it has a voice key
         self.voice = voice  # Talk's natural voice and quick first line (§9)
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         if automations is not None:
@@ -476,6 +478,8 @@ class ChatService:
             await account.close()
         if self.voice is not None:
             await self.voice.close()
+        if self.talker is not None:
+            await self.talker.close()
 
     # chat.send
 
@@ -880,6 +884,9 @@ class ChatService:
             with contextlib.suppress(Exception):
                 await asyncio.shield(self._emit(turn, "chat.done", done))
             log.info("turn %s in %s: %s", turn.turn_id, turn.conversation_id, turn.status)
+            if self.talker is not None and turn.status in ("completed", "failed"):
+                # a conversation being talked in hears the agent's reply (Talk 3)
+                self.talker.on_reply(turn.conversation_id, turn.text or (turn.error or ""), turn.status)
             if turn.resolves is not None and turn.status == "completed" and self.automations is not None:
                 with contextlib.suppress(Exception):  # the blocked run worked in a chat: Home lets it go (§14)
                     await asyncio.shield(self.automations.dismiss_run(*turn.resolves))
@@ -1329,6 +1336,17 @@ class ChatService:
             return await self.status(p), None
         if method == "account.balance":
             return await self.balance(), None
+        if method in TALK_METHODS:
+            if self.talker is None:
+                raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
+            try:
+                if method == "talk.turn":
+                    return await self.talker.turn(p), None
+                if method == "talk.say":
+                    return await self.talker.say(p), None
+                return self.talker.end(p), None
+            except TalkError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method in VOICE_METHODS:
             if self.voice is None:
                 raise RpcError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
@@ -1348,7 +1366,7 @@ CHAT_METHODS = frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.his
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",
-                          "account.balance"}) | VOICE_METHODS | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
+                          "account.balance"}) | VOICE_METHODS | TALK_METHODS | BLOB_METHODS | FILES_METHODS | TODO_METHODS | AUTOMATION_METHODS
 
 
 def _attachments_preview(attachments: list[dict]) -> str:

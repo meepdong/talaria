@@ -755,7 +755,7 @@ private fun TalkBar(phase: TalkPhase, heard: String, actions: TalariaActions) {
                     when (phase) {
                         TalkPhase.LISTENING -> heard.ifEmpty { "Say something, or stay quiet to finish" }
                         TalkPhase.APPROVING -> heard.ifEmpty { "Yes allows it once, no stops it; or answer on screen" }
-                        else -> "Tap to interrupt"
+                        else -> heard.ifEmpty { "Tap to interrupt" }
                     },
                     color = on, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )

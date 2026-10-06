@@ -4,6 +4,15 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Talk 3: a voice model that hears you directly (GPT Audio Mini) answers out loud in a couple of seconds. It does
+  quick things itself (add or tick off to-dos, today's or tomorrow's agenda) and reads them back, hands anything
+  bigger to Hermes with a written brief, and tells you Hermes's answer in the same voice when it comes. One voice
+  throughout; approvals as before (a spoken yes, or on screen; unlock first when locked). Talk falls back to the
+  previous way where the bridge has no voice model.
+
 ## [0.2.0-beta.15] - 2026-10-06
 
 ### Fixed

@@ -190,7 +190,88 @@ class TalariaController(
     /** Talk's natural voice (Talk 2): speech from the bridge, played here; null where the app can't play audio. */
     @Volatile private var talkVoice: SpeechOutput? = null
 
-    /** True while the phone is locked: Talk then takes no spoken approvals (anyone nearby could say yes). */
+    /** Talk 3: the platform's recorder and streaming player, and the session using them while Talk is on. */
+    @Volatile private var voiceRecorder: VoiceRecorder? = null
+    @Volatile private var pcmPlayer: PcmPlayer? = null
+    @Volatile private var talker: TalkerSession? = null
+    private var talkerApprovals: Job? = null
+
+    fun setVoiceRecorder(recorder: VoiceRecorder?) {
+        voiceRecorder = recorder
+    }
+
+    fun setPcmPlayer(player: PcmPlayer?) {
+        pcmPlayer = player
+    }
+
+    /** Start Talk 3 if the bridge has a talker and this device can record and stream audio. */
+    private fun startTalker(): Boolean {
+        val m = mode.value as? Mode.Connected ?: return false
+        val recorder = voiceRecorder ?: return false
+        val player = pcmPlayer ?: return false
+        if (!m.voice.talkerAvailable) return false
+        val api = object : TalkerApi {
+            override val events = m.voice.talkEvents
+            override suspend fun turn(wav: ByteArray, conversationId: String?) = m.voice.talkTurn(wav, conversationId)
+            override suspend fun say(text: String, conversationId: String?) = m.voice.talkSay(text, conversationId)
+            override suspend fun end(conversationId: String) = m.voice.talkEnd(conversationId)
+        }
+        val session = TalkerSession(scope, api, recorder, player, cue = ::listenCue,
+            onPhase = { phase, text ->
+                voice.update { if (talker != null) it.copy(talk = phase, heard = text, listening = phase == TalkPhase.LISTENING) else it }
+            },
+            onConversation = { id -> openConversation(id) },
+            onEnd = { error ->
+                talker = null
+                talkerApprovals?.cancel()
+                talkOn = false
+                voice.update { it.copy(talk = null, listening = false, heard = "") }
+                if (error != null) chat?.notice(error)
+            })
+        talker = session
+        session.start(chat?.state?.value?.openId)
+        talkerApprovals = scope.launch { watchTalkerApprovals(session) }
+        return true
+    }
+
+    /** Talk 3: an approval in the chat being talked in is asked in the talker's voice; a yes, a no or a tap answers. */
+    private suspend fun watchTalkerApprovals(session: TalkerSession) {
+        val c = chat ?: return
+        val asked = mutableSetOf<String>()
+        var waiting: String? = null
+        c.state.map { s -> s.openMessages.lastOrNull { it.waitingForApproval && it.turnId != null } }
+            .distinctUntilChanged().collect { m ->
+                val turn = m?.turnId
+                if (turn == null) {
+                    val was = waiting ?: return@collect
+                    waiting = null
+                    // answered on screen: stop asking now; answered by voice: let "Okay, going ahead" be said
+                    if (answeredByVoice != was) {
+                        if (approvingTurn != null) {
+                            approvingTurn = null
+                            speechInput.value?.stop()
+                        }
+                        session.cut()
+                    }
+                    session.resume()
+                    return@collect
+                }
+                if (!asked.add(turn)) return@collect
+                waiting = turn
+                session.hold(true)
+                if (isLocked()) {
+                    session.say(LOCKED_APPROVAL_LINE)
+                } else {
+                    session.say(approvalLine(m.approval?.description ?: m.approval?.command)) {
+                        if (!isLocked() && waiting == turn) scope.launch {
+                            listenCue()
+                            listenForApproval(turn, say = { line -> session.say(line) }, after = { })
+                        }
+                    }
+                }
+            }
+    }
+
     @Volatile private var isLocked: () -> Boolean = { false }
 
     fun setLockCheck(check: (() -> Boolean)?) {
@@ -575,14 +656,21 @@ class TalariaController(
                 // message); from Home and elsewhere, in the chat last open here (compression keeps it small)
                 if (!talksInChatOnScreen(page.value.tab)) resumeChat()
                 talkOn = true
-                listenForTalk()
+                // Talk 3 where the bridge has a talker; otherwise speech to text, Hermes, and a voice (Talk 2)
+                if (!startTalker()) listenForTalk()
             }
-            TalkPhase.LISTENING, TalkPhase.APPROVING -> speechInput.value?.stop()
-            else -> interruptTalk()
+            TalkPhase.APPROVING -> speechInput.value?.stop()
+            else -> talker?.tap() ?: if (voice.value.talk == TalkPhase.LISTENING) speechInput.value?.stop() else interruptTalk()
         }
     }
 
     override fun endTalk() {
+        talker?.let {
+            approvingTurn = null
+            if (voice.value.talk == TalkPhase.APPROVING) speechInput.value?.stop()
+            it.end()
+            return
+        }
         talkOn = false
         talkFollow?.cancel()
         talkLoop?.stop()
@@ -670,7 +758,7 @@ class TalariaController(
                             loop.note(approvalLine(m.approval?.description ?: m.approval?.command)) {
                                 if (turn != null && !isLocked()) scope.launch {
                                     listenCue()
-                                    listenForApproval(turn, loop)
+                                    listenForApproval(turn, say = { line -> loop.note(line) }, after = {})
                                 }
                             }
                         }
@@ -693,8 +781,11 @@ class TalariaController(
     /** The turn whose approval Talk is listening for, or null. */
     @Volatile private var approvingTurn: String? = null
 
+    /** The last approval answered by a spoken yes or no. */
+    @Volatile private var answeredByVoice: String? = null
+
     /** Listen for a yes (allow once) or a no (deny). Never "always": that stays a choice made on screen. */
-    private fun listenForApproval(turnId: String, loop: TalkLoop) {
+    private fun listenForApproval(turnId: String, say: (String) -> Unit, after: () -> Unit) {
         val input = speechInput.value ?: return
         if (!talkOn) return
         approvingTurn = turnId
@@ -710,15 +801,18 @@ class TalariaController(
                 approvingTurn = null
                 when (approvalAnswer(text)) {
                     "once" -> {
+                        answeredByVoice = turnId
                         chat?.approve(turnId, "once")
-                        loop.note("Okay, going ahead.")
+                        say("Okay, going ahead.")
                     }
                     "deny" -> {
+                        answeredByVoice = turnId
                         chat?.approve(turnId, "deny")
-                        loop.note("Okay, I won't.")
+                        say("Okay, I won't.")
                     }
-                    else -> loop.note("I didn't catch a yes or no. It's on screen.")
+                    else -> say("I didn't catch a yes or no. It's on screen.")
                 }
+                after()
             }
 
             override fun failed(message: String) {

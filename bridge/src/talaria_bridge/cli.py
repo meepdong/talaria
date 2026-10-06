@@ -19,6 +19,7 @@ from . import __version__
 from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
+from .talk import VOICES, Talker
 from .voice import VoiceService
 from .chat import ChatService, ChatStore
 from .todos import TodoStore
@@ -116,11 +117,19 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
     async def not_serving(msg: dict) -> None:  # replaced by BridgeServer.broadcast
         pass
 
-    return ChatService(ChatStore(home / "chat.db"), clients, not_serving,
+    chat = ChatService(ChatStore(home / "chat.db"), clients, not_serving,
                        blobs=BlobStore(home / "blobs"), inboxes=inboxes, accounts=accounts,
                        files=FilesService(roots), todos=TodoStore(home / "chat.db"),
                        automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars),
                        voice=voice)
+    talk_agent = next((a for a in agents if a.voice_key_file and a.id in clients), None)
+    if talk_agent is not None and voice is not None:
+        try:
+            chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)), chat, name=talk_agent.name,
+                                 voice=talk_agent.talk_voice or VOICES[0])
+        except (OSError, ValueError) as exc:
+            print(f"WARNING: no Talk 3 talker: {exc}", file=sys.stderr)
+    return chat
 
 
 def make_agent_tools(agents: list[AgentConfig], chat: ChatService | None, ops: ServerOps | None = None) -> AgentTools | None:

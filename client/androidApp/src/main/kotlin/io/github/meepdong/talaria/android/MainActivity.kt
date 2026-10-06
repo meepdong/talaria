@@ -150,7 +150,15 @@ class MainActivity : ComponentActivity() {
                         askMic.launch(Manifest.permission.RECORD_AUDIO)
                     })
                 }
-                onDispose { controller.setSpeechInput(null) }
+                // Talk 3: the microphone itself, for the voice model that hears audio
+                controller.setVoiceRecorder(AndroidRecorder(applicationContext) { answer ->
+                    onMicAnswer = answer
+                    askMic.launch(Manifest.permission.RECORD_AUDIO)
+                })
+                onDispose {
+                    controller.setSpeechInput(null)
+                    controller.setVoiceRecorder(null)
+                }
             }
             // Talk from the assistant or a headset, once the microphone above is ready
             LaunchedEffect(pendingTalk) {

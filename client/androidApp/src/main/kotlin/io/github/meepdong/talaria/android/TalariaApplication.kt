@@ -39,6 +39,7 @@ class TalariaApplication : Application() {
         )
         controller.setInstaller(AppInstaller(this))
         controller.setAudioPlayer(AndroidAudio(this))
+        controller.setPcmPlayer(AndroidPcmPlayer())  // Talk 3's streamed voice
         controller.start()
     }
 

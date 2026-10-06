@@ -119,6 +119,10 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 | `conversations.archive` | request | `{conversation_id, archived}` → `{conversation_id, archived}` |
 | `voice.speech` | request | `{text, voice?}` → `{format, audio}` |
 | `voice.ack` | request | `{text, conversation_id?}` → `{text}` |
+| `talk.turn` | request | `{audio, format?, conversation_id?}` → `{talk_id}` |
+| `talk.say` | request | `{text, conversation_id?}` → `{talk_id}` |
+| `talk.end` | request | `{conversation_id}` → `{}` |
+| `talk.audio`, `talk.text`, `talk.done` | notification | `{talk_id, …}` |
 | `chat.hide` | request | `{conversation_id, message_ids}` → `{conversation_id, message_ids}` |
 | `chat.hidden` | notification | `{conversation_id, message_ids}` |
 | `chat.file` | notification | `{conversation_id, message}` |
@@ -154,9 +158,11 @@ After `ready`, a device can chat with an agent through the bridge (PROTOCOL §10
 
 **Talk's voice.** When an agent has a `voice_key_file` (an OpenRouter key), devices can ask for natural speech and a quick first line. `voice.speech` turns up to 150 characters into audio, base64: `wav` (24 kHz 16-bit mono, from Gemini 3.8 Flash-Lite TTS, the default, voice Despina) or `mp3` (from Qwen-Audio TTS Flash, with `voice_engine: "qwen"`); `voice_name` in agents.json picks another of the engine's voices. `voice.ack` returns one short line acknowledging what was said (from a small fast model, never answering it), using the conversation's last answer as context. Without a voice key both are `-32601` and devices use their own voice. Messages spoken in Talk start with 🎙, which tells the agent the reply will be read aloud.
 
+**Talk 3: the talker.** With a voice key, the bridge also runs a voice model that hears audio (GPT Audio Mini through OpenRouter). `talk.turn` sends what the owner said as WAV or MP3 (at most 900,000 base64 characters); the talker hears it directly, uses its tools (to-dos: add, tick off by name, list; the day's agenda) and answers out loud, streaming `talk.audio` (24 kHz 16-bit mono PCM, base64, in `seq` order) and `talk.text` (its words), then `talk.done` with all it said. For anything else it sends the agent a self-contained brief in the conversation, as a message starting "🎙 From Talk:", and says so; `talk.done` carries the conversation it worked in (a new one if it started one). While a conversation has been talked in during the last 15 minutes, the agent's finished replies in it are said by the talker on its own (`talk.done` with `unprompted: true`; `talk.audio` and `talk.text` carry the `conversation_id` so devices recognise them); `talk.end` stops that. `talk.say` has the talker say a line as it is (an approval's question). The talker never approves anything. Without a talker these are `-32601`, and devices fall back to speech-to-text, the agent and `voice.speech`.
+
 **Errors.** `AGENT_UNAVAILABLE` (-32010) when no chat agent is configured or the agent cannot be reached; `CONFLICT` (-32013) when the queue is full (§11); `NOT_FOUND` (-32014) for an unknown conversation or turn; `INVALID_PARAMS` (-32602) for malformed params.
 
-Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.archive`, `conversations.result`, `chat.hide`, `chat.hide.result`, `voice.speech`, `voice.speech.result`, `voice.ack`, `voice.ack.result`, `chat.hidden`.
+Schemas: `chat.send`, `chat.send.result`, `chat.started`, `chat.delta`, `chat.done`, `chat.cancel`, `chat.cancel.result`, `chat.approve`, `chat.approve.result`, `chat.turn.get`, `chat.turn.get.result`, `chat.history`, `chat.history.result`, `conversations.list`, `conversations.list.result`, `conversations.rename`, `conversations.delete`, `conversations.pin`, `conversations.archive`, `conversations.result`, `chat.hide`, `chat.hide.result`, `voice.speech`, `voice.speech.result`, `voice.ack`, `voice.ack.result`, `talk.turn`, `talk.turn.result`, `talk.say`, `talk.end`, `talk.end.result`, `talk.audio`, `talk.text`, `talk.done`, `chat.hidden`.
 
 ## 10. Attachments (M2)
 

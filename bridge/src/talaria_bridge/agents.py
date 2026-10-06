@@ -39,6 +39,7 @@ class AgentConfig:
     voice_key_file: str | None = None  # an OpenRouter key for Talk's voice (§9): speech and the quick first line
     voice_engine: str | None = None  # "gemini" (default) or "qwen"
     voice_name: str | None = None  # one of that engine's voices; its first by default
+    talk_voice: str | None = None  # Talk 3's talker voice (talk.py VOICES); shimmer by default
 
 
 def load_agents(path: Path) -> list[AgentConfig]:
@@ -83,7 +84,7 @@ def load_agents(path: Path) -> list[AgentConfig]:
         agents.append(AgentConfig(agent_id, entry.get("name") or agent_id, url,
                                   api_url, key_file if api_url is not None else None, inbox, balance_key,
                                   tuple(files), tuple(calendar), tools_key, voice_key,
-                                  entry.get("voice_engine"), entry.get("voice_name")))
+                                  entry.get("voice_engine"), entry.get("voice_name"), entry.get("talk_voice")))
     return agents
 
 

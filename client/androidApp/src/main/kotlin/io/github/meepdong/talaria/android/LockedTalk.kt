@@ -44,7 +44,7 @@ fun LockedTalk(phase: TalkPhase?, heard: String, onTap: () -> Unit, onEnd: () ->
             Text(
                 when (phase) {
                     TalkPhase.LISTENING -> heard.ifEmpty { "Say something, or stay quiet to finish" }
-                    TalkPhase.THINKING, TalkPhase.SPEAKING -> "Tap to interrupt"
+                    TalkPhase.THINKING, TalkPhase.SPEAKING -> heard.ifEmpty { "Tap to interrupt" }
                     else -> heard
                 },
                 textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onPrimaryContainer,
