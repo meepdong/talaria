@@ -641,13 +641,14 @@ class ChatService:
                 raise RpcError(m.NOT_FOUND, "Unknown conversation")
             client = self._client(conv.agent_id)
             self._check_queue(conv_id)
+            self._check_bot_files(conv.agent_id, blobs, found)
             self._check_files(conv.agent_id, blobs)
         elif self.bots is not None and profile_of(p.get("agent_id")) is not None:
             # a bot has one permanent chat: writing to the bot writes there (bots.py)
             conv = await self._bot_conversation(p["agent_id"])
             conv_id, client, model = conv.id, self._client(conv.agent_id), None
             self._check_queue(conv_id)
-            self._check_files(conv.agent_id, blobs)
+            self._check_bot_files(conv.agent_id, blobs, found)
         else:
             agent_id = p.get("agent_id", self.default_agent)
             if agent_id is not None:
@@ -725,6 +726,11 @@ class ChatService:
                 self.blobs.release(blob)
             raise exc if isinstance(exc, RpcError) else RpcError(exc.code, exc.message) from None
         return blobs
+
+    @staticmethod
+    def _check_bot_files(agent_id: str, blobs: list, found) -> None:
+        if profile_of(agent_id) is not None and (blobs or found):  # a bot's chat gets text only, for now (§18.1)
+            raise RpcError(m.MODALITY_UNSUPPORTED, "Bots can't take photos or files yet")
 
     def _check_files(self, agent_id: str | None, blobs: list[Blob]) -> None:
         if self.inboxes.get(agent_id) is not None:

@@ -304,6 +304,18 @@ async def test_unknown_bots_and_attachments_are_refused(bots_bridge):
     assert fake.count("session.create") == 0
 
 
+async def test_photos_and_files_to_a_bot_are_refused_not_dropped(bots_bridge):
+    from types import SimpleNamespace
+    from talaria_bridge.chat import RpcError
+    bridge, fake, chat = bots_bridge
+    photo = SimpleNamespace(kind="image", name="a.jpg")
+    for p in ({"agent_id": "bot:scout"}, {"conversation_id": (await chat._bot_conversation("bot:scout")).id}):
+        with pytest.raises(RpcError) as err:
+            await chat._send(p, "look", [photo], None)
+        assert err.value.code == m.MODALITY_UNSUPPORTED
+    assert fake.count("prompt.submit") == 0
+
+
 async def test_without_a_doorway_there_are_no_bots(chat_bridge_plain):
     phone = await connected(chat_bridge_plain)
     assert (await call(phone, "1", "bots.list"))["error"]["code"] == m.METHOD_NOT_FOUND

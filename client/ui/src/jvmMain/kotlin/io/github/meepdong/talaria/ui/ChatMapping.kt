@@ -130,7 +130,7 @@ fun chatView(
         connection = status.overall,
         connectionSummary = status.summary,
         pending = pending.map { it.toAttachment().chip(images) } + serverPending.map { it.toAttachment().chip(images) },
-        canAttach = canAttach,
+        canAttach = canAttach && openBot == null,  // bots take text only, for now (§18.1)
         canAttachMore = pending.size + serverPending.size < OutgoingFile.MAX_PER_MESSAGE,
         model = state.effectiveModel?.shortName?.takeIf { openBot == null },  // a bot's model is its own (§18.1)
         modelGroups = state.models?.providers.orEmpty().map { p ->

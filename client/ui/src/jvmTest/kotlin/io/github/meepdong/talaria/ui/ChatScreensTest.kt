@@ -132,6 +132,8 @@ class ChatScreensTest {
         assertEquals("bot:scout", v.openBot?.id)
         assertEquals(listOf(false, false, true), v.conversations.map { it.bot })
         assertNull(v.model, "a bot's model is its own: no model chip")
+        assertEquals(false, chatView(withBots(state(), openBot = true), true, true, status, 1_700_000_100_000, canAttach = true).canAttach)
+        assertEquals(true, chatView(withBots(state(), openBot = false), true, true, status, 1_700_000_100_000, canAttach = true).canAttach)
         assertNull(view(withBots(state(), openBot = false)).openBot)
     }
 
