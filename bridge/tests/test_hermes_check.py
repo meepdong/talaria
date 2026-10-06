@@ -217,7 +217,8 @@ def watch(tmp_path: Path, h: RealishHermes):
 
     autos.notify = notify
     clock = Clock()
-    return HermesWatch({"hermes": c}, autos, tmp_path / "hermes-check.json", now=clock), autos, sent, clock
+    return HermesWatch({"hermes": c}, autos, tmp_path / "hermes-check.json", now=clock,
+                       bridge_version="test-bridge-1"), autos, sent, clock
 
 
 async def test_watch_checks_on_a_new_version_and_daily_and_says_what_broke_on_home(tmp_path: Path):
@@ -250,7 +251,7 @@ async def test_watch_checks_on_a_new_version_and_daily_and_says_what_broke_on_ho
     assert [x["method"] for x in sent] == ["home.changed"]
 
     del h.rename["messages"]  # fixed by a new bridge: checked again at once, same Hermes version
-    w.bridge_version = "0.2.0b19"
+    w.bridge_version = "test-bridge-2"  # never the real version, which moves with every release
     sent.clear()
     await w.tick()
     assert h.turns == 4
