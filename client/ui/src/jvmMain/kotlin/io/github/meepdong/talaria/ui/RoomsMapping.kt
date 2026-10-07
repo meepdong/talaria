@@ -32,7 +32,7 @@ fun ChatView.withRooms(state: RoomsState?, openId: String?, bots: List<Bot>, now
             },
             working = thread?.working ?: summary.working,
             approvals = thread?.approvals.orEmpty().map { RoomApprovalItem(it.id, it.member, it.command, it.description) },
-            loading = thread?.loading == true, notice = state.notice,
+            loading = thread?.loading == true, notice = state.notice, stuck = thread?.stuck ?: 0,
         )
     }
     return copy(rooms = rooms, roomCandidates = candidates, room = room)

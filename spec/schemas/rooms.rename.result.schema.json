@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://talaria.invalid/tnp/v0/rooms.open.result.schema.json",
-  "title": "rooms.open.result",
-  "description": "Result of rooms.open (\u00a718.2).",
+  "$id": "https://talaria.invalid/tnp/v0/rooms.rename.result.schema.json",
+  "title": "rooms.rename.result",
+  "description": "Result of rooms.rename (\u00a718.2).",
   "type": "object",
   "required": [
     "jsonrpc",
@@ -112,113 +112,10 @@
             "needs_you"
           ],
           "additionalProperties": false
-        },
-        "messages": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "seq": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "at": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "kind": {
-                "enum": [
-                  "user",
-                  "member",
-                  "note"
-                ]
-              },
-              "speaker": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
-              },
-              "text": {
-                "type": "string",
-                "maxLength": 40000
-              },
-              "thread_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120
-              },
-              "member_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120
-              }
-            },
-            "required": [
-              "seq",
-              "at",
-              "kind",
-              "speaker",
-              "text"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 500
-        },
-        "has_more": {
-          "type": "boolean"
-        },
-        "approvals": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "approval_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              },
-              "member": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
-              },
-              "command": {
-                "type": "string",
-                "maxLength": 2000
-              },
-              "description": {
-                "type": "string",
-                "maxLength": 2000
-              },
-              "choices": {
-                "type": "array",
-                "items": {
-                  "enum": [
-                    "once",
-                    "deny"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "approval_id",
-              "member",
-              "choices"
-            ],
-            "additionalProperties": false
-          },
-          "maxItems": 20
-        },
-        "stuck": {
-          "type": "integer",
-          "minimum": 0
         }
       },
       "required": [
-        "room",
-        "messages",
-        "has_more",
-        "approvals"
+        "room"
       ],
       "additionalProperties": false
     }

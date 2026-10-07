@@ -594,8 +594,11 @@ devices what changed.
 | `rooms.stop` | request | `{room_id}` → `{stopped}` |
 | `rooms.approve` | request | `{room_id, approval_id, choice}` → `{}` |
 | `rooms.create` | request | `{name, members}` → `{room}` |
+| `rooms.rename` | request | `{room_id, name}` → `{room}` |
+| `rooms.retry` | request | `{room_id}` → `{retried}` |
+| `rooms.disband` | request | `{room_id}` → `{}` |
 | `rooms.changed` | notification | `{rooms}` |
-| `rooms.update` | notification | `{room_id, messages, working, approvals, needs_you}` |
+| `rooms.update` | notification | `{room_id, messages, working, approvals, needs_you, stuck?}` |
 
 A room is `{id, name, members, updated_at, working, needs_you, preview?}`; a member `{member_id, name, handle,
 bot_id?}` (`bot_id` as in §18.1, absent for the owner's own assistant); `preview` `{speaker, text}` is the latest
@@ -609,13 +612,19 @@ message. An **approval** is `{approval_id, member, command?, description?, choic
 `deny`; `rooms.approve` answers it. `rooms.send` starts a new topic unless `thread_id` names one to reply in.
 `rooms.stop` cancels the room's queued and running turns and holds its members until the owner addresses them
 again. `rooms.create` takes a `name` and 2–6 `members` (bot ids from `bots.list`, or `"assistant"` for the owner's
-own assistant) and returns the new room; disbanding a room is done in Hermes Desktop.
+own assistant) and returns the new room. `rooms.rename` renames a room (Hermes notes it in the log). A member's turn
+that Hermes couldn't finish for sure (the server went away mid-turn, or Hermes held it back) is **stuck**: `stuck` in
+`rooms.update` and `rooms.open` counts them, and `rooms.retry` runs them again (`retried` how many). `rooms.disband`
+ends a room for good, on every device and in Hermes Desktop: its turns stop and it leaves the list (Hermes keeps a
+tombstone). Members, a room's picture and compressing a room's history can't be changed through Hermes's backend
+(Hermes Desktop can't either): a room's members are fixed when it is made.
 
 Errors: `NOT_FOUND` for an unknown room, member or approval (or one no longer pending); `INVALID_PARAMS` for a bad
 name, member list or text; `AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a doorway.
 
 Schemas: `rooms.list`, `rooms.list.result`, `rooms.open`, `rooms.open.result`, `rooms.send`, `rooms.send.result`,
 `rooms.stop`, `rooms.stop.result`, `rooms.approve`, `rooms.approve.result`, `rooms.create`, `rooms.create.result`,
+`rooms.rename`, `rooms.rename.result`, `rooms.retry`, `rooms.retry.result`, `rooms.disband`, `rooms.disband.result`,
 `rooms.changed`, `rooms.update`.
 
 ### 18.3 Hermes's own commands

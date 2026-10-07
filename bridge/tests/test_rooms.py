@@ -126,6 +126,20 @@ class FakeRoomServe:
             self.event(rid, "room.stop_requested", GATEWAY, {})
             self.working[rid] = False
             return ok({"cancelled": 1})
+        if method == "groups.rename":
+            assert isinstance(p.get("event_id"), str)
+            self.rooms[rid]["name"] = p["name"]
+            self.event(rid, "room.renamed", GATEWAY, {"name": p["name"]})
+            return ok({"room": self.rooms[rid]})
+        if method == "groups.retry":
+            if not any(a.get("task_id") == p["task_id"] for a in self.pending.get(rid, []) if a.get("kind") == "retry"):
+                return err(4115, "no retryable room task matches task_id")
+            self.pending[rid] = [a for a in self.pending[rid] if a.get("task_id") != p["task_id"]]
+            self.working[rid] = True
+            return ok({"retried": True, "task": {"task_id": p["task_id"]}})
+        if method == "groups.disband":
+            self.rooms[rid]["disbanded_at"] = time.time()
+            return ok({"tombstone": {"room_id": rid}})
         if method == "groups.approve":
             action = (self.pending.get(rid) or [None])[0]
             if action is None or p["member_id"] != "research" or p["request_id"] != action["request_id"] \
@@ -308,3 +322,28 @@ async def test_without_a_doorway_there_are_no_rooms(tmp_path: Path, settings: Se
         assert (await call(phone, "1", "rooms.list"))["error"]["code"] == m.METHOD_NOT_FOUND
     chat.store.close()
     registry.close()
+
+
+async def test_a_room_is_renamed_its_stuck_turns_retried_and_it_is_disbanded(rooms_bridge):
+    bridge, fake, chat = rooms_bridge
+    phone = await connected(bridge)
+    room = (await call(phone, "1", "rooms.create", {"name": "Trip planning", "members": ["bot:scout", "bot:research"]}))["result"]["room"]
+    renamed = check("rooms.rename.result", await call(phone, "2", "rooms.rename", {"room_id": room["id"], "name": "Goa trip"}))
+    assert renamed["result"]["room"]["name"] == "Goa trip" and fake.rooms[room["id"]]["name"] == "Goa trip"
+    seen = await until(phone, "rooms.changed", lambda p: any(r["name"] == "Goa trip" for r in p["rooms"]))
+    assert [r["name"] for r in seen["rooms"]] == ["Goa trip"]
+
+    fake.pending[room["id"]] = [{"kind": "retry", "task_id": "task-7"}]
+    opened = check("rooms.open.result", await call(phone, "3", "rooms.open", {"room_id": room["id"]}))["result"]
+    assert opened["stuck"] == 1
+    retried = check("rooms.retry.result", await call(phone, "4", "rooms.retry", {"room_id": room["id"]}))
+    assert retried["result"] == {"retried": 1}
+    assert [p["task_id"] for name, p in fake.calls if name == "groups.retry"] == ["task-7"]
+
+    assert check("rooms.disband.result", await call(phone, "5", "rooms.disband", {"room_id": room["id"]}))
+    assert (await until(phone, "rooms.changed", lambda p: p["rooms"] == []))["rooms"] == []
+    gone = await call(phone, "6", "rooms.open", {"room_id": room["id"]})
+    assert gone["error"]["code"] == m.NOT_FOUND
+    bad = await call(phone, "7", "rooms.create", {"name": "x", "members": ["bot:scout", "bot:research"]})
+    assert "result" in bad
+

@@ -260,6 +260,9 @@ interface TalariaActions {
     fun closeRoom() {}
     fun sendRoom(text: String, threadId: String?) {}
     fun stopRoom() {}
+    fun renameRoom(name: String) {}
+    fun retryRoom() {}
+    fun disbandRoom() {}
     fun approveRoom(approvalId: String, choice: String) {}
     fun createRoom(name: String, members: List<String>) {}
     fun dismissRoomNotice() {}

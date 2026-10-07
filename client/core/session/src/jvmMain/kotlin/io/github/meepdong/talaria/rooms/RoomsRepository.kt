@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -49,6 +50,8 @@ data class RoomThread(
     val working: Boolean = false,
     val approvals: List<RoomApproval> = emptyList(),
     val needsYou: Boolean = false,
+    /** Members' turns Hermes couldn't finish for sure: rooms.retry runs them again. */
+    val stuck: Int = 0,
 )
 
 data class RoomsState(
@@ -107,7 +110,7 @@ class RoomsRepository(private val scope: CoroutineScope, private val api: ChatAp
                         .withThread(roomId) {
                             RoomThread(messages = merge(it.messages, messages), hasMore = (r["has_more"] as? JsonPrimitive)?.booleanOrNull == true,
                                 working = room?.working ?: it.working, approvals = parseApprovals(r["approvals"] as? JsonArray),
-                                needsYou = room?.needsYou ?: it.needsYou)
+                                needsYou = room?.needsYou ?: it.needsYou, stuck = (r["stuck"] as? JsonPrimitive)?.intOrNull ?: 0)
                         }
                 }
             } catch (e: CancellationException) {
@@ -139,6 +142,35 @@ class RoomsRepository(private val scope: CoroutineScope, private val api: ChatAp
     }
 
     fun stopRoom(roomId: String) = simple("rooms.stop", roomId) { put("room_id", roomId) }
+
+    fun renameRoom(roomId: String, name: String) {
+        if (name.isBlank()) return
+        simple("rooms.rename", roomId) {
+            put("room_id", roomId)
+            put("name", name.trim())
+        }
+    }
+
+    /** Run the room's stuck turns again. */
+    fun retryRoom(roomId: String) {
+        _state.update { s -> s.withThread(roomId) { it.copy(stuck = 0, working = true) } }
+        simple("rooms.retry", roomId) { put("room_id", roomId) }
+    }
+
+    /** End the room for good, everywhere; [then] runs once it's gone. */
+    fun disbandRoom(roomId: String, then: () -> Unit) {
+        scope.launch {
+            try {
+                api.request("rooms.disband", buildJsonObject { put("room_id", roomId) })
+                _state.update { s -> s.copy(rooms = s.rooms.filter { it.id != roomId }, threads = s.threads - roomId) }
+                then()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't end the group chat: ${e.message}")
+            }
+        }
+    }
 
     fun approve(roomId: String, approvalId: String, choice: String) {
         _state.update { s -> s.withThread(roomId) { it.copy(approvals = it.approvals.filterNot { a -> a.id == approvalId }) } }
@@ -207,7 +239,8 @@ class RoomsRepository(private val scope: CoroutineScope, private val api: ChatAp
                     }.sortedByDescending { it.updatedAt }).let { st ->
                         if (id !in st.threads) st else st.withThread(id) {
                             it.copy(messages = merge(it.messages, messages), working = working,
-                                approvals = parseApprovals(p["approvals"] as? JsonArray), needsYou = needsYou)
+                                approvals = parseApprovals(p["approvals"] as? JsonArray), needsYou = needsYou,
+                                stuck = (p["stuck"] as? JsonPrimitive)?.intOrNull ?: it.stuck)
                         }
                     }
                 }

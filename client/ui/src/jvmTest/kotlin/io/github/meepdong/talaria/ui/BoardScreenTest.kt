@@ -51,6 +51,9 @@ class BoardScreenTest {
         override fun deleteBot() { calls += "delete" }
         override fun closeBotEditor() { calls += "close" }
         override fun pickBotPicture() { calls += "pick" }
+        override fun renameRoom(name: String) { calls += "rename $name" }
+        override fun retryRoom() { calls += "retry" }
+        override fun disbandRoom() { calls += "disband" }
         override fun historyLoad(query: String?, botId: String?) { calls += "load $query $botId" }
         override fun historyOpen(sessionId: String?) { calls += "open-past $sessionId" }
         override fun historyContinue(sessionId: String) { calls += "continue $sessionId" }
@@ -312,5 +315,23 @@ class BoardScreenTest {
         onNodeWithTag("memory-who-research").performClick()
         assertEquals(listOf("hermes.memory.set content=Prefers short answers\n§\nUses metric units profile=default target=memory",
             "hermes.memory profile=research"), actions.calls)
+    }
+
+    @Test
+    fun aGroupChatIsRenamedRetriedAndEnded() = runComposeUiTest {
+        val actions = Recorder()
+        val room = RoomView("g1", "Trip crew", listOf("Scout" to "scout", "Research" to "research"), emptyList(),
+            working = false, approvals = emptyList(), loading = false, stuck = 1)
+        setContent { Box(Modifier.size(380.dp, 800.dp)) { RoomPane(room, actions, showBack = true, menu = {}) } }
+        onNodeWithText("A member's turn didn't finish.").assertExists()
+        onNodeWithTag("room-retry").performClick()
+        onNodeWithTag("room-menu").performClick()
+        onNodeWithTag("room-rename").performClick()
+        onNodeWithTag("room-name").performTextReplacement("Goa trip")
+        onNodeWithTag("room-name-save").performClick()
+        onNodeWithTag("room-menu").performClick()
+        onNodeWithTag("room-disband").performClick()
+        onNodeWithTag("room-disband").performClick()  // the second tap confirms
+        assertEquals(listOf("retry", "rename Goa trip", "disband"), actions.calls)
     }
 }

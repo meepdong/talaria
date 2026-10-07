@@ -4,6 +4,13 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Group chats: ⋮ → Rename, or "End this group chat" (a second tap confirms; it ends everywhere, Hermes Desktop too).
+  When a member's turn didn't finish (the server went away mid-turn), the group shows it with a Retry button.
+  Members, a picture and compressing aren't possible for group chats: Hermes fixes the members when a group is made.
+
 ## [0.2.0-beta.25] - 2026-10-07
 
 ### Added

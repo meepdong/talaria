@@ -572,6 +572,19 @@ class TalariaController(
         page.value.roomOpen?.let { rooms?.stopRoom(it) }
     }
 
+    override fun renameRoom(name: String) {
+        page.value.roomOpen?.let { rooms?.renameRoom(it, name) }
+    }
+
+    override fun retryRoom() {
+        page.value.roomOpen?.let { rooms?.retryRoom(it) }
+    }
+
+    override fun disbandRoom() {
+        val id = page.value.roomOpen ?: return
+        rooms?.disbandRoom(id) { page.value = Page(tab = Tab.CHATS) }
+    }
+
     override fun approveRoom(approvalId: String, choice: String) {
         page.value.roomOpen?.let { rooms?.approve(it, approvalId, choice) }
     }

@@ -50,6 +50,7 @@ class _Room:
     approvals: list[dict] = field(default_factory=list)  # as devices see them, with the action kept privately
     actions: dict[str, dict] = field(default_factory=dict)  # approval_id -> Hermes's pending action
     settled: list[dict] = field(default_factory=list)  # recent turn.settled payloads, for guessing who asks
+    stuck: list[str] = field(default_factory=list)  # task ids of turns Hermes couldn't finish for sure (rooms.retry)
     watched_until: float = 0.0
 
 
@@ -184,6 +185,8 @@ class Rooms:
         status = state.get("driver_status") or {}
         working = bool(status.get("working"))
         actions, approvals = {}, []
+        stuck = [str(a["task_id"]) for a in status.get("pending_actions") or []
+                 if isinstance(a, dict) and a.get("kind") == "retry" and a.get("task_id")]
         for a in status.get("pending_actions") or []:
             if not isinstance(a, dict) or a.get("kind") != "approval" or not a.get("request_id"):
                 continue
@@ -195,8 +198,8 @@ class Rooms:
                 if isinstance(ask.get(key), str) and ask[key]:
                     item[key] = ask[key][:2000]
             approvals.append(item)
-        changed = working != r.working or approvals != r.approvals
-        r.working, r.approvals, r.actions = working, approvals, actions
+        changed = working != r.working or approvals != r.approvals or stuck != r.stuck
+        r.working, r.approvals, r.actions, r.stuck = working, approvals, actions, stuck
         return changed
 
     def _asking(self, r: _Room) -> str | None:
@@ -214,7 +217,8 @@ class Rooms:
         changed = await self._status(rid, r)
         if new or changed:
             await self._notify("rooms.update", {"room_id": rid, "messages": new, "working": r.working,
-                                                "approvals": r.approvals, "needs_you": self._needs_you(r)})
+                                                "approvals": r.approvals, "needs_you": self._needs_you(r),
+                                                "stuck": len(r.stuck)})
 
     async def refresh(self) -> None:
         listed = await self._rpc("groups.list", {})
@@ -288,6 +292,32 @@ class Rooms:
                 return {"stopped": int(out.get("cancelled") or 0)}
             if method == "rooms.approve":
                 return await self.approve(rid, r, p)
+            if method == "rooms.rename":
+                name = p.get("name")
+                if not (isinstance(name, str) and name.strip() and len(name) <= 80):
+                    raise RoomError(m.INVALID_PARAMS, "name must be 1 to 80 characters")
+                room = await self._rpc("groups.rename", {"room_id": rid, "event_id": "rename-" + secrets.token_hex(8),
+                                                         "name": name.strip()})
+                r.raw = {**r.raw, **(room.get("room") if isinstance(room.get("room"), dict) else {}), "name": name.strip()}
+                await self._notify("rooms.changed", {"rooms": self.list()["rooms"]})
+                await self._look(rid, r)
+                return {"room": self._summary(rid, r)}
+            if method == "rooms.retry":
+                await self._status(rid, r)
+                retried = 0
+                for task_id in list(r.stuck):
+                    try:
+                        await self._rpc("groups.retry", {"room_id": rid, "task_id": task_id})
+                        retried += 1
+                    except RoomError as exc:
+                        log.info("rooms: retry %s: %s", task_id, exc.message)
+                await self._look(rid, r)
+                return {"retried": retried}
+            if method == "rooms.disband":
+                await self._rpc("groups.disband", {"room_id": rid, "cancel_id": "disband-" + secrets.token_hex(6)})
+                self._rooms.pop(rid, None)
+                await self._notify("rooms.changed", {"rooms": self.list()["rooms"]})
+                return {}
         raise RoomError(m.METHOD_NOT_FOUND, f"Method not found: {method}")
 
     async def open(self, rid: str, r: _Room, p: dict) -> dict:
@@ -298,7 +328,7 @@ class Rooms:
         pool = [x for x in r.messages if not isinstance(before, int) or x["seq"] < before]
         page = pool[-PAGE:]
         return {"room": self._summary(rid, r), "messages": page, "has_more": len(pool) > len(page),
-                "approvals": r.approvals}
+                "approvals": r.approvals, "stuck": len(r.stuck)}
 
     async def send(self, rid: str, r: _Room, p: dict) -> dict:
         text = p.get("text")
@@ -370,4 +400,5 @@ class Rooms:
         return {"room": summary}
 
 
-ROOM_METHODS = frozenset({"rooms.list", "rooms.open", "rooms.send", "rooms.stop", "rooms.approve", "rooms.create"})
+ROOM_METHODS = frozenset({"rooms.list", "rooms.open", "rooms.send", "rooms.stop", "rooms.approve", "rooms.create",
+                          "rooms.rename", "rooms.retry", "rooms.disband"})

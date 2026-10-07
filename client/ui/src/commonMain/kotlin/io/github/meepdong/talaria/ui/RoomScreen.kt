@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -72,9 +74,19 @@ fun RoomPane(room: RoomView, actions: TalariaActions, showBack: Boolean, menu: @
                 Text(room.members.joinToString(", ") { it.first }, style = MaterialTheme.typography.labelSmall, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            RoomMenu(room, actions)
             menu()
         }
         HorizontalDivider()
+        if (room.stuck > 0) {
+            Card(Modifier.fillMaxWidth().padding(8.dp).testTag("room-stuck")) {
+                Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (room.stuck == 1) "A member's turn didn't finish." else "${room.stuck} members' turns didn't finish.",
+                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = actions::retryRoom, modifier = Modifier.testTag("room-retry")) { Text("Retry") }
+                }
+            }
+        }
         room.notice?.let { notice ->
             Card(Modifier.fillMaxWidth().padding(8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                 Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -217,4 +229,29 @@ fun NewRoomDialog(candidates: List<Pair<String, String>>, onDone: (String, List<
         },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
+}
+
+/** A group chat's ⋮ (§18.2): rename it, or end it for good (a second tap confirms). */
+@Composable
+private fun RoomMenu(room: RoomView, actions: TalariaActions) {
+    var open by remember { mutableStateOf(false) }
+    var renaming by remember(room.id) { mutableStateOf(false) }
+    var sure by remember(room.id) { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true; sure = false }, modifier = Modifier.testTag("room-menu")) { Text("⋮") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Rename") }, modifier = Modifier.testTag("room-rename"), onClick = { open = false; renaming = true })
+            DropdownMenuItem(text = { Text(if (sure) "Tap again: end it for good, everywhere" else "End this group chat",
+                color = MaterialTheme.colorScheme.error) }, modifier = Modifier.testTag("room-disband"),
+                onClick = { if (sure) { open = false; actions.disbandRoom() } else sure = true })
+        }
+    }
+    if (renaming) {
+        var name by remember { mutableStateOf(room.name) }
+        AlertDialog(onDismissRequest = { renaming = false }, title = { Text("Rename the group chat") },
+            text = { OutlinedTextField(name, { name = it.take(80) }, singleLine = true, modifier = Modifier.testTag("room-name")) },
+            confirmButton = { TextButton(onClick = { renaming = false; actions.renameRoom(name) }, enabled = name.isNotBlank(),
+                modifier = Modifier.testTag("room-name-save")) { Text("Rename") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } })
+    }
 }

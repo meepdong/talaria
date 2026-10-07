@@ -196,6 +196,8 @@ data class RoomApprovalItem(val id: String, val member: String, val command: Str
 data class RoomView(
     val id: String, val name: String, val members: List<Pair<String, String>>, val messages: List<RoomMessageItem>,
     val working: Boolean, val approvals: List<RoomApprovalItem>, val loading: Boolean, val notice: String? = null,
+    /** Members' turns that didn't finish: Retry runs them again. */
+    val stuck: Int = 0,
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

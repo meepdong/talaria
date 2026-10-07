@@ -126,6 +126,10 @@
         },
         "needs_you": {
           "type": "boolean"
+        },
+        "stuck": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false
