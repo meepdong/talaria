@@ -15,10 +15,16 @@ data class ConversationItem(
 
 /** One of Hermes's bots, for the strip above the chat list and @mentions. [handle] is what @ matches first. */
 data class BotItem(val id: String, val name: String, val handle: String, val description: String? = null,
-                   val image: androidx.compose.ui.graphics.ImageBitmap? = null) {
+                   val image: androidx.compose.ui.graphics.ImageBitmap? = null,
+                   /** What it's doing right now; empty when it's idle. */
+                   val busy: List<BotWorkItem> = emptyList()) {
     val initials: String get() = name.split(' ', '-', '_').filter { it.isNotEmpty() }.take(2)
         .joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
 }
+
+/** Something a bot is doing: where it is ([conversationId], [roomId], the [board], its [schedule]). */
+data class BotWorkItem(val text: String, val conversationId: String? = null, val roomId: String? = null,
+                       val board: Boolean = false, val schedule: Boolean = false)
 
 /**
  * "@scout find a cafe" → (the bot, "find a cafe"): a message for that bot's chat. Matches a bot's handle or its

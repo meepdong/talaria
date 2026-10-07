@@ -26,6 +26,7 @@ STATUSES = frozenset(COLUMNS) | {"archived"}
 ASSISTANT = "assistant"  # the owner's own assistant: Hermes's default profile
 WATCH_S = 600  # board.get watches the board this long
 EVERY_S = 5.0  # how often a watched board is looked at
+SLOW_S = 30.0  # and one nobody has open (devices show which bots are at work)
 MAX_TITLE, MAX_BODY = 300, 8000
 
 
@@ -97,9 +98,12 @@ def _why(exc: ServeError) -> str:
 
 
 class Board:
-    def __init__(self, backend: HermesBackend, *, every_s: float = EVERY_S, now: Callable[[], float] = time.monotonic):
+    def __init__(self, backend: HermesBackend, *, every_s: float = EVERY_S, slow_s: float = SLOW_S,
+                 now: Callable[[], float] = time.monotonic):
         self.backend = backend
         self.every_s = every_s
+        self.slow_s = slow_s
+        self._looked = 0.0
         self.now = now
         self.broadcast: Callable[[dict], Awaitable[None]] | None = None  # set by the chat service
         self._watched_until = 0.0
@@ -118,10 +122,12 @@ class Board:
         return answer
 
     async def run(self) -> None:
-        """Look at the board while a device watches it; say when it changed."""
+        """Look at the board (often while a device watches it, now and then otherwise); say when it changed."""
         while True:
             try:
-                if self.backend.connected and self._watched_until > self.now():
+                due = self._watched_until > self.now() or self.now() - self._looked >= self.slow_s
+                if self.backend.connected and due:
+                    self._looked = self.now()
                     board = await self._rest(f"{KANBAN}/board")
                     seen = board.get("latest_event_id")
                     if self._seen is not None and seen != self._seen and self.broadcast is not None:

@@ -1745,6 +1745,7 @@ class TalariaController(
                         openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
                     .withRooms(l.rooms, x.page.roomOpen, l.chat?.bots.orEmpty(), now)
                     .let { v -> v.copy(helpers = helperItems(l.control, l.chat?.openId)) }
+                    .withBotWork(botWork(l.chat, l.rooms, l.control)) { id -> l.chat?.conversations?.firstOrNull { it.id == id }?.agentId }
                 Screen.Chat(
                     view, withBalance,
                     undo = x.page.undo,

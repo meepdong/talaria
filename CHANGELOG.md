@@ -4,6 +4,13 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- You can see when a bot is at work: its picture in the bot row gets a ring and says "working…", its chat shows as
+  busy in the list, and inside its chat a line says what it's doing elsewhere (a group chat, a board task, a routine);
+  tap the line to go there.
+
 ## [0.2.0-beta.24] - 2026-10-07
 
 ### Added

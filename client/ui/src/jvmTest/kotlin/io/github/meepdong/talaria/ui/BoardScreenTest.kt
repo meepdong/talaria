@@ -227,4 +227,37 @@ class BoardScreenTest {
             RunningItem("Budget", "Group chat: waiting for you", roomId = "g2"),
             RunningItem("Summarise Monday's call", "Board: Meeting Minder is working on it", board = true)), menu.running)
     }
+
+    @Test
+    fun whatEachBotIsDoing() {
+        val chat = io.github.meepdong.talaria.chat.ChatState(conversations = listOf(
+            io.github.meepdong.talaria.chat.ConversationSummary("c-r", "bot:research", "Research", 1, 1, activeTurnId = "t-1"),
+            io.github.meepdong.talaria.chat.ConversationSummary("c-m", "bot:meetingminder", "Meeting Minder", 1, 1)))
+        val rooms = io.github.meepdong.talaria.rooms.RoomsState(rooms = listOf(io.github.meepdong.talaria.rooms.RoomSummary("g1", "Trip crew",
+            listOf(io.github.meepdong.talaria.rooms.RoomMember("m1", "Research", "research", "bot:research"),
+                io.github.meepdong.talaria.rooms.RoomMember("m2", "Hermes", "hermes")), 1, working = true)))
+        val control = state.copy(routines = listOf(Routine("r1", "bot:research", "Digest", "daily", "x", true, "running")))
+        val work = botWork(chat, rooms, control)
+        assertEquals(listOf(BotWorkItem("Replying in its chat", conversationId = "c-r"), BotWorkItem("In the group chat “Trip crew”", roomId = "g1"),
+            BotWorkItem("Running its routine “Digest”", schedule = true)), work["bot:research"])
+        assertEquals(listOf(BotWorkItem("On the board task “Summarise Monday's call”", board = true)), work["bot:meetingminder"])
+        assertEquals(setOf("bot:research", "bot:meetingminder"), work.keys)
+    }
+
+    @Test
+    fun aBusyBotShowsInItsChatAndTheStrip() = runComposeUiTest {
+        val actions = Recorder()
+        val status = StatusView(rows = emptyList(), lastConnected = "just now", deviceName = "Phone", server = "wss://vps",
+            keyProtection = "Keystore", overall = Health.GOOD, summary = "Connected")
+        val chat = io.github.meepdong.talaria.chat.ChatState(listLoaded = true, openId = "c-m", bots = bots,
+            conversations = listOf(io.github.meepdong.talaria.chat.ConversationSummary("c-m", "bot:meetingminder", "Meeting Minder", 1, 1)),
+            threads = mapOf("c-m" to io.github.meepdong.talaria.chat.ConversationThread(loaded = true)))
+        val work = botWork(chat, null, state)
+        val v = chatView(chat, true, true, status, now).withBotWork(work) { "bot:meetingminder" }
+        assertEquals(true, v.conversations.single().running, "its chat row shows it at work")
+        setContent { Box(Modifier.size(380.dp, 800.dp)) { ChatHome(v, actions) } }
+        onNodeWithTag("bot-at-work").assertExists()
+        onNodeWithText("Meeting Minder is working: On the board task “Summarise Monday's call”").performClick()
+        assertEquals(listOf("show true"), actions.calls)
+    }
 }

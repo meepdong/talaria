@@ -142,7 +142,7 @@ async def test_a_task_for_a_bot_starts_one_for_nobody_waits(board_bridge):
     given = check("board.add.result", await call(phone, "1", "board.add",
                                                   {"title": "Summarise the Monday call", "assignee": "bot:meetingminder"}))
     assert given["result"]["task"]["status"] == "ready" and given["result"]["task"]["assignee"] == "bot:meetingminder"
-    assert kanban.calls[0] == ("POST", "/api/plugins/kanban/tasks", {"title": "Summarise the Monday call", "body": None,
+    assert next(c for c in kanban.calls if c[0] == "POST") == ("POST", "/api/plugins/kanban/tasks", {"title": "Summarise the Monday call", "body": None,
                                                                     "assignee": "meetingminder", "triage": False})
     loose = (await call(phone, "2", "board.add", {"title": "Think about Q4"}))["result"]
     assert loose["task"]["status"] == "todo" and loose["task"]["assignee"] is None
@@ -196,3 +196,13 @@ async def test_usage_adds_up_days_and_ranks_models(board_bridge):
     while (msg := await recv(phone)).get("id") != "2":
         pass
     assert msg["error"]["code"] == m.INVALID_PARAMS
+
+
+async def test_a_board_nobody_watches_is_still_looked_at_now_and_then(board_bridge):
+    bridge, kanban, chat = board_bridge
+    chat.board.slow_s = 0.1
+    phone = await connected(bridge)  # never opens the board
+    await asyncio.sleep(0.3)  # a first look learns where the board is
+    kanban._task("Started by Hermes", "running", "research")
+    seen = await changed(phone)
+    assert seen["columns"][4]["tasks"][0]["assignee"] == "bot:research"

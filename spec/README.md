@@ -670,8 +670,8 @@ own assistant, `summary` the worker's latest note, `error` its last failure, `co
 nobody), or edits it; Hermes refuses a move it doesn't allow (e.g. to `ready` while a task it depends on isn't done)
 with `CONFLICT` and says why. `board.add` makes a task in `ready` when it has an `assignee` (so it starts), `todo`
 otherwise, or `triage` with `triage: true`; `warning` says when nothing will pick it up yet. `board.get` marks the
-board as watched by that device for 10 minutes: while it is, the bridge checks it every few seconds and sends
-`board.changed` when it changed.
+board as watched by that device for 10 minutes: while it is, the bridge checks it every few seconds (otherwise every
+half minute, so devices can show which bots are at work) and sends `board.changed` when it changed.
 
 Errors: `NOT_FOUND` for an unknown task; `INVALID_PARAMS` for a bad field; `CONFLICT` as above;
 `AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a doorway.

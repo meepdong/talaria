@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -209,7 +210,10 @@ private fun BotStrip(bots: List<BotItem>, open: String?, actions: TalariaActions
         bots.forEach { b ->
             Column(Modifier.width(64.dp).clickable { actions.openBot(b.id) }.padding(vertical = 4.dp).testTag("bot-${b.handle}"),
                 horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(shape = CircleShape, modifier = Modifier.size(44.dp),
+                // a ring while the bot is at work (its chat, a group chat, a board task, a routine)
+                val ring = if (b.busy.isNotEmpty()) Modifier.border(2.dp, Brand.Busy, CircleShape).padding(3.dp).testTag("bot-busy-${b.handle}")
+                           else Modifier
+                Surface(shape = CircleShape, modifier = ring.size(44.dp),
                     color = if (b.id == open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
                     contentColor = if (b.id == open) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer) {
                     val pic = b.image
@@ -220,8 +224,9 @@ private fun BotStrip(bots: List<BotItem>, open: String?, actions: TalariaActions
                         Box(contentAlignment = Alignment.Center) { Text(b.initials, style = MaterialTheme.typography.titleSmall) }
                     }
                 }
-                Text(b.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp))
+                Text(if (b.busy.isNotEmpty()) "working…" else b.name, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp),
+                    color = if (b.busy.isNotEmpty()) Brand.Busy else androidx.compose.ui.graphics.Color.Unspecified)
             }
         }
         // a new bot (§18.8)
@@ -333,6 +338,7 @@ private fun Conversation(
             menu()
         }
         HorizontalDivider()
+        view.openBot?.let { bot -> BotAtWork(bot, view.openId, actions) }
 
         view.notice?.let { notice ->
             Card(Modifier.fillMaxWidth().padding(8.dp),
@@ -1007,6 +1013,31 @@ private fun TalkBar(phase: TalkPhase, heard: String, level: Float, actions: Tala
             }
             TextButton(onClick = actions::endTalk, modifier = Modifier.testTag("talk-end")) {
                 Text("End", color = on, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+/** In a bot's chat: what the bot is doing elsewhere right now (a group chat, a board task, a routine); tap to go there. */
+@Composable
+private fun BotAtWork(bot: BotItem, openId: String?, actions: TalariaActions) {
+    val elsewhere = bot.busy.filter { it.conversationId == null || it.conversationId != openId }
+    if (elsewhere.isEmpty()) return
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).padding(horizontal = 16.dp, vertical = 6.dp)
+        .testTag("bot-at-work")) {
+        elsewhere.forEach { w ->
+            Row(Modifier.fillMaxWidth().clickable(enabled = w.roomId != null || w.board || w.schedule || w.conversationId != null) {
+                when {
+                    w.roomId != null -> actions.openRoom(w.roomId)
+                    w.board -> { actions.selectTab(Tab.TODOS); actions.showBoard(true) }
+                    w.schedule -> actions.selectTab(Tab.SCHEDULE)
+                    w.conversationId != null -> actions.openConversation(w.conversationId)
+                }
+            }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).background(Brand.Busy, CircleShape))
+                Spacer(Modifier.width(8.dp))
+                Text("${bot.name} is working: ${w.text}", style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
             }
         }
     }
