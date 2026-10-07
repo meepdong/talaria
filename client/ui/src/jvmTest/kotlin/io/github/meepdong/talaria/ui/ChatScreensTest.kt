@@ -76,6 +76,9 @@ class ChatScreensTest {
         override fun loadTalkVoices() { calls += "voices" }
         override fun previewTalkVoice(id: String) { calls += "hear $id" }
         override fun setTalkVoice(id: String) { calls += "voice $id" }
+        override fun setTallyBrain(id: String) { calls += "brain $id" }
+        override fun setTallySpeech(id: String?) { calls += "speech $id" }
+        override fun setTallyNewChats(on: Boolean) { calls += "tally-chats $on" }
         override fun pickModel(provider: String, model: String) { calls += "model $provider $model" }
         override fun openModelPicker(query: String) { calls += "picker $query" }
         override fun dismissAside(id: String) { calls += "dismiss $id" }
@@ -526,6 +529,32 @@ class ChatScreensTest {
         onNodeWithTag("hear-marin").performClick()
         onNodeWithTag("voice-marin").performClick()
         assertEquals(listOf("voices", "hear marin", "voice marin"), actions.calls)
+    }
+
+    @Test
+    fun tallysMainModelAndVoiceArePicked() = runComposeUiTest {
+        val actions = Recorder()
+        val tally = TallyView(brain = "gemini:gemini-3.5-flash", brainLabel = "Gemini 3.5 Flash", speech = "gemini:gemini-3.8-flash-tts",
+            speechLabel = "Gemini 3.8 Flash TTS",
+            brains = listOf(Triple("gemini:gemini-3.5-flash", "Gemini 3.5 Flash", "hears your voice · Gemini key"),
+                Triple("openrouter:openai/gpt-audio-mini", "GPT Audio Mini", "hears your voice · speaks itself · OpenRouter")),
+            speeches = listOf("gemini:gemini-3.8-flash-tts" to "Gemini 3.8 Flash TTS", "openrouter:elevenlabs/eleven-v4-turbo" to "Eleven v4 Turbo"),
+            canOwnVoice = false, newChats = true)
+        val v = view(state()).copy(voice = VoiceView(canDictate = true, tally = tally, talkVoices = listOf("Kore" to "Kore", "Puck" to "Puck"),
+            talkVoice = "Kore"))
+        setContent { androidx.compose.foundation.layout.Box(Modifier.size(400.dp, 900.dp)) { ChatHome(v, actions) } }
+        onNodeWithTag("menu").performClick()
+        onNodeWithTag("talk-voice").performClick()
+        onNodeWithTag("tally-brain").assertTextContains("Gemini 3.5 Flash", substring = true).performClick()
+        onNodeWithText("speaks itself", substring = true).assertExists()
+        onNodeWithTag("tally-brain-openrouter:openai/gpt-audio-mini").performClick()
+        onNodeWithTag("tally-speech").performClick()
+        onNodeWithTag("tally-speech-").assertDoesNotExist()  // this main model can't speak itself: no "own voice"
+        onNodeWithTag("tally-speech-openrouter:elevenlabs/eleven-v4-turbo").performClick()
+        onNodeWithTag("tally-new-chats").performClick()
+        onNodeWithTag("voice-Puck").performClick()
+        assertEquals(listOf("voices", "brain openrouter:openai/gpt-audio-mini", "speech openrouter:elevenlabs/eleven-v4-turbo",
+            "tally-chats false", "voice Puck"), actions.calls)
     }
 
     @Test

@@ -20,6 +20,7 @@ from .agents import AgentConfig, AgentMonitor, load_agents
 from .blobs import BlobStore
 from .accounts import OpenRouterAccount
 from .talk import TRANSCRIBERS, VOICES, Talker
+from .tally_chat import TallyChat
 from .voice import VoiceService
 from .chat import ChatService, ChatStore
 from .todos import TodoStore
@@ -145,14 +146,17 @@ def make_chat(home: Path, agents: list[AgentConfig]) -> ChatService | None:
                        files=FilesService(roots), todos=TodoStore(home / "chat.db"),
                        automations=Automations(clients, AutomationStore(home / "chat.db"), calendars=calendars),
                        voice=voice)
-    talk_agent = next((a for a in agents if a.voice_key_file and a.id in clients), None)
-    if talk_agent is not None and voice is not None:
+    talk_agent = next((a for a in agents if (a.voice_key_file or a.gemini_key_file) and a.id in clients), None)
+    if talk_agent is not None:
         try:
-            chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)), chat,
-                                 name=talk_agent.talk_name or talk_agent.name, worker=talk_agent.name,
+            chat.talker = Talker(read_api_key(Path(talk_agent.voice_key_file)) if talk_agent.voice_key_file else None,
+                                 chat, name=talk_agent.talk_name or talk_agent.name, worker=talk_agent.name,
                                  persona=talk_agent.talk_persona or "",
-                                 voice=talk_agent.talk_voice or VOICES[0],
-                                 transcriber=talk_agent.talk_transcriber or TRANSCRIBERS[0])
+                                 voice=talk_agent.talk_voice,
+                                 transcriber=talk_agent.talk_transcriber or TRANSCRIBERS[0],
+                                 gemini_key=read_api_key(Path(talk_agent.gemini_key_file)) if talk_agent.gemini_key_file else None,
+                                 brain=talk_agent.talk_brain, speech=talk_agent.talk_speech)
+            chat.tally = TallyChat(chat.talker, chat)  # typing with Tally (§9)
         except (OSError, ValueError) as exc:
             print(f"WARNING: no Talk 3 talker: {exc}", file=sys.stderr)
     chat.agent_names = {a.id: a.name for a in agents}

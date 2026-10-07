@@ -100,6 +100,46 @@ class VoiceApi(private val api: ChatApi) {
         return voices to ((r["voice"] as? JsonPrimitive)?.content ?: return null)
     }
 
+    /** Tally's main model and voice (§9 "Tally's models"), and the choices the bridge's keys allow. */
+    data class TallySetup(
+        val brain: String, val speech: String?, val voice: String,
+        /** (id, label, hears, speaks) */
+        val brains: List<TallyModel>, val speeches: List<Pair<String, String>>, val voices: List<String>,
+    )
+    data class TallyModel(val id: String, val label: String, val hears: Boolean, val speaks: Boolean)
+
+    suspend fun tallySetup(): TallySetup? =
+        if (!talkerAvailable) null else call("talk.setup", buildJsonObject {}, optional = true)?.let(::parseSetup)
+
+    /** Change Tally's [brain], her voice model ([speech]; [ownVoice] for the main model's own) or [voice]. */
+    suspend fun tallyConfigure(brain: String? = null, speech: String? = null, ownVoice: Boolean = false,
+                               voice: String? = null): TallySetup? {
+        if (!talkerAvailable) return null
+        return call("talk.configure", buildJsonObject {
+            brain?.let { put("brain", it) }
+            if (ownVoice) put("speech", kotlinx.serialization.json.JsonNull) else speech?.let { put("speech", it) }
+            voice?.let { put("voice", it) }
+        }, optional = true)?.let(::parseSetup)
+    }
+
+    private fun parseSetup(r: kotlinx.serialization.json.JsonObject): TallySetup? {
+        fun str(key: String) = (r[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        fun arr(key: String) = (r[key] as? kotlinx.serialization.json.JsonArray).orEmpty()
+        return TallySetup(
+            brain = str("brain") ?: return null, speech = str("speech"), voice = str("voice").orEmpty(),
+            brains = arr("brains").mapNotNull { e ->
+                val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                TallyModel((o["id"] as? JsonPrimitive)?.content ?: return@mapNotNull null, (o["label"] as? JsonPrimitive)?.content.orEmpty(),
+                    (o["hears"] as? JsonPrimitive)?.content == "true", (o["speaks"] as? JsonPrimitive)?.content == "true")
+            },
+            speeches = arr("speeches").mapNotNull { e ->
+                val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                ((o["id"] as? JsonPrimitive)?.content ?: return@mapNotNull null) to (o["label"] as? JsonPrimitive)?.content.orEmpty()
+            },
+            voices = arr("voices").mapNotNull { (it as? JsonPrimitive)?.content },
+        )
+    }
+
     /** The talker speaks in [voice] from now on, on every device. True once the bridge has it. */
     suspend fun talkSetVoice(voice: String): Boolean =
         talkerAvailable && call("talk.voice", buildJsonObject { put("voice", voice) }, optional = true) != null

@@ -204,6 +204,9 @@ class ChatRepository(
      * a new one). Files are uploaded first (spec/README.md §10). Returns the message's client id (its
      * [ChatMessage.clientMsgId], which then gets the turn's id), or null when there was nothing to send.
      */
+    /** Who a new conversation is with: null for the bridge's default agent, "tally" for Tally (§9). */
+    var newChatAgent: String? = null
+
     fun send(
         text: String, files: List<OutgoingFile> = emptyList(), conversationId: String? = _state.value.openId,
         serverFiles: List<ServerFile> = emptyList(), todoId: String? = null,
@@ -664,7 +667,8 @@ class ChatRepository(
             val r = api.request("chat.send", buildJsonObject {
                 put("text", text)
                 conv?.let { put("conversation_id", it) }
-                if (conv == null) _state.value.draftModel?.let { put("model", it.json()) }
+                if (conv == null) newChatAgent?.let { put("agent_id", it) }  // Tally (§9 "Tally in chat")
+                if (conv == null && newChatAgent == null) _state.value.draftModel?.let { put("model", it.json()) }
                 put("client_msg_id", cmid)
                 if (blobs.isNotEmpty()) put("attachments", JsonArray(blobs.map { id -> buildJsonObject { put("blob_id", id) } }))
                 outgoingServer[cmid]?.let { found ->

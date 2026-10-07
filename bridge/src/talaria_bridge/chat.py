@@ -489,6 +489,7 @@ class ChatService:
         self.routines = None  # bots' routines and helper agents (routines.py, §18.6–18.7), likewise
         self.botadmin = None  # making, changing and deleting bots (botadmin.py, §18.8), likewise
         self.past = None  # every session from every surface (history.py, §18.9), likewise
+        self.tally = None  # typing with Tally (tally_chat.py, §9), set when Talk has a talker
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -803,9 +804,12 @@ class ChatService:
         return ([{"type": "text", "text": message}] if message else []) + images
 
     def _lookup(self, agent_id: str | None):
-        """The agent's client: Hermes's API (hermes.py), or a bot's chat through hermes serve (bots.py)."""
+        """The agent's client: Hermes's API (hermes.py), a bot's chat through hermes serve (bots.py), or Tally
+        (tally_chat.py)."""
         if agent_id in self.agents:
             return self.agents[agent_id]
+        if agent_id == "tally" and self.tally is not None:
+            return self.tally
         if self.bots is not None and profile_of(agent_id) is not None:
             return self.bots.client(agent_id)
         return None
@@ -1607,6 +1611,10 @@ class ChatService:
                     return self.talker.voices(), None
                 if method == "talk.voice":
                     return self.talker.set_voice(p), None
+                if method == "talk.setup":
+                    return await self.talker.setup(), None
+                if method == "talk.configure":
+                    return await self.talker.configure(p), None
                 return self.talker.end(p), None
             except TalkError as exc:
                 raise RpcError(exc.code, exc.message) from None

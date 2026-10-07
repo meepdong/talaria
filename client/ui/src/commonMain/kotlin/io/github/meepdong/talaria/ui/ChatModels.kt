@@ -237,6 +237,24 @@ data class VoiceView(
     val talkVoice: String? = null,
     /** The voice being heard as a sample. */
     val previewing: String? = null,
+    /** Tally's models (§9), once asked for: null when the bridge can't say. */
+    val tally: TallyView? = null,
+)
+
+/** Tally's main model, voice model and voice, and the choices the bridge's keys allow. */
+data class TallyView(
+    val brain: String, val brainLabel: String,
+    /** Null: the main model's own voice. */
+    val speech: String?, val speechLabel: String,
+    /** (id, label, "hears your voice" / "speaks itself" notes) */
+    val brains: List<Triple<String, String, String>>,
+    val speeches: List<Pair<String, String>>,
+    /** The main model speaks itself, so "her own voice" is a choice. */
+    val canOwnVoice: Boolean,
+    /** New chats go to Tally (this device). */
+    val newChats: Boolean = false,
+    val busy: Boolean = false,
+    val notice: String? = null,
 )
 
 /** How long a pause ends the owner's turn in Talk. */

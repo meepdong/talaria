@@ -205,6 +205,23 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun newChatsGoToTallyWhenAsked() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["chat.send"] = { json("""{"conversation_id":"c-9","turn_id":"t-1","title":"Hi"}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        repo.newChatAgent = "tally"
+        repo.send("Hi Tally", conversationId = null)
+        advanceUntilIdle()
+        val sent = api.calls.last { it.first == "chat.send" }.second
+        assertEquals("\"tally\"", sent["agent_id"].toString())
+        repo.newChatAgent = null
+        repo.send("Hi Hermes", conversationId = null)
+        advanceUntilIdle()
+        assertEquals(null, api.calls.last { it.first == "chat.send" }.second["agent_id"])
+    }
+
+    @Test
     fun hidingMessagesAndPinning() = chatTest { scope ->
         val api = FakeApi()
         api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }

@@ -4,6 +4,17 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Tally runs on any model: Talk's ⋮ → "Tally: model and voice…" picks her **main model** (it hears you, thinks and
+  uses her tools; any model your Gemini or OpenRouter key allows, 35 today) and her **voice model** (Gemini 3.8 Flash
+  TTS, ElevenLabs, Qwen…, or GPT Audio's own voice), then her voice. She starts speaking as soon as her first sentence
+  is written. Set up with Gemini 3.5 Flash and Gemini 3.8 Flash TTS (voice Kore).
+- Typed chat with Tally: new chats go to Tally (switch in the same dialog). She answers easy things herself and hands
+  work to Hermes or a bot, like in Talk; their reports come back to her chat, written. What you say in Talk lands in
+  the same Tally chat. In a Tally chat, the model button switches her main model.
+
 ## [0.2.0-beta.26] - 2026-10-07
 
 ### Added

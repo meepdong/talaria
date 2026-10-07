@@ -215,6 +215,8 @@ class TalariaController(
     @Volatile private var voiceRecorder: VoiceRecorder? = null
     @Volatile private var pcmPlayer: PcmPlayer? = null
     @Volatile private var talker: TalkerSession? = null
+    /** Asks the bridge for Tally's models on every new session (§9), so new chats can go to her. */
+    private var tallyWatch: Job? = null
     private var talkerApprovals: Job? = null
 
     fun setVoiceRecorder(recorder: VoiceRecorder?) {
@@ -468,6 +470,7 @@ class TalariaController(
     /** Stop the session, for example when the app quits. */
     fun close() {
         pairJob?.cancel()
+        tallyWatch?.cancel()
         speechInput.value?.stop()
         speechOutput?.stop()
         (mode.value as? Mode.Connected)?.let {
@@ -1392,9 +1395,52 @@ class TalariaController(
     override fun loadTalkVoices() {
         val m = mode.value as? Mode.Connected ?: return
         scope.launch {
+            m.voice.tallySetup()?.let(::showTally)
             val (voices, current) = m.voice.talkVoices() ?: return@launch
             voice.update { it.copy(talkVoices = voices, talkVoice = current) }
         }
+    }
+
+    /** Tally's models as the dialog shows them (§9 "Tally's models"). */
+    private fun showTally(s: VoiceApi.TallySetup, notice: String? = null) {
+        val brain = s.brains.firstOrNull { it.id == s.brain }
+        val brains = s.brains.map { b ->
+            Triple(b.id, b.label, listOfNotNull(if (b.hears) "hears your voice" else "reads what you say",
+                if (b.speaks) "speaks itself" else null, b.id.substringBefore(':').let { if (it == "gemini") "Gemini key" else "OpenRouter" })
+                .joinToString(" · "))
+        }
+        voice.update {
+            it.copy(tally = TallyView(
+                brain = s.brain, brainLabel = brain?.label ?: s.brain.substringAfter(':'),
+                speech = s.speech, speechLabel = s.speech?.let { id -> s.speeches.firstOrNull { p -> p.first == id }?.second ?: id.substringAfter(':') }
+                    ?: "Her main model's own voice",
+                brains = brains, speeches = s.speeches, canOwnVoice = brain?.speaks == true,
+                newChats = prefs.getString(PREF_TALLY_CHATS, "on") != "off", notice = notice,
+            ), talkVoices = s.voices.map { v -> v to v }.ifEmpty { it.talkVoices }, talkVoice = s.voice.ifEmpty { it.talkVoice })
+        }
+        chat?.newChatAgent = if (prefs.getString(PREF_TALLY_CHATS, "on") != "off") "tally" else null
+    }
+
+    private fun configureTally(brain: String? = null, speech: String? = null, ownVoice: Boolean = false) {
+        val m = mode.value as? Mode.Connected ?: return
+        voice.update { v -> v.copy(tally = v.tally?.copy(busy = true, notice = null)) }
+        scope.launch {
+            val done = m.voice.tallyConfigure(brain, speech, ownVoice)
+            if (done != null) {
+                showTally(done)
+                m.voice.talkVoices()?.let { (voices, current) -> voice.update { it.copy(talkVoices = voices, talkVoice = current) } }
+            } else {
+                voice.update { v -> v.copy(tally = v.tally?.copy(busy = false, notice = "That didn't work: the model may be blocked or can't speak")) }
+            }
+        }
+    }
+
+    override fun setTallyBrain(id: String) = configureTally(brain = id)
+    override fun setTallySpeech(id: String?) = if (id == null) configureTally(ownVoice = true) else configureTally(speech = id)
+    override fun setTallyNewChats(on: Boolean) {
+        prefs.setString(PREF_TALLY_CHATS, if (on) "on" else "off")
+        chat?.newChatAgent = if (on && voice.value.tally != null) "tally" else null
+        voice.update { v -> v.copy(tally = v.tally?.copy(newChats = on)) }
     }
 
     /** Hear [id] say a sample line (not while Talk is on: it has the speaker). */
@@ -1767,6 +1813,10 @@ class TalariaController(
         val terminals = TerminalRepository(scope, client.asChatApi(), bridge.deviceId).also { it.start() }
         val rooms = RoomsRepository(scope, client.asChatApi()).also { it.start() }
         val control = ControlRepository(scope, client.asChatApi()).also { it.start() }
+        tallyWatch?.cancel()
+        tallyWatch = scope.launch {
+            client.asChatApi().sessions.collect { (mode.value as? Mode.Connected)?.voice?.tallySetup()?.let(::showTally) }
+        }
         mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates,
             terminals, rooms, control)
         client.start()
@@ -1842,6 +1892,8 @@ class TalariaController(
         const val PREF_READ_ALOUD = "voice.read_aloud"
         const val PREF_AUTO_SEND = "voice.auto_send"
         const val PREF_TALK_WAIT = "voice.talk_wait"
+        /** "off": new chats go to the bridge's default agent instead of Tally (§9 "Tally in chat"). */
+        const val PREF_TALLY_CHATS = "tally.new_chats"
         const val PREVIEW_MS = 15_000L
         /** Home's tile order on this device, as "DAY,NEXT,…" (see [homeOrder]). */
         const val PREF_HOME_ORDER = "home.order"

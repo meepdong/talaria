@@ -288,7 +288,7 @@ async def test_a_refusing_model_ends_the_turn_with_an_error(tmp_path: Path):
     def refuse(req):
         return httpx.Response(404, json={"error": {"message": "Model blocked by guardrail"}})
 
-    chat.talker._http._transport = httpx.MockTransport(refuse)
+    chat.talker.models.or_http._transport = httpx.MockTransport(refuse)
     await chat.handle("talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1"})
     end = await done(sent)
     assert "refused (404)" in end["error"] and end["text"] == ""
@@ -299,7 +299,7 @@ async def test_a_refusing_model_ends_the_turn_with_an_error(tmp_path: Path):
 
 async def test_an_early_turn_waits_for_commit_and_a_cancel_drops_it(tmp_path: Path):
     chat, fake, sent = setup(tmp_path, calls(("add_todo", {"text": "Buy milk"})), voice_says("Added milk."))
-    chat.talker._fillers["shimmer"] = ["MMHM"]
+    chat.talker._fillers[chat.talker._filler_key("shimmer")] = ["MMHM"]
     early = check("talk.turn", m.request("1", "talk.turn", {"audio": "UklGRg==", "conversation_id": "c-1", "early": True}))
     talk_id = (await chat.handle("talk.turn", early["params"]))[0]["talk_id"]
     for _ in range(100):

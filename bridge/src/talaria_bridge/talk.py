@@ -1,7 +1,9 @@
-"""Talk 3 (spec/README.md §9): a voice talker in front of the agent.
+"""Talk (spec/README.md §9): Tally, a voice talker in front of the agent, on any model (tally_models.py).
 
-GPT Audio Mini hears the owner's recorded words directly (no transcription), does the quick things itself with a
-few tools (to-dos, the day's agenda), and streams its spoken answer to the device. Anything that needs the full
+Tally's model (GPT Audio Mini, a Gemini model on the owner's Gemini key, …) hears the owner's recorded words directly
+when it can (a model that can't gets them written down first), does the quick things itself with a few tools
+(to-dos, the day's agenda), and streams its spoken answer to the device: in its own voice, or sentence by sentence
+through Tally's voice model (Gemini 3.8 Flash TTS, ElevenLabs, …). Anything that needs the full
 agent (web, email, calendar changes, files, the server, real thinking) it hands to the agent as a written brief in
 the same chat; when the agent's reply comes, the talker says it in the same voice. The OpenRouter key stays here.
 
@@ -26,11 +28,13 @@ import httpx
 
 from .workorders import work_order
 from .protocol import messages as m
+from .tally_models import ModelError, Models, OPENAI_VOICES, sentences, split_id
 
 log = logging.getLogger("talaria.talk")
 
 OPENROUTER = "https://openrouter.ai/api/v1"
 TALKER_MODEL = "openai/gpt-audio-mini"
+DEFAULT_BRAIN = f"openrouter:{TALKER_MODEL}"  # agents.json talk_brain changes it; devices too (talk.configure)
 WHISPER_MODEL = "openai/whisper-large-v3-turbo"  # writes down what was said: a seventh of the talker's price
 # the talker's voices, the owner's pick first-to-last; marin and cedar are OpenAI's newest and most natural
 VOICES = ("shimmer", "marin", "cedar", "coral", "sage", "alloy", "ballad", "verse", "ash", "echo", "fable", "nova", "onyx")
@@ -184,19 +188,28 @@ class _Dropped(Exception):
 
 
 class Talker:
-    def __init__(self, api_key: str, chat, *, voice: str = VOICES[0], name: str = "Hermes",
+    def __init__(self, api_key: str | None, chat, *, voice: str | None = None, name: str = "Hermes",
                  transcriber: str = TRANSCRIBERS[0], transport: httpx.AsyncBaseTransport | None = None,
-                 worker: str | None = None, persona: str = ""):
-        if voice not in VOICES:
-            raise ValueError(f"talk voice must be one of {', '.join(VOICES)}")
+                 worker: str | None = None, persona: str = "", gemini_key: str | None = None,
+                 gemini_transport: httpx.AsyncBaseTransport | None = None, brain: str | None = None,
+                 speech: str | None = None):
         if transcriber not in TRANSCRIBERS:
             raise ValueError(f"talk transcriber must be one of {', '.join(TRANSCRIBERS)}")
         self.transcriber = transcriber
-        chosen = chat.store.setting("talk.voice")  # what the owner picked on a device outlives the config
-        if chosen in VOICES:
-            voice = chosen
+        self.models = Models(api_key, gemini_key, openrouter=transport, gemini=gemini_transport)
         self.chat = chat  # ChatService: to-dos, the calendar, sending briefs, broadcasting
-        self.voice = voice
+        # Tally's models: what the owner picked on a device outlives the config (agents.json talk_brain/talk_speech)
+        self.brain_id = chat.store.setting("talk.brain") or brain or DEFAULT_BRAIN
+        speech_set = chat.store.setting("talk.speech")
+        self.speech_id = (speech_set if speech_set is not None else speech) or None  # None: the brain's own voice
+        split_id(self.brain_id)
+        if self.speech_id:
+            split_id(self.speech_id)
+        chosen = chat.store.setting("talk.voice")
+        voices = self._voices()
+        self.voice = chosen or voice or (voices[0] if voices else "")
+        if voices and self.voice not in voices:
+            self.voice = voices[0]
         self.name = name  # who the owner talks to: the assistant's own name ("Tally"), agents.json talk_name
         self.worker = worker or name  # the main worker, the agent ("Hermes")
         self.persona = persona.strip()
@@ -205,15 +218,73 @@ class Talker:
         self.memory: dict[str, list[dict]] = {}  # conversation_id -> recent exchanges, as text
         self._tasks: set[asyncio.Task] = set()
         self._holds: dict[str, _Hold] = {}  # talk_id -> an early turn not yet committed
-        self._fillers: dict[str, list[str]] = {}  # voice -> FILLER as PCM chunks (base64), made once
-        self._http = httpx.AsyncClient(base_url=OPENROUTER, transport=transport, timeout=httpx.Timeout(60, connect=5),
-                                       headers={"Authorization": f"Bearer {api_key}", "User-Agent": "talaria-bridge",
-                                                "X-Title": "Talaria"})
+        self._fillers: dict[str, list[str]] = {}  # "<voice model>|<voice>" -> FILLER as PCM chunks (base64), made once
 
     async def close(self) -> None:
         for task in list(self._tasks):
             task.cancel()
-        await self._http.aclose()
+        await self.models.close()
+
+    # Tally's models (§9)
+
+    @property
+    def brain(self):
+        return self.models.brain(self.brain_id)
+
+    @property
+    def speaker(self):
+        """Tally's voice model, or None when the brain speaks itself."""
+        if self.speech_id:
+            return self.models.voice(self.speech_id)
+        if self.brain.speaks:
+            return None
+        raise TalkError(m.AGENT_UNAVAILABLE, "Tally's model can't speak: pick a voice for her")
+
+    def _voices(self) -> tuple[str, ...]:
+        if self.speech_id:
+            return self.models.voice(self.speech_id).voices
+        return OPENAI_VOICES if self.brain.speaks else ()
+
+    def _filler_key(self, voice: str) -> str:
+        return f"{self.speech_id or self.brain_id}|{voice}"
+
+    async def setup(self) -> dict:
+        """talk.setup → Tally's models, voice and the choices the keys allow."""
+        found = await self.models.choices()
+        return {"brain": self.brain_id, "speech": self.speech_id, "voice": self.voice,
+                "brains": [{"id": c.id, "label": c.label, "hears": c.hears, "speaks": c.speaks} for c in found["brains"]],
+                "speeches": [{"id": c.id, "label": c.label} for c in found["voices"]],
+                "voices": list(self._voices())}
+
+    async def configure(self, p: dict) -> dict:
+        """talk.configure {brain?, speech?, voice?}: Tally's main model and her voice, for every device."""
+        found = await self.models.choices()
+        brains = {c.id: c for c in found["brains"]}
+        speeches = {c.id for c in found["voices"]}
+        brain, speech = p.get("brain", self.brain_id), p.get("speech", self.speech_id)
+        if brain not in brains and brain != self.brain_id:
+            raise TalkError(m.INVALID_PARAMS, "brain must be one of the models your keys allow (talk.setup)")
+        if speech is not None and speech != "" and speech not in speeches and speech != self.speech_id:
+            raise TalkError(m.INVALID_PARAMS, "speech must be one of the voice models your keys allow, or null")
+        speech = speech or None
+        hears = brains[brain].hears if brain in brains else None
+        chosen = self.models.brain(brain, hears)
+        if speech is None and not chosen.speaks:
+            raise TalkError(m.INVALID_PARAMS, "That model can't speak: pick a voice model for Tally too")
+        self.brain_id, self.speech_id = brain, speech
+        self.chat.store.set_setting("talk.brain", brain)
+        self.chat.store.set_setting("talk.speech", speech or "")
+        voices = self._voices()
+        wanted = p.get("voice", self.voice)
+        if voices and wanted not in voices:
+            if "voice" in p:
+                raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(voices)}")
+            wanted = voices[0]
+        self.voice = wanted
+        self.chat.store.set_setting("talk.voice", wanted)
+        if self._filler_key(wanted) not in self._fillers:
+            self._spawn(self._make_filler(wanted))
+        return await self.setup()
 
     # requests
 
@@ -240,7 +311,7 @@ class Talker:
                                     system=system, hold=hold))
         if hold is not None:
             hold.tasks = [hearing, run]
-        if self.voice not in self._fillers:
+        if self._filler_key(self.voice) not in self._fillers:
             self._spawn(self._make_filler(self.voice))
         return {"talk_id": talk_id}
 
@@ -267,29 +338,48 @@ class Talker:
         """talk.say {text?, conversation_id?, voice?} → {talk_id}: the talker says this line, as it is; in [voice]
         if given (to hear a voice before picking it: then without text, a sample line)."""
         voice = p.get("voice")
-        if voice is not None and voice not in VOICES:
-            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(VOICES)}")
+        if voice is not None and voice not in self._voices():
+            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(self._voices())}")
         text = SAMPLE if voice is not None and p.get("text") is None else p.get("text")
         if not (isinstance(text, str) and text.strip() and len(text) <= MAX_SAY):
             raise TalkError(m.INVALID_PARAMS, f"text must be 1 to {MAX_SAY} characters")
         conv = self._conv(p.get("conversation_id"))
         talk_id = "tk_" + secrets.token_hex(8)
+        if self.speech_id:  # a voice model says it as it is: no model in between
+            self._spawn(self._say_line(talk_id, conv, text.strip(), voice or self.voice))
+            return {"talk_id": talk_id}
         user = {"role": "user", "content": f"Say exactly this, word for word, and nothing else:\n{text.strip()}"}
         self._spawn(self._run(talk_id, conv, user, tools=False, remember=False, voice=voice))
         return {"talk_id": talk_id}
 
+    async def _say_line(self, talk_id: str, conv: str | None, text: str, voice: str) -> None:
+        where = {"conversation_id": conv} if conv else {}
+        error = None
+        try:
+            seq = 0
+            await self.chat.broadcast(m.notification("talk.text", {"talk_id": talk_id, "text": text, **where}))
+            async for chunk in self.speaker.speak(text, voice):
+                await self.chat.broadcast(m.notification("talk.audio", {"talk_id": talk_id, "seq": seq, "data": chunk, **where}))
+                seq += 1
+        except (ModelError, TalkError) as exc:
+            error = str(exc)
+        done = {"talk_id": talk_id, "text": text, **where}
+        if error:
+            done["error"] = error
+        await self.chat.broadcast(m.notification("talk.done", done))
+
     def voices(self) -> dict:
         """talk.voices → {voice, voices: [{id, label}]}: the talker's voices, and the one it uses."""
-        return {"voice": self.voice, "voices": [{"id": v, "label": VOICE_LABELS[v]} for v in VOICES]}
+        return {"voice": self.voice, "voices": [{"id": v, "label": VOICE_LABELS.get(v, v)} for v in self._voices()]}
 
     def set_voice(self, p: dict) -> dict:
         """talk.voice {voice} → {voice}: the talker speaks in this voice from now on, on every device."""
         voice = p.get("voice")
-        if voice not in VOICES:
-            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(VOICES)}")
+        if voice not in self._voices():
+            raise TalkError(m.INVALID_PARAMS, f"voice must be one of {', '.join(self._voices())}")
         self.voice = voice
         self.chat.store.set_setting("talk.voice", voice)
-        if voice not in self._fillers:
+        if self._filler_key(voice) not in self._fillers:
             self._spawn(self._make_filler(voice))
         return {"voice": voice}
 
@@ -315,6 +405,11 @@ class Talker:
             user = {"role": "user", "content": f"[Report from your worker {job['worker']}, {word}, on: "
                                                f"{job['brief'][:300]}.{note} Tell the owner briefly in your own "
                                                f"words:]\n{(text.strip() or '(no report)')[:4000]}"}
+            talked = time.time() - self.active.get(job["talk"] or "", 0) <= ACTIVE_S
+            tally = getattr(self.chat, "tally", None)
+            if tally is not None and self._is_tally(job["talk"]) and not talked:
+                self._spawn(tally.write(job["talk"], user))
+                return
             self._spawn(self._run("tk_" + secrets.token_hex(8), job["talk"], user, tools=True, unprompted=True,
                                   keep=True))
             return
@@ -432,23 +527,28 @@ class Talker:
     async def _talk(self, talk_id: str, conv: str | None, user: dict, *, tools: bool, remember: bool, unprompted: bool,
                     hearing: asyncio.Task | None, system: dict | None, voice: str, hold: _Hold | None,
                     keep: bool = False) -> None:
-        messages = [system or self._system(conv), *self.memory.get(conv or "", []), user]
         said_all, error = [], None
         try:
+            if hearing is not None and not self.brain.hears:  # a model that can't hear gets the words written down
+                conv_in, words = await asyncio.shield(hearing)
+                conv = conv or conv_in
+                user = {"role": "user", "content": words or "(the owner said something that couldn't be made out)"}
+            messages = [system or self._system(conv), *self.memory.get(conv or "", []), user]
             for _ in range(MAX_ROUNDS):
-                said, calls = await self._stream(talk_id, conv, messages, tools, voice, hold)
+                said, calls, raw = await self._stream(talk_id, conv, messages, tools, voice, hold)
                 if said:
                     said_all.append(said)
                 if not calls:
                     break
                 if not said:  # going quiet to use a tool: say so
-                    for i, chunk in enumerate(self._fillers.get(voice, [])):
+                    for i, chunk in enumerate(self._fillers.get(self._filler_key(voice), [])):
                         await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": i, "data": chunk,
                                                                             **({"conversation_id": conv} if conv else {})}))
                 await self._go_ahead(hold)
                 if hearing is not None and any(c["function"]["name"] in ("ask_hermes", "ask_bot") for c in calls):
                     conv = (await hearing)[0]  # the owner's words go in the chat before the brief
-                messages.append({"role": "assistant", "content": said or None, "tool_calls": calls})
+                messages.append({"role": "assistant", "content": said or None, "tool_calls": calls,
+                                 **({"_gemini": raw} if raw else {})})
                 for call in calls:
                     result, conv = await self._tool(call, conv, talk_id)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
@@ -510,8 +610,10 @@ class Talker:
         """Whisper's words, or None if it couldn't (the talker model writes them down instead)."""
         people = ", ".join(self._people())
         people = f" Names: {people}." if people else ""
+        if self.models.or_http is None:
+            return None
         try:
-            resp = await self._http.post("/audio/transcriptions", timeout=httpx.Timeout(20, connect=5), json={
+            resp = await self.models.or_http.post("/audio/transcriptions", timeout=httpx.Timeout(20, connect=5), json={
                 "model": WHISPER_MODEL, "input_audio": sound["input_audio"],
                 "prompt": HINT.format(name=self.name, people=people)})
             if resp.status_code == 200:
@@ -536,22 +638,16 @@ class Talker:
         return seen[:12]
 
     async def _listen(self, sound: dict) -> str:
-        """The talker model's words for what was said ("" if it couldn't)."""
-        words = ""
-        try:
-            resp = await self._http.post("/chat/completions", timeout=httpx.Timeout(30, connect=5), json={
-                "model": TALKER_MODEL, "modalities": ["text"],
-                "messages": [{"role": "system", "content": HEAR},
-                             {"role": "user", "content": [{"type": "text", "text": "The recording:"}, sound]}]})
-            if resp.status_code == 200:
-                words = str(resp.json()["choices"][0]["message"].get("content") or "").strip()
-            else:
-                log.warning("talker couldn't write down the words (%s)", resp.status_code)
-        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
-            log.warning("talker couldn't write down the words: %s", type(exc).__name__)
-        return words
+        """Tally's own model's words for what was said ("" if it couldn't)."""
+        a = sound["input_audio"]
+        return await self.brain.transcribe(a["data"], a.get("format", "wav"), HEAR) or ""
 
     async def _new_chat(self, words: str) -> str | None:
+        tally = getattr(self.chat, "tally", None)
+        if tally is not None:  # Talk is Tally: what's said starts a Tally conversation, typed and spoken in one place
+            conv = await self.chat._new_conversation("tally", tally, words)
+            self.active[conv.id] = time.time()
+            return conv.id
         agent = self.chat.default_agent
         if agent is None or agent not in self.chat.agents:
             return None
@@ -569,72 +665,73 @@ class Talker:
 
     async def _make_filler(self, voice: str) -> None:
         """Record FILLER in [voice] once, for when the talker goes quiet to use a tool."""
-        body = {"model": TALKER_MODEL, "stream": True, "modalities": ["text", "audio"],
-                "audio": {"voice": voice, "format": "pcm16"},
-                "messages": [{"role": "user", "content": f"Say exactly this, casually, and nothing else: {FILLER}"}]}
         chunks: list[str] = []
         try:
-            async with self._http.stream("POST", "/chat/completions", json=body) as resp:
-                if resp.status_code != 200:
-                    return
-                async for line in resp.aiter_lines():
-                    if line.startswith("data:") and line.strip() != "data: [DONE]":
-                        with contextlib.suppress(ValueError, AttributeError):
-                            for choice in json.loads(line[5:]).get("choices") or []:
-                                data = ((choice.get("delta") or {}).get("audio") or {}).get("data")
-                                if data:
-                                    chunks.append(data)
-        except httpx.HTTPError:
+            speaker = self.speaker
+            if speaker is not None:
+                async for chunk in speaker.speak(FILLER, voice):
+                    chunks.append(chunk)
+            else:
+                said = [{"role": "user", "content": f"Say exactly this, casually, and nothing else: {FILLER}"}]
+                async for kind, value in self.brain.stream(said, None, voice=voice):
+                    if kind == "audio":
+                        chunks.append(value)
+        except (ModelError, TalkError) as exc:
+            log.info("no filler in %s: %s", voice, exc)
             return
         if chunks:
-            self._fillers[voice] = chunks
+            self._fillers[self._filler_key(voice)] = chunks
 
     async def _stream(self, talk_id: str, conv: str | None, messages: list[dict], tools: bool,
-                      voice: str, hold: _Hold | None = None) -> tuple[str, list[dict]]:
-        """One model call: its audio and words go to the devices as they come; returns what it said and its tool calls."""
-        body = {"model": TALKER_MODEL, "stream": True, "modalities": ["text", "audio"],
-                "audio": {"voice": voice, "format": "pcm16"}, "messages": messages}
-        if tools:
-            body["tools"] = TOOLS + ([ASK_BOT] if self._bots() else [])
-        said, calls, seq = "", {}, 0
+                      voice: str, hold: _Hold | None = None) -> tuple[str, list[dict], list]:
+        """One model call: its words and voice go to the devices as they come (a voice model says each sentence as
+        soon as it's whole); returns what it said, its tool calls and the provider's own parts for them."""
         where = {"conversation_id": conv} if conv else {}  # devices know an unprompted reply by its conversation
+        speaker = self.speaker
+        said, pending, calls, raw = "", "", [], []
+        seq = 0
+        lines: asyncio.Queue = asyncio.Queue()
+
+        async def speak_lines() -> None:
+            nonlocal seq
+            while (line := await lines.get()) is not None:
+                await self._out(hold, m.notification("talk.text", {"talk_id": talk_id, "text": line + " ", **where}))
+                async for chunk in speaker.speak(line, voice):
+                    await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": seq, "data": chunk, **where}))
+                    seq += 1
+
+        speaking = asyncio.create_task(speak_lines()) if speaker is not None else None
         try:
-            async with self._http.stream("POST", "/chat/completions", json=body) as resp:
-                if resp.status_code != 200:
-                    text = (await resp.aread())[:300].decode(errors="replace")
-                    log.warning("talker refused (%s): %s", resp.status_code, text)
-                    raise TalkError(m.AGENT_UNAVAILABLE, f"The voice model refused ({resp.status_code})")
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:") or line.strip() == "data: [DONE]":
-                        continue
-                    try:
-                        chunk = json.loads(line[5:])
-                    except ValueError:
-                        continue
-                    for choice in chunk.get("choices") or []:
-                        delta = choice.get("delta") or {}
-                        audio = delta.get("audio") or {}
-                        if audio.get("data"):
-                            await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": seq,
-                                                                                    "data": audio["data"], **where}))
-                            seq += 1
-                        if audio.get("transcript"):
-                            said += audio["transcript"]
-                            await self._out(hold, m.notification("talk.text", {"talk_id": talk_id,
-                                                                                   "text": audio["transcript"], **where}))
-                        for tc in delta.get("tool_calls") or []:
-                            entry = calls.setdefault(tc.get("index", 0), {"id": "", "type": "function",
-                                                                          "function": {"name": "", "arguments": ""}})
-                            entry["id"] = tc.get("id") or entry["id"]
-                            fn = tc.get("function") or {}
-                            entry["function"]["name"] += fn.get("name") or ""
-                            entry["function"]["arguments"] += fn.get("arguments") or ""
-        except httpx.HTTPError as exc:
-            raise TalkError(m.AGENT_UNAVAILABLE, f"The voice model can't be reached ({type(exc).__name__})") from None
-        out = [c for _, c in sorted(calls.items())]
-        for i, c in enumerate(out):
-            c["id"] = c["id"] or f"call_{i}"
-        return said.strip(), out
+            async for kind, value in self.brain.stream(messages, (TOOLS + ([ASK_BOT] if self._bots() else [])) if tools else None,
+                                                       voice=voice):
+                if kind == "text":
+                    said += value
+                    if speaker is None:
+                        await self._out(hold, m.notification("talk.text", {"talk_id": talk_id, "text": value, **where}))
+                    else:
+                        whole, pending = sentences(pending + value)
+                        for line in whole:
+                            lines.put_nowait(line)
+                elif kind == "audio":
+                    await self._out(hold, m.notification("talk.audio", {"talk_id": talk_id, "seq": seq, "data": value, **where}))
+                    seq += 1
+                elif kind == "calls":
+                    calls = value
+                elif kind == "raw":
+                    raw = value
+            if speaker is not None:
+                for line in sentences(pending, final=True)[0]:
+                    lines.put_nowait(line)
+        except ModelError as exc:
+            raise TalkError(m.AGENT_UNAVAILABLE, str(exc)) from None
+        finally:
+            if speaking is not None:
+                lines.put_nowait(None)
+                try:
+                    await speaking
+                except ModelError as exc:
+                    log.warning("talk %s: Tally's voice failed: %s", talk_id, exc)
+        return said.strip(), calls, raw
 
     # tools
 
@@ -728,11 +825,24 @@ class Talker:
         if missing:
             return f"Error: no file called {', '.join(missing)} in this chat. {self._listed(conv)}", conv
         params = {"text": brief}
-        if conv:
+        talk = None
+        if conv and self._is_tally(conv):
+            # a Tally conversation: the job goes to its linked conversation with the agent, the report comes back here
+            talk = conv
+            linked = self.chat.store.setting(f"tally.worker.{conv}")
+            if linked and self.chat.store.get(linked) is not None:
+                params["conversation_id"] = linked
+            else:
+                params["agent_id"] = self.chat.default_agent
+        elif conv:
             params["conversation_id"] = conv
         result, turn = await self.chat.send(params, worker=self.worker, order=work_order(self.name, brief, lines))
         if turn is not None:
             self.chat.start(turn)
+        if talk is not None:
+            self.chat.store.set_setting(f"tally.worker.{talk}", result["conversation_id"])
+            self._job(result, self.worker, result["conversation_id"], brief, talk=talk)
+            return f"Gave {self.worker} the job; its report comes to you when it's done.", conv
         conv = result["conversation_id"]
         self.active[conv] = time.time()
         self._job(result, self.worker, conv, brief)
@@ -759,6 +869,10 @@ class Talker:
             self.chat.start(turn)
         self._job(result, bot["name"], result["conversation_id"], message, talk=conv)
         return f"Gave {bot['name']} the job; its report comes to you when it's done."
+
+    def _is_tally(self, conv: str | None) -> bool:
+        c = self.chat.store.get(conv) if conv else None
+        return c is not None and c.agent_id == "tally"
 
     def _listed(self, conv: str | None) -> str:
         files = self._files(conv)
@@ -818,4 +932,5 @@ class Talker:
         return f"Stopped {job['worker']}'s job."
 
 
-TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end", "talk.voices", "talk.voice", "talk.commit", "talk.cancel"})
+TALK_METHODS = frozenset({"talk.turn", "talk.say", "talk.end", "talk.voices", "talk.voice", "talk.commit", "talk.cancel",
+                          "talk.setup", "talk.configure"})

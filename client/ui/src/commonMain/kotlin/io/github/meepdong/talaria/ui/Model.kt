@@ -454,6 +454,11 @@ interface TalariaActions {
     fun editMessage(key: String, text: String) {}
     fun regenerate(key: String) {}
     fun cancelEdit() {}
+
+    // Tally's models (§9)
+    fun setTallyBrain(id: String) {}
+    fun setTallySpeech(id: String?) {}
+    fun setTallyNewChats(on: Boolean) {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 

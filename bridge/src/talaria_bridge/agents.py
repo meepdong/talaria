@@ -45,6 +45,9 @@ class AgentConfig:
     talk_persona: str | None = None  # a line or two of how they are ("sharp, warm, a little witty")
     serve_url: str | None = None  # Hermes's other backend (§18), on this machine only: ws://127.0.0.1:9119/api/ws
     serve_key_file: str | None = None  # the token for it (Hermes keeps its own copy)
+    gemini_key_file: str | None = None  # a Gemini API key for Tally's models (§9 "Tally's models")
+    talk_brain: str | None = None  # Tally's main model, provider:model (default openrouter:openai/gpt-audio-mini)
+    talk_speech: str | None = None  # Tally's voice model, provider:model; none: the main model's own voice
 
 
 def _text(value, most: int) -> str | None:
@@ -94,6 +97,14 @@ def load_agents(path: Path) -> list[AgentConfig]:
                 raise ValueError(f"{path}: serve_url must be ws:// on this machine (127.0.0.1, localhost or ::1) with a port")
             if not (isinstance(serve_key, str) and Path(serve_key).is_absolute()):
                 raise ValueError(f"{path}: an agent with serve_url needs an absolute serve_key_file")
+        gemini_key = entry.get("gemini_key_file")
+        if gemini_key is not None and not (isinstance(gemini_key, str) and Path(gemini_key).is_absolute()):
+            raise ValueError(f"{path}: an agent's gemini_key_file must be an absolute path")
+        for key in ("talk_brain", "talk_speech"):
+            value = entry.get(key)
+            if value is not None and not (isinstance(value, str) and value.split(":", 1)[0] in ("gemini", "openrouter")
+                                          and ":" in value):
+                raise ValueError(f"{path}: an agent's {key} must be provider:model (gemini or openrouter)")
         tools_key = entry.get("tools_key_file")
         if tools_key is not None and not (isinstance(tools_key, str) and Path(tools_key).is_absolute()):
             raise ValueError(f"{path}: an agent's tools_key_file must be an absolute path")
@@ -102,7 +113,8 @@ def load_agents(path: Path) -> list[AgentConfig]:
                                   tuple(files), tuple(calendar), tools_key, voice_key,
                                   entry.get("voice_engine"), entry.get("voice_name"), entry.get("talk_voice"),
                                   entry.get("talk_transcriber"), _text(entry.get("talk_name"), 40),
-                                  _text(entry.get("talk_persona"), 600), serve_url, serve_key if serve_url else None))
+                                  _text(entry.get("talk_persona"), 600), serve_url, serve_key if serve_url else None,
+                                  gemini_key, entry.get("talk_brain"), entry.get("talk_speech")))
     return agents
 
 

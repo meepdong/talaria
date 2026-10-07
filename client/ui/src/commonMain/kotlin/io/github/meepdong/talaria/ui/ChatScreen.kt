@@ -49,6 +49,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -458,7 +459,7 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
                 DropdownMenuItem(text = { Text("Talk waits: ${voice.talkWait.label}") },
                     modifier = Modifier.testTag("talk-wait"),
                     onClick = { actions.setTalkWait(voice.talkWait.next()) })
-                DropdownMenuItem(text = { Text("Talk voice…") }, modifier = Modifier.testTag("talk-voice"),
+                DropdownMenuItem(text = { Text("Tally: model and voice…") }, modifier = Modifier.testTag("talk-voice"),
                     onClick = { open = false; pickVoice = true; actions.loadTalkVoices() })
             }
             if (id == null) return@DropdownMenu
@@ -489,12 +490,13 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
 private fun VoicePicker(voice: VoiceView, actions: TalariaActions, onDone: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDone,
-        title = { Text("Talk voice") },
+        title = { Text(if (voice.tally != null) "Tally" else "Talk voice") },
         text = {
-            if (voice.talkVoices.isEmpty()) {
+            if (voice.talkVoices.isEmpty() && voice.tally == null) {
                 Text("Asking the server…", modifier = Modifier.testTag("voices-loading"))
             } else {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                    voice.tally?.let { TallyModels(it, actions) }
                     voice.talkVoices.forEach { (id, label) ->
                         Row(
                             Modifier.fillMaxWidth().clickable { actions.setTalkVoice(id) }.testTag("voice-$id"),
@@ -1040,6 +1042,60 @@ private fun BotAtWork(bot: BotItem, openId: String?, actions: TalariaActions) {
                 Text("${bot.name} is working: ${w.text}", style = MaterialTheme.typography.bodySmall, maxLines = 2,
                     overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+/** Tally's main model and voice model (§9 "Tally's models"), above her voices in the Talk voice dialog. */
+@Composable
+private fun TallyModels(t: TallyView, actions: TalariaActions) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Main model: hears you, thinks, uses her tools", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ModelMenu(t.brainLabel, t.brains.map { (id, label, note) -> Triple(id, label, note) }, "tally-brain", enabled = !t.busy) {
+            actions.setTallyBrain(it)
+        }
+        Text("Voice model: how she sounds", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val options = (if (t.canOwnVoice) listOf(Triple("", "Her main model's own voice", "")) else emptyList()) +
+            t.speeches.map { (id, label) -> Triple(id, label, "") }
+        ModelMenu(t.speechLabel, options, "tally-speech", enabled = !t.busy) { actions.setTallySpeech(it.ifEmpty { null }) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("New chats go to Tally", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = t.newChats, onCheckedChange = actions::setTallyNewChats, modifier = Modifier.testTag("tally-new-chats"))
+        }
+        if (t.busy) Text("Changing…", style = MaterialTheme.typography.bodySmall)
+        t.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        Text("Her voice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun ModelMenu(current: String, options: List<Triple<String, String, String>>, tag: String, enabled: Boolean,
+                      onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    Box {
+        OutlinedButton(onClick = { open = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag(tag)) {
+            Text("$current ▾", maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false },
+            modifier = Modifier.widthIn(min = 260.dp, max = 360.dp).heightIn(max = 420.dp)) {
+            if (options.size > 8) {
+                OutlinedTextField(query, { query = it.take(60) }, singleLine = true, placeholder = { Text("Search") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag("$tag-search"))
+            }
+            options.filter { query.isBlank() || it.second.contains(query.trim(), true) || it.first.contains(query.trim(), true) }
+                .take(80).forEach { (id, label, note) ->
+                    DropdownMenuItem(text = {
+                        Column {
+                            Text(label)
+                            if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }, modifier = Modifier.testTag("$tag-$id"), onClick = { open = false; onPick(id) })
+                }
         }
     }
 }
