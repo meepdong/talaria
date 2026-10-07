@@ -1730,7 +1730,8 @@ class TalariaController(
             } else if (x.page.botEditor) {
                 Screen.BotEditor(botEditorView(l.control?.editing, l.chat, images, picturePicker != null), status)
             } else if (x.page.server) {
-                Screen.Server(serverView(opsState, m.bridge.deviceId).copy(usage = usageView(l.control)), status)
+                Screen.Server(serverView(opsState, m.bridge.deviceId, l.chat?.bots.orEmpty().map { it.profile to it.name })
+                    .copy(usage = usageView(l.control)), status)
             } else {
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val todosShown = l.todos?.let { t -> t.copy(todos = t.todos.filterNot { it.id in x.page.hiddenTodos }) }

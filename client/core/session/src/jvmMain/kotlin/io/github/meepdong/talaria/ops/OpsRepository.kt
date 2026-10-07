@@ -95,12 +95,14 @@ class OpsRepository(
         loadCatalogue()
         for (op in listOf("system.overview", "services.list", "docker.ps", "bridge.version")) run(op)
         if (_state.value.catalogue.any { it.op == SKILLS }) run(SKILLS)
+        if (_state.value.catalogue.any { it.op == SETTINGS }) run(SETTINGS)
     }
 
     fun loadCatalogue() {
         call("ops.catalogue", JsonObject(emptyMap()), "catalogue") { r ->
             val s = _state.updateAndGet { s -> s.copy(available = true, catalogue = (r["ops"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.let(::opInfo) }) }
             if (s.catalogue.any { it.op == SKILLS } && SKILLS !in s.reads && SKILLS !in s.busy) run(SKILLS)
+            if (s.catalogue.any { it.op == SETTINGS } && SETTINGS !in s.reads && SETTINGS !in s.busy) run(SETTINGS)
         }
     }
 
@@ -237,7 +239,9 @@ class OpsRepository(
 
         /** After these finish, the Server page's reads are out of date. */
         val REFRESH_AFTER = setOf("service.restart", "docker.restart", "bridge.update", "disk.cleanup", "apt.upgrade",
-            "hermes.skill.set", SKILLS_SET)
+            "hermes.skill.set", SKILLS_SET, "hermes.setting.set", "hermes.skill.install")
+        /** Hermes's settings a device may change (§16, "Hermes's settings"). */
+        const val SETTINGS = "hermes.settings"
         /** Hermes's skills for Talaria, listed when the server offers it (§16). */
         const val SKILLS = "hermes.skills"
         /** Several skill changes, one approval and one restart (#52). */

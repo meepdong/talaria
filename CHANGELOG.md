@@ -4,6 +4,15 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Server page, "Hermes's settings": Hermes's main model, how hard it thinks, when it asks before risky commands,
+  the helper agents' model, the models that tidy long chats and look at pictures, and when chats get tidied. Each
+  change asks for your approval first, only offers models your OpenRouter allows, and restarts Hermes.
+- Server page, "Find skills": search Hermes's skill registries and install a skill for Hermes or for one bot (with an
+  approval; Hermes's own safety scan still applies).
+
 ## [0.2.0-beta.23] - 2026-10-07
 
 ### Added

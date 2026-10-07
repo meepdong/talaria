@@ -47,6 +47,19 @@ data class ServerView(
     val error: String? = null,
     /** What Hermes spent (§18.5); null when the bridge can't say. */
     val usage: UsageView? = null,
+    /** Hermes's settings (§16); empty when the server can't show them. */
+    val settings: List<SettingRow> = emptyList(),
+    /** Models the owner's OpenRouter guardrail allows. */
+    val settingModels: List<String> = emptyList(),
+    /** "Waiting for your approval…" while a setting change waits or runs. */
+    val settingApplying: String? = null,
+    /** Skill search (§16): offered, results, searching. */
+    val canFindSkills: Boolean = false,
+    val skillsFound: List<SkillFound> = emptyList(),
+    val skillsFoundSummary: String? = null,
+    val searchingSkills: Boolean = false,
+    /** Who a skill can be installed for: (profile, name); "default" is Hermes. */
+    val installFor: List<Pair<String, String>> = emptyList(),
     /** Hermes's skills and whether each is on for Talaria; [hasSkills] when the server can list them. */
     val hasSkills: Boolean = false,
     val skillsSummary: String = "",
@@ -58,3 +71,10 @@ data class ServerView(
 )
 
 data class SkillRow(val name: String, val description: String, val category: String, val enabled: Boolean)
+
+/** One of Hermes's settings (§16): [kind] model, choice, bool or number; [empty] what an empty value means. */
+data class SettingRow(val key: String, val label: String, val kind: String, val value: String,
+                      val choices: List<String> = emptyList(), val empty: String? = null)
+
+/** A skill found in Hermes's registries, to install. */
+data class SkillFound(val name: String, val identifier: String, val source: String, val trust: String, val description: String)

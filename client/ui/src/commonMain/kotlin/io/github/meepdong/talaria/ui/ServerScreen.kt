@@ -176,6 +176,13 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
             }
         }
 
+        if (view.settings.isNotEmpty()) {
+            Section("Hermes's settings") { HermesSettings(view, actions) }
+        }
+        if (view.canFindSkills) {
+            Section("Find skills") { FindSkills(view, actions) }
+        }
+
         Section("Maintenance") {
             Text("Talaria bridge: ${view.bridge.ifEmpty { "…" }}", modifier = Modifier.testTag("server-bridge"))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -308,3 +308,83 @@ async def test_several_skills_change_with_one_approval_and_one_restart(tmp_path,
     out = (await d.handle({"cmd": "execute", "request_id": unknown["request_id"], "device_id": PHONE_ID,
                            "choice": "once", "sig": sign(unknown)}))["result"]
     assert not out["ok"] and out["summary"] == "no skill called not-installed"
+
+
+HERMES = "/home/hermes/.local/bin/hermes"
+CONFIG = {"model": {"default": "qwen/qwen3.8-flash", "provider": "openrouter", "api_key": "***"},
+          "agent": {"reasoning_effort": "low"}, "approvals": {"mode": "smart"},
+          "delegation": {"model": ""}, "auxiliary": {"compression": {"model": "qwen/qwen3.7-flash"}, "vision": {"model": ""}},
+          "compression": {"enabled": True, "threshold": 0.5}, "telegram": {"token": "***"}}
+
+
+async def settings_daemon(tmp_path, registry_db, clock, answers=None, allowed=("qwen/qwen3.8-flash", "google/gemini-3-flash")):
+    async def models():
+        return set(allowed) if allowed is not None else None
+    reads = {(HERMES, "config", "get", group, "--json"): Run(0, json.dumps(value)) for group, value in CONFIG.items()}
+    runner = FakeRunner({**reads, **(answers or {})})
+    (tmp_path / "profiles" / "research").mkdir(parents=True)
+    d = OpsDaemon(registry_db, AuditLog(tmp_path / "a.jsonl"), runner, clock, hermes_home=tmp_path, allowed_models=models)
+    return d, runner
+
+
+async def run_approved(d, op, params):
+    prepared = await d.prepare(op, params, "device:X")
+    out = (await d.handle({"cmd": "execute", "request_id": prepared["request_id"], "device_id": PHONE_ID,
+                           "choice": "once", "sig": sign(prepared)}))["result"]
+    return prepared, out
+
+
+async def test_hermes_settings_are_read_without_anything_secret(tmp_path, registry_db, clock):
+    d, runner = await settings_daemon(tmp_path, registry_db, clock)
+    got = (await d.handle({"cmd": "run", "op": "hermes.settings", "params": {}, "requested_by": "device:X"}))["result"]
+    rows = {r["key"]: r for r in got["data"]["settings"]}
+    assert rows["model.default"]["value"] == "qwen/qwen3.8-flash" and rows["compression.enabled"]["value"] == "true"
+    assert rows["approvals.mode"]["choices"] == ["manual", "smart", "off"] and rows["delegation.model"]["empty"]
+    assert got["data"]["models"] == ["google/gemini-3-flash", "qwen/qwen3.8-flash"]
+    assert "***" not in json.dumps(got) and "telegram" not in json.dumps(got)
+    assert sorted(a[3] for a in runner.argvs() if a[1:3] == ["config", "get"]) == [
+        "agent", "approvals", "auxiliary", "compression", "delegation", "model"]
+
+
+async def test_a_setting_changes_with_an_approval_and_hermes_restarts(tmp_path, registry_db, clock):
+    d, runner = await settings_daemon(tmp_path, registry_db, clock)
+    prepared, out = await run_approved(d, "hermes.setting.set", {"key": "model.default", "value": "google/gemini-3-flash"})
+    assert prepared["tier"] == 1 and prepared["summary"].startswith("Set Hermes's main model to google/gemini-3-flash")
+    assert out["ok"] and out["summary"] == "Main model is now google/gemini-3-flash; Hermes is restarting"
+    assert [HERMES, "config", "set", "model.default", "google/gemini-3-flash"] in runner.argvs()
+    assert [a[-1] for a in runner.argvs() if "restart" in a] == ["hermes-gateway.service", "talaria-hermes-serve.service"]
+
+    _, blocked = await run_approved(d, "hermes.setting.set", {"key": "model.default", "value": "anthropic/claude-opus"})
+    assert not blocked["ok"] and "guardrail" in blocked["summary"]
+    _, same = await run_approved(d, "hermes.setting.set", {"key": "delegation.model", "value": ""})
+    assert same["ok"] and same["summary"] == "Helper agents' model is now same as the main model; Hermes is restarting"
+    _, bad = await run_approved(d, "hermes.setting.set", {"key": "compression.threshold", "value": "0.95"})
+    assert not bad["ok"] and "0.3 to 0.9" in bad["summary"]
+    _, mode = await run_approved(d, "hermes.setting.set", {"key": "approvals.mode", "value": "sometimes"})
+    assert not mode["ok"]
+    for params in ({"key": "terminal.backend", "value": "local"}, {"key": "model.default", "value": "x; rm -rf /"}):
+        with pytest.raises(Exception):
+            await d.prepare("hermes.setting.set", params, "device:X")
+
+    unknown_models, _ = await settings_daemon(tmp_path / "2", registry_db, clock, allowed=None)
+    _, refused = await run_approved(unknown_models, "hermes.setting.set", {"key": "model.default", "value": "qwen/qwen3.8-flash"})
+    assert not refused["ok"] and "couldn't check" in refused["summary"]
+
+
+async def test_skills_are_found_and_installed_for_hermes_or_a_bot(tmp_path, registry_db, clock):
+    found = [{"name": "pdf", "identifier": "openai/skills/.curated/pdf", "source": "OpenAI", "trust_level": "trusted",
+              "description": "Read and make PDFs"}]
+    d, runner = await settings_daemon(tmp_path, registry_db, clock,
+                                      {(HERMES, "skills", "search"): Run(0, "Searching…\n" + json.dumps(found))})
+    got = (await d.handle({"cmd": "run", "op": "hermes.skill.search", "params": {"query": "pdf"}, "requested_by": "device:X"}))["result"]
+    assert got["data"] == [{"name": "pdf", "identifier": "openai/skills/.curated/pdf", "source": "OpenAI", "trust": "trusted",
+                            "description": "Read and make PDFs"}]
+    prepared, out = await run_approved(d, "hermes.skill.install", {"identifier": "openai/skills/.curated/pdf", "profile": "research"})
+    assert prepared["summary"] == "Install the skill openai/skills/.curated/pdf for research" and out["ok"]
+    assert [HERMES, "-p", "research", "skills", "install", "openai/skills/.curated/pdf", "--yes"] in runner.argvs()
+    assert not any("restart" in a for a in runner.argvs())
+    _, mine = await run_approved(d, "hermes.skill.install", {"identifier": "openai/skills/.curated/pdf"})
+    assert mine["ok"] and "Hermes is restarting" in mine["summary"]
+    for params in ({"identifier": "x", "profile": "nobody"}, {"identifier": "a b; rm"}):
+        with pytest.raises(Exception):
+            await d.prepare("hermes.skill.install", params, "device:X")

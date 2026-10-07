@@ -26,7 +26,7 @@ fun opsResults(s: OpsState, deviceId: String): List<OpsResultItem> = s.results.m
 
 private val RESTARTABLE = setOf("talaria-bridge", "docker", "tailscaled", "hermes-gateway")
 
-fun serverView(s: OpsState, deviceId: String): ServerView {
+fun serverView(s: OpsState, deviceId: String, bots: List<Pair<String, String>> = emptyList()): ServerView {
     val overview = s.reads["system.overview"]
     val o = overview?.data as? Map<*, *>
     val rows = buildList {
@@ -79,6 +79,22 @@ fun serverView(s: OpsState, deviceId: String): ServerView {
         skillsSummary = skills?.summary.orEmpty(),
         skills = skillRows,
         skillsBatch = s.catalogue.any { it.op == "hermes.skills.set" },
+        settings = settingRows(s.reads["hermes.settings"]?.data),
+        settingModels = ((s.reads["hermes.settings"]?.data as? Map<*, *>)?.get("models") as? List<*>).orEmpty().filterIsInstance<String>(),
+        settingApplying = when {
+            s.pending.any { it.op == "hermes.setting.set" } -> "Waiting for your approval…"
+            s.busy.any { it == "hermes.setting.set" } -> "Changing…"
+            else -> null
+        },
+        canFindSkills = s.catalogue.any { it.op == "hermes.skill.search" },
+        skillsFound = (s.reads["hermes.skill.search"]?.data as? List<*>).orEmpty().mapNotNull { e ->
+            val x = e as? Map<*, *> ?: return@mapNotNull null
+            SkillFound(x["name"] as? String ?: "", x["identifier"] as? String ?: return@mapNotNull null, x["source"] as? String ?: "",
+                x["trust"] as? String ?: "", x["description"] as? String ?: "")
+        },
+        skillsFoundSummary = s.reads["hermes.skill.search"]?.summary,
+        searchingSkills = "hermes.skill.search" in s.busy,
+        installFor = listOf("default" to "Hermes") + bots,
         skillsApplying = when {
             s.pending.any { it.op == "hermes.skills.set" || it.op == "hermes.skill.set" } -> "Waiting for your approval…"
             s.busy.any { it == "hermes.skills.set" || it == "hermes.skill.set" } -> "Applying…"
@@ -89,5 +105,12 @@ fun serverView(s: OpsState, deviceId: String): ServerView {
 }
 
 private fun Map<*, *>.num(key: String): Double? = (this[key] as? Number)?.toDouble()
+
+private fun settingRows(data: Any?): List<SettingRow> =
+    ((data as? Map<*, *>)?.get("settings") as? List<*>).orEmpty().mapNotNull { e ->
+        val x = e as? Map<*, *> ?: return@mapNotNull null
+        SettingRow(x["key"] as? String ?: return@mapNotNull null, x["label"] as? String ?: "", x["kind"] as? String ?: "",
+            x["value"] as? String ?: "", (x["choices"] as? List<*>).orEmpty().filterIsInstance<String>(), x["empty"] as? String)
+    }
 
 private fun gb(bytes: Double): String = "%.1f GB".format(bytes / 1_000_000_000)

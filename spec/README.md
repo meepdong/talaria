@@ -374,6 +374,22 @@ Any failure is `{"error": "<sentence>"}`. `params_json` is `json.dumps(params, s
 
 **Hermes's skills.** `hermes.skills` (tier 0) lists the skills installed for the agent, `data` `[{name, description, category, enabled}]`, where `enabled` means it is loaded for Talaria (it isn't in Hermes's `skills.platform_disabled.api_server`). `hermes.skill.set {skill, enabled: "on"|"off"}` (tier 1) changes that with `hermes config set` and restarts Hermes, which stops a reply in progress. `hermes.skills.set {changes}` (tier 1) does several at once with one restart: `changes` is `name=on|off` pairs separated by commas (at most 100), every name one of the listed skills. Devices show the skills as switches on the Server page; switching only marks a change, and an Apply button sends them all as one `hermes.skills.set`, so one approval and one restart cover them. While that approval waits or the operation runs, the switches are locked and say so.
 
+**Hermes's settings.** `hermes.settings` (tier 0) reads the settings a device may change, `data` `{settings, models}`:
+`settings` is `[{key, label, kind, value, choices?, empty?}]` in a fixed order (`model.default` the main model,
+`agent.reasoning_effort`, `approvals.mode`, `delegation.model` the helper agents' model, `auxiliary.compression.model`,
+`auxiliary.vision.model`, `compression.enabled`, `compression.threshold`), `kind` one of `model`, `choice`, `bool`,
+`number`, `empty` what an empty value means where one is allowed; `models` the models the owner's OpenRouter key may
+use (its guardrail). Nothing else of Hermes's configuration leaves the server. `hermes.setting.set {key, value}`
+(tier 1) changes one with `hermes config set` and restarts Hermes (and the doorway's `hermes serve`): a model must be
+in the guardrail's list (checked again when it runs; if OpenRouter can't be asked, nothing changes), a choice one of
+its `choices`, `compression.threshold` 0.3–0.9.
+
+**Finding and installing skills.** `hermes.skill.search {query}` (tier 0) asks Hermes's skill registries, `data`
+`[{name, identifier, source, trust, description}]` (at most 20). `hermes.skill.install {identifier, profile}` (tier 1)
+installs one with `hermes skills install … --yes` for Hermes (`profile` `default`, which then restarts) or a bot
+(its profile name; it loads on the bot's next chat). Hermes's own safety scan still applies: a skill it blocks isn't
+installed.
+
 ### 16.1 Terminals
 
 The owner can follow and answer the agent sessions they run in **root's tmux** (Claude Code, opencode) from a device.

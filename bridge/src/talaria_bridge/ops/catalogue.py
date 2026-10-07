@@ -104,6 +104,12 @@ class Context:
     hermes_log: Path = Path(HERMES_LOG)
     hermes_home: Path = Path(HERMES_HOME)
     terminals: object = None  # terminal.Terminals: root's tmux sessions and the grants to them (§16.1)
+    # the models the owner's OpenRouter guardrail allows, or None when that can't be known (hermes.setting.set)
+    allowed_models: Callable[[], Awaitable[set[str] | None]] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.allowed_models is None:
+            self.allowed_models = _openrouter_models
 
 
 @dataclass
@@ -435,6 +441,153 @@ async def hermes_skill_set(ctx: Context, p: dict) -> Outcome:
 
 SKILL_CHANGES = r"[A-Za-z0-9._-]{1,80}=(on|off)(,[A-Za-z0-9._-]{1,80}=(on|off)){0,99}"
 
+# Hermes's settings a device may change (spec §16, "Hermes's settings"): key -> (label, kind, choices)
+SETTINGS: dict[str, tuple[str, str, list[str] | None]] = {
+    "model.default": ("Main model", "model", None),
+    "agent.reasoning_effort": ("How hard it thinks", "choice", ["minimal", "low", "medium", "high"]),
+    "approvals.mode": ("Asking before risky commands", "choice", ["manual", "smart", "off"]),
+    "delegation.model": ("Helper agents' model", "model", None),
+    "auxiliary.compression.model": ("Model that tidies long chats", "model", None),
+    "auxiliary.vision.model": ("Model that looks at pictures", "model", None),
+    "compression.enabled": ("Tidy long chats", "bool", ["true", "false"]),
+    "compression.threshold": ("Tidy when a chat is this full", "number", None),
+}
+# models that may be empty: Hermes then uses its main model (helpers) or picks one itself (pictures)
+EMPTY_MEANS = {"delegation.model": "same as the main model", "auxiliary.vision.model": "Hermes picks"}
+OPENROUTER_KEY = "/etc/talaria/voice-openrouter.key"
+_models_cache: tuple[float, set[str]] | None = None
+
+
+async def _openrouter_models() -> set[str] | None:
+    """What the owner's OpenRouter key may use (its guardrail), cached for 10 minutes."""
+    global _models_cache
+    if _models_cache is not None and time.time() - _models_cache[0] < 600:
+        return _models_cache[1]
+    try:
+        import httpx
+        key = Path(OPENROUTER_KEY).read_text().strip()
+        async with httpx.AsyncClient(timeout=20) as http:
+            resp = await http.get("https://openrouter.ai/api/v1/models/user", headers={"Authorization": f"Bearer {key}"})
+        models = {m["id"] for m in resp.json()["data"]}
+    except Exception:  # noqa: BLE001 (unknown: the model is refused rather than guessed)
+        return None
+    _models_cache = (time.time(), models)
+    return models
+
+
+def _dig(cfg: object, key: str) -> object:
+    for part in key.split("."):
+        cfg = cfg.get(part) if isinstance(cfg, dict) else None
+    return cfg
+
+
+def _setting_text(v: object) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return "" if v is None else str(v)
+
+
+async def hermes_settings(ctx: Context, p: dict) -> Outcome:
+    groups = sorted({key.split(".")[0] for key in SETTINGS})  # one read per group, side by side
+    runs = await asyncio.gather(*(ctx.run([HERMES_CLI, "config", "get", g, "--json"], user="hermes", timeout=90) for g in groups))
+    cfg: dict = {}
+    for g, run in zip(groups, runs):
+        try:
+            value = json.loads(run.output) if run.exit_code == 0 else None
+        except ValueError:
+            value = None
+        if value is None:
+            return Outcome(False, "couldn't read Hermes's settings", "", run.exit_code)
+        cfg[g] = value
+    rows = []
+    for key, (label, kind, choices) in SETTINGS.items():
+        row = {"key": key, "label": label, "kind": kind, "value": _setting_text(_dig(cfg, key))}
+        if choices:
+            row["choices"] = choices
+        if key in EMPTY_MEANS:
+            row["empty"] = EMPTY_MEANS[key]
+        rows.append(row)
+    allowed = await ctx.allowed_models()
+    return Outcome(True, f"Main model {rows[0]['value']}", "", 0, {"settings": rows, "models": sorted(allowed or [])})
+
+
+async def hermes_setting_set(ctx: Context, p: dict) -> Outcome:
+    key, value = p["key"], p["value"].strip()
+    label, kind, choices = SETTINGS[key]
+    if kind in ("choice", "bool") and value not in (choices or []):
+        return Outcome(False, f"{label} must be one of {', '.join(choices or [])}", "", None)
+    if kind == "number":
+        try:
+            number = float(value)
+        except ValueError:
+            number = -1.0
+        if not 0.3 <= number <= 0.9:
+            return Outcome(False, f"{label} must be a number from 0.3 to 0.9", "", None)
+    if kind == "model" and not (value == "" and key in EMPTY_MEANS):
+        allowed = await ctx.allowed_models()
+        if allowed is None:
+            return Outcome(False, "couldn't check the model with OpenRouter; nothing changed", "", None)
+        if value not in allowed:
+            return Outcome(False, f"{value} isn't allowed by your OpenRouter guardrail; nothing changed", "", None)
+    run = await ctx.run([HERMES_CLI, "config", "set", key, value], user="hermes", timeout=60)
+    if run.exit_code != 0:
+        return _done(run, f"changing {label}")
+    restarts = []
+    for unit in ("hermes-gateway.service", "talaria-hermes-serve.service"):
+        restarts.append(await ctx.run([*_systemctl("user:hermes"), "restart", "--no-block", unit], timeout=30))
+    shown = value or EMPTY_MEANS.get(key, "empty")
+    failed = next((x for x in restarts if x.exit_code != 0), None)
+    return _done(failed or restarts[0], f"{label} is now {shown}; Hermes is restarting")
+
+
+def _setting_summary(p: dict) -> str:
+    label = SETTINGS[p["key"]][0]
+    shown = p["value"].strip() or EMPTY_MEANS.get(p["key"], "empty")
+    return f"Set Hermes's {label.lower()} to {shown} (Hermes restarts; a reply in progress stops)"
+
+
+SKILL_ID = r"(https://[^\s]{1,300}|[A-Za-z0-9._@:/+-]{1,200})"
+
+
+async def _profiles(ctx: Context) -> list[str]:
+    try:
+        found = sorted(d.name for d in (ctx.hermes_home / "profiles").iterdir() if d.is_dir() and PROFILE_NAME.fullmatch(d.name))
+    except OSError:
+        found = []
+    return ["default", *found]
+
+
+PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")
+
+
+async def hermes_skill_search(ctx: Context, p: dict) -> Outcome:
+    run = await ctx.run([HERMES_CLI, "skills", "search", p["query"], "--json", "--limit", "20"], user="hermes", timeout=90)
+    try:
+        found = json.loads(run.output[run.output.find("["):]) if run.exit_code == 0 else None
+    except ValueError:
+        found = None
+    if not isinstance(found, list):
+        return _done(run, f"searching skills for {p['query']}") if run.exit_code != 0 else \
+            Outcome(False, "Hermes's skill search answered something unexpected", run.output, run.exit_code)
+    rows = [{"name": str(x.get("name") or ""), "identifier": str(x.get("identifier") or ""),
+             "source": str(x.get("source") or ""), "trust": str(x.get("trust_level") or ""),
+             "description": str(x.get("description") or "")[:300]}
+            for x in found if isinstance(x, dict) and x.get("identifier")]
+    return Outcome(True, f"{len(rows)} skill{'s' if len(rows) != 1 else ''} found for {p['query']}", "", 0, rows)
+
+
+async def hermes_skill_install(ctx: Context, p: dict) -> Outcome:
+    profile = p["profile"]
+    argv = [HERMES_CLI, *([] if profile == "default" else ["-p", profile]), "skills", "install", p["identifier"], "--yes"]
+    run = await ctx.run(argv, user="hermes", timeout=300)
+    who = "Hermes" if profile == "default" else profile
+    if run.exit_code != 0 or profile != "default":
+        return _done(run, f"installing {p['identifier']} for {who}")
+    kind, unit = SERVICES["hermes-gateway"]
+    restart = await ctx.run([*_systemctl(kind), "restart", "--no-block", unit], timeout=30)
+    return Outcome(restart.exit_code == 0, f"installed {p['identifier']} for Hermes; Hermes is restarting",
+                   run.output + restart.output, restart.exit_code)
+
 
 def _skill_changes(text: str) -> dict[str, bool]:
     return {name: state == "on" for name, _, state in (part.partition("=") for part in text.split(","))}
@@ -555,6 +708,16 @@ OPS: dict[str, Op] = {op.name: op for op in [
        lambda p: f"Turn the skill {p['skill']} {p['enabled']} for Talaria (Hermes restarts; a reply in progress stops)"),
     Op("hermes.skills.set", 1, "Change several skills", hermes_skills_set,
        {"changes": Param("string", pattern=SKILL_CHANGES, max_length=8200)}, _skills_summary),
+    Op("hermes.settings", 0, "Hermes's settings", hermes_settings),
+    Op("hermes.setting.set", 1, "Change a Hermes setting", hermes_setting_set,
+       {"key": Param("string", enum=list(SETTINGS)), "value": Param("string", pattern=r"[A-Za-z0-9._:/@+-]{0,200}")},
+       _setting_summary),
+    Op("hermes.skill.search", 0, "Find skills", hermes_skill_search,
+       {"query": Param("string", pattern=r"[^\x00-\x1f]{1,100}")}),
+    Op("hermes.skill.install", 1, "Install a skill", hermes_skill_install,
+       {"identifier": Param("string", pattern=SKILL_ID), "profile": Param("string", choices=_profiles, default="default")},
+       lambda p: f"Install the skill {p['identifier']} for {'Hermes' if p['profile'] == 'default' else p['profile']}"
+                 + (" (Hermes restarts; a reply in progress stops)" if p["profile"] == "default" else "")),
     Op("tmux.sessions", 0, "Terminal sessions", tmux_sessions),
     Op("terminal.watch", 1, "Watch a terminal", terminal_watch, {"session": Param("string", choices=_tmux_names)},
        lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),

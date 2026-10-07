@@ -10,6 +10,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
 import io.github.meepdong.talaria.ops.OpInfo
 import io.github.meepdong.talaria.ops.OpOutcome
@@ -158,5 +160,52 @@ class ServerScreenTest {
     fun saysWhenTheServerHasNoOperations() = runComposeUiTest {
         setContent { TalariaTheme { ServerScreen(ServerView(available = false), Recorder()) } }
         onNodeWithTag("server-unavailable").assertTextContains("talaria-ops", substring = true)
+    }
+
+    @Test
+    fun hermesSettingsAndFindingSkills() = runComposeUiTest {
+        val actions = Recorder()
+        val settings = mapOf("settings" to listOf(
+            mapOf("key" to "model.default", "label" to "Main model", "kind" to "model", "value" to "qwen/qwen3.8-flash"),
+            mapOf("key" to "approvals.mode", "label" to "Asking before risky commands", "kind" to "choice", "value" to "smart",
+                "choices" to listOf("manual", "smart", "off")),
+            mapOf("key" to "delegation.model", "label" to "Helper agents' model", "kind" to "model", "value" to "",
+                "empty" to "same as the main model"),
+            mapOf("key" to "compression.enabled", "label" to "Tidy long chats", "kind" to "bool", "value" to "true"),
+            mapOf("key" to "compression.threshold", "label" to "Tidy when a chat is this full", "kind" to "number", "value" to "0.5")),
+            "models" to listOf("google/gemini-3-flash", "qwen/qwen3.8-flash"))
+        val found = listOf(mapOf("name" to "pdf", "identifier" to "openai/skills/.curated/pdf", "source" to "OpenAI",
+            "trust" to "trusted", "description" to "Read and make PDFs"))
+        val s = state.copy(pending = emptyList(),
+            catalogue = listOf(OpInfo("hermes.settings", 0, "Hermes's settings", emptyMap()), OpInfo("hermes.skill.search", 0, "Find skills", emptyMap())),
+            reads = state.reads + mapOf("hermes.settings" to outcome("hermes.settings", "Main model qwen/qwen3.8-flash", settings),
+                "hermes.skill.search" to outcome("hermes.skill.search", "1 skill found for pdf", found)))
+        val view = serverView(s, "dev-1", listOf("research" to "Research"))
+        assertEquals("same as the main model", view.settings[2].empty)
+        setContent { ServerScreen(view, actions) }
+        onNodeWithTag("setting-model.default").performScrollTo()
+        onNodeWithText("same as the main model").assertExists()
+        onNodeWithTag("setting-pick-model.default").performClick()
+        onNodeWithTag("setting-pick-model.default-google/gemini-3-flash").performClick()
+        onNodeWithTag("setting-pick-approvals.mode").performScrollTo().performClick()
+        onNodeWithTag("setting-pick-approvals.mode-manual").performClick()
+        onNodeWithTag("setting-pick-delegation.model").performScrollTo().performClick()
+        onNodeWithTag("setting-pick-delegation.model-qwen/qwen3.8-flash").performClick()
+        onNodeWithTag("setting-switch-compression.enabled").performScrollTo().performClick()
+        onNodeWithTag("setting-edit-compression.threshold").performScrollTo().performClick()
+        onNodeWithTag("setting-number-compression.threshold").performTextReplacement("0.6")
+        onNodeWithTag("setting-set-compression.threshold").performClick()
+        onNodeWithTag("install-openai/skills/.curated/pdf").performScrollTo().performClick()
+        onNodeWithTag("install-for-research").performClick()
+        onNodeWithTag("skill-query").performScrollTo().performTextInput("invoices")
+        onNodeWithTag("skill-search").performClick()
+        assertEquals(listOf(
+            "hermes.setting.set key=model.default value=google/gemini-3-flash",
+            "hermes.setting.set key=approvals.mode value=manual",
+            "hermes.setting.set key=delegation.model value=qwen/qwen3.8-flash",
+            "hermes.setting.set key=compression.enabled value=false",
+            "hermes.setting.set key=compression.threshold value=0.6",
+            "hermes.skill.install identifier=openai/skills/.curated/pdf profile=research",
+            "hermes.skill.search query=invoices"), actions.calls)
     }
 }
