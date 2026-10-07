@@ -60,6 +60,8 @@ data class ServerView(
     val searchingSkills: Boolean = false,
     /** Who a skill can be installed for: (profile, name); "default" is Hermes. */
     val installFor: List<Pair<String, String>> = emptyList(),
+    /** Hermes's memory (§16); null when the server can't show it. */
+    val memory: MemoryView? = null,
     /** Hermes's skills and whether each is on for Talaria; [hasSkills] when the server can list them. */
     val hasSkills: Boolean = false,
     val skillsSummary: String = "",

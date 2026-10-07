@@ -390,6 +390,13 @@ installs one with `hermes skills install … --yes` for Hermes (`profile` `defau
 (its profile name; it loads on the bot's next chat). Hermes's own safety scan still applies: a skill it blocks isn't
 installed.
 
+**Hermes's memory.** Hermes and each bot keep two short notebooks it reads at the start of every chat: `memory`
+(what it noted for itself) and `user` (what it knows about the owner). `hermes.memory {profile}` (tier 0) reads them,
+`data` `{profile, memory, user, limits}`, each notebook a list of entries (Hermes separates them with `§` lines) and
+`limits` `{memory, user}` their size in characters. `hermes.memory.set {profile, target, content}` (tier 1) replaces
+one notebook (`target` `memory` or `user`) with `content`, its entries joined by `\n§\n`, at most the limit; an empty
+`content` clears it. It takes effect in the next chat.
+
 ### 16.1 Terminals
 
 The owner can follow and answer the agent sessions they run in **root's tmux** (Claude Code, opencode) from a device.
@@ -771,3 +778,42 @@ doorway.
 
 Schemas: `bots.describe`, `bots.describe.result`, `bots.create`, `bots.create.result`, `bots.update`,
 `bots.update.result`, `bots.picture`, `bots.picture.result`, `bots.delete`, `bots.delete.result`.
+
+### 18.9 History: every session, from every surface
+
+Hermes keeps every conversation it has had: in Talaria, Telegram, Hermes Desktop, the terminal, routines. Devices list
+and search them, read one, and carry one of Hermes's own on in Talaria.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `history.list` | request | `{query?, bot_id?, offset?}` → `{sessions, has_more}` |
+| `history.read` | request | `{session_id, bot_id?, offset?}` → `{messages, has_more}` |
+| `history.continue` | request | `{session_id}` → `{conversation_id, title}` |
+
+`bot_id` picks a bot's sessions (§18.1); without it, Hermes's own. A **session** is `{session_id, title, source,
+started_at, last_active?, messages, snippet?, conversation_id?}`: `source` where it happened (`api_server` is Talaria,
+`telegram`, `desktop`, `cli`, `cron` a routine, …), times in Unix seconds, `messages` how many, `snippet` the matching
+text for a `query` (`>>>` and `<<<` mark the match), `conversation_id` set when the session is one of Talaria's own
+conversations (open that instead). Without a `query` the newest come first, 30 at a time (`offset` for more). A
+**message** is `{role, text, at}` with `role` `user` or `assistant` (tool calls and Hermes's own notes are left out),
+oldest first, 80 at a time from the start (`offset` for more), each at most 8000 characters. `history.continue` copies
+one of Hermes's own sessions into a new Talaria conversation (Hermes's fork: the original stays as it was) and returns
+it; for one that already is a Talaria conversation it returns that one.
+
+Errors: `NOT_FOUND` for an unknown session or bot; `INVALID_PARAMS` for bad params (`history.continue` with a bot's
+session); `AGENT_UNAVAILABLE` when the doorway or Hermes is down; `METHOD_NOT_FOUND` without a doorway.
+
+### 18.10 Editing and regenerating in a bot's chat
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `chat.edit` | request | `{conversation_id, message_id, text}` → as `chat.send` (§9) |
+
+In a bot's chat (§18.1), `chat.edit` rewinds the chat to just before the owner's message `message_id` (an `id` from
+`chat.history`) and sends `text` in its place: that message and everything after it are gone from the bot's chat in
+Hermes too, and the bot answers again. Sending the same text again regenerates the reply. A chat with Hermes itself
+can't be rewound (`INVALID_PARAMS`): Hermes's API keeps those whole. `CONFLICT` while a reply is running;
+`NOT_FOUND` for a message that isn't one of the owner's in that chat.
+
+Schemas: `history.list`, `history.list.result`, `history.read`, `history.read.result`, `history.continue`,
+`history.continue.result`, `chat.edit`, `chat.edit.result`.

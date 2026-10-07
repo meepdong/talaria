@@ -560,6 +560,92 @@ async def _profiles(ctx: Context) -> list[str]:
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")
 
 
+MEMORY_FILES = {"memory": "MEMORY.md", "user": "USER.md"}
+MEMORY_DELIMITER = "\n§\n"  # how Hermes separates entries (tools/memory_tool_store.py ENTRY_DELIMITER)
+MEMORY_LIMITS = {"memory": 2200, "user": 1375}  # Hermes's defaults (memory.memory_char_limit / user_char_limit)
+
+
+def _memory_dir(ctx: Context, profile: str) -> Path:
+    return ctx.hermes_home / "memories" if profile == "default" else ctx.hermes_home / "profiles" / profile / "memories"
+
+
+async def _memory_limits(ctx: Context, profile: str) -> dict[str, int]:
+    run = await ctx.run([HERMES_CLI, *([] if profile == "default" else ["-p", profile]), "config", "get", "memory", "--json"],
+                        user="hermes", timeout=90)
+    try:
+        cfg = json.loads(run.output) if run.exit_code == 0 else {}
+    except ValueError:
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return {"memory": int(cfg.get("memory_char_limit") or MEMORY_LIMITS["memory"]),
+            "user": int(cfg.get("user_char_limit") or MEMORY_LIMITS["user"])}
+
+
+def _entries(text: str) -> list[str]:
+    return [e.strip() for e in text.split(MEMORY_DELIMITER) if e.strip()]
+
+
+async def hermes_memory(ctx: Context, p: dict) -> Outcome:
+    folder = _memory_dir(ctx, p["profile"])
+    notebooks = {}
+    for target, name in MEMORY_FILES.items():
+        try:
+            notebooks[target] = _entries((folder / name).read_text(errors="replace"))
+        except FileNotFoundError:
+            notebooks[target] = []
+        except OSError as exc:
+            return Outcome(False, f"couldn't read the memory: {exc.strerror}", "", None)
+    limits = await _memory_limits(ctx, p["profile"])
+    who = "Hermes" if p["profile"] == "default" else p["profile"]
+    return Outcome(True, f"{who} remembers {len(notebooks['memory'])} notes and {len(notebooks['user'])} things about you", "", 0,
+                   {"profile": p["profile"], **notebooks, "limits": limits})
+
+
+def _write_memory(path: Path, content: str) -> None:
+    """As Hermes does: under an exclusive lock on <file>.lock, written whole, owned by hermes, readable by it only."""
+    import fcntl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    owner = None
+    try:
+        import pwd
+        user = pwd.getpwnam("hermes")
+        owner = (user.pw_uid, user.pw_gid)
+    except KeyError:
+        pass
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with open(lock_path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tmp = path.with_suffix(path.suffix + ".talaria")
+        tmp.write_text(content)
+        os.chmod(tmp, 0o600)
+        for f in (tmp, lock_path, path.parent):
+            if owner is not None and os.geteuid() == 0:
+                os.chown(f, *owner)
+        tmp.replace(path)
+
+
+async def hermes_memory_set(ctx: Context, p: dict) -> Outcome:
+    profile, target = p["profile"], p["target"]
+    content = MEMORY_DELIMITER.join(_entries(p["content"]))
+    limit = (await _memory_limits(ctx, profile))[target]
+    if len(content) > limit:
+        return Outcome(False, f"that's {len(content)} characters; this notebook holds at most {limit}", "", None)
+    try:
+        await asyncio.to_thread(_write_memory, _memory_dir(ctx, profile) / MEMORY_FILES[target], content)
+    except OSError as exc:
+        return Outcome(False, f"couldn't write the memory: {exc.strerror}", "", None)
+    who = "Hermes" if profile == "default" else profile
+    what = "notes" if target == "memory" else "notes about you"
+    return Outcome(True, f"{who}'s {what} now hold {len(_entries(content))} entries (from its next chat)", "", 0)
+
+
+def _memory_summary(p: dict) -> str:
+    who = "Hermes" if p["profile"] == "default" else p["profile"]
+    what = "notes" if p["target"] == "memory" else "notes about you"
+    n = len(_entries(p["content"]))
+    return f"Replace {who}'s {what} with {n} entr{'y' if n == 1 else 'ies'}" if n else f"Clear {who}'s {what}"
+
+
 async def hermes_skill_search(ctx: Context, p: dict) -> Outcome:
     run = await ctx.run([HERMES_CLI, "skills", "search", p["query"], "--json", "--limit", "20"], user="hermes", timeout=90)
     try:
@@ -718,6 +804,11 @@ OPS: dict[str, Op] = {op.name: op for op in [
        {"identifier": Param("string", pattern=SKILL_ID), "profile": Param("string", choices=_profiles, default="default")},
        lambda p: f"Install the skill {p['identifier']} for {'Hermes' if p['profile'] == 'default' else p['profile']}"
                  + (" (Hermes restarts; a reply in progress stops)" if p["profile"] == "default" else "")),
+    Op("hermes.memory", 0, "Hermes's memory", hermes_memory,
+       {"profile": Param("string", choices=_profiles, default="default")}),
+    Op("hermes.memory.set", 1, "Change Hermes's memory", hermes_memory_set,
+       {"profile": Param("string", choices=_profiles, default="default"), "target": Param("string", enum=["memory", "user"]),
+        "content": Param("string", pattern=r"[^\x00]*", max_length=20000)}, _memory_summary),
     Op("tmux.sessions", 0, "Terminal sessions", tmux_sessions),
     Op("terminal.watch", 1, "Watch a terminal", terminal_watch, {"session": Param("string", choices=_tmux_names)},
        lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),

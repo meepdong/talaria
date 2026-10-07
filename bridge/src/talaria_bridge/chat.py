@@ -34,6 +34,7 @@ from .bots import profile_of
 from .board import BOARD_METHODS, BoardError
 from .botadmin import ADMIN_METHODS, AdminError
 from .commands import COMMAND_METHODS, CommandError
+from .history import HISTORY_METHODS
 from .routines import HELPER_METHODS, ROUTINE_METHODS
 from .rooms import ROOM_METHODS, RoomError
 from .workorders import mark_workers
@@ -307,6 +308,7 @@ class Turn:
     run_id: str | None = None
     resolves: tuple[str, int] | None = None  # (job id, at): the blocked run this turn retries
     worker: str | None = None  # a work order from the talker (Talk, §9): the worker's name
+    rewind: int | None = None  # a bot's chat is cut back to before this message first (chat.edit, §18.10)
     task: asyncio.Task | None = None
 
     def snapshot(self) -> dict:
@@ -486,6 +488,7 @@ class ChatService:
         self.board = None  # Hermes's Kanban board and usage (board.py, §18.4–18.5), likewise
         self.routines = None  # bots' routines and helper agents (routines.py, §18.6–18.7), likewise
         self.botadmin = None  # making, changing and deleting bots (botadmin.py, §18.8), likewise
+        self.past = None  # every session from every surface (history.py, §18.9), likewise
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -549,7 +552,7 @@ class ChatService:
         return self.agent_names.get(agent_id or "", agent_id or "the agent")
 
     async def send(self, p: dict, resolves: tuple[str, int] | None = None, *, worker: str | None = None,
-                   order: str | None = None) -> tuple[dict, Turn | None]:
+                   order: str | None = None, rewind: int | None = None) -> tuple[dict, Turn | None]:
         """Validate and register a turn. The caller sends the result, then calls `start`.
         Returns (result, None) for a retried client_msg_id."""
         text = p.get("text", "")
@@ -587,7 +590,7 @@ class ChatService:
         found = await asyncio.to_thread(self._server_files, p, file_refs or [])
         blobs = self._blobs(refs or [])
         try:
-            result, turn = await self._send(p, text, blobs, client_msg_id, found, resolves, worker, order)
+            result, turn = await self._send(p, text, blobs, client_msg_id, found, resolves, worker, order, rewind)
         except BaseException:
             for blob in blobs:
                 self.blobs.release(blob)  # not sent: the device may retry with the same blobs
@@ -655,7 +658,7 @@ class ChatService:
 
     async def _send(self, p: dict, text: str, blobs: list[Blob], client_msg_id: str | None,
                     found: list[Found] = (), resolves: tuple[str, int] | None = None, worker: str | None = None,
-                    order: str | None = None) -> tuple[dict, Turn]:
+                    order: str | None = None, rewind: int | None = None) -> tuple[dict, Turn]:
         model = _model(p["model"]) if p.get("model") is not None else None
         conv_id = p.get("conversation_id")
         if conv_id is not None:
@@ -700,7 +703,7 @@ class ChatService:
                         {"kind": "file", "name": f.name, "mime": f.mime, "size": f.size} for f in found],
                     content=content,
                     status="queued" if queued else "running",
-                    resolves=resolves, worker=worker)
+                    resolves=resolves, worker=worker, rewind=rewind)
         if queued:
             self._queues.setdefault(conv_id, []).append(turn)
         else:
@@ -834,6 +837,26 @@ class ChatService:
             self.store.add(conv)
             return conv
 
+    async def edit(self, p: dict) -> tuple[dict, Turn | None]:
+        """chat.edit (§18.10): a bot's chat cut back to before one of the owner's messages, then [text] in its place."""
+        conv = self.store.get(_id(p.get("conversation_id"), "conversation_id"))
+        if conv is None:
+            raise RpcError(m.NOT_FOUND, "Unknown conversation")
+        if profile_of(conv.agent_id) is None or self.bots is None:
+            raise RpcError(m.INVALID_PARAMS, "Only a bot's chat can be rewound: Hermes's API keeps its own chats whole")
+        if conv.id in self._active:
+            raise RpcError(m.CONFLICT, "Stop the running reply first")
+        message_id = p.get("message_id")
+        if not (isinstance(message_id, str) and message_id.isdigit()):
+            raise RpcError(m.NOT_FOUND, "No such message of yours in this chat")
+        try:
+            rows = await self.bots.client(conv.agent_id).messages(conv.hermes_session_id, limit=100_000, offset=0)
+        except (HermesError, HermesUnavailable) as exc:
+            raise RpcError(m.AGENT_UNAVAILABLE, f"The bot's chat isn't available: {exc}") from None
+        if not any(str(r.get("id")) == message_id and r.get("role") == "user" for r in rows):
+            raise RpcError(m.NOT_FOUND, "No such message of yours in this chat")
+        return await self.send({"conversation_id": conv.id, "text": p.get("text", "")}, rewind=int(message_id))
+
     async def bots_handle(self, method: str, p: dict) -> dict:
         if self.bots is None:
             raise RpcError(m.METHOD_NOT_FOUND, "Hermes's bots aren't set up on this bridge")
@@ -940,7 +963,9 @@ class ChatService:
             before = await self._totals(client, conv.hermes_session_id)
             if self._sizes.get(conv.id, 0) >= TIDY_TOKENS:
                 watch = asyncio.create_task(self._tidy_watch(turn, progressed))
-            stream = client.chat_stream(conv.hermes_session_id, turn.content if turn.content is not None else turn.user_text)
+            content = turn.content if turn.content is not None else turn.user_text
+            stream = client.chat_stream(conv.hermes_session_id, content, rewind=turn.rewind) if turn.rewind is not None \
+                else client.chat_stream(conv.hermes_session_id, content)
             if self.routines is not None and profile_of(conv.agent_id) is not None:
                 self.routines.watch_helpers(conv.id, client, conv.hermes_session_id)  # a bot's helper agents (§18.7)
             async for name, payload in stream:
@@ -1507,6 +1532,15 @@ class ChatService:
                 return await self.board.handle(method, p), None
             except BoardError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method == "chat.edit":
+            return await self.edit(p)
+        if method in HISTORY_METHODS:
+            if self.past is None:
+                raise RpcError(m.METHOD_NOT_FOUND, "Hermes's history isn't set up on this bridge")
+            try:
+                return await self.past.handle(method, p), None
+            except BoardError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method in COMMAND_METHODS:
             if self.commands is None:
                 raise RpcError(m.METHOD_NOT_FOUND, "Hermes's commands aren't set up on this bridge")
@@ -1592,7 +1626,8 @@ class ChatService:
 
 
 BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
-CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | BOARD_METHODS | ROUTINE_METHODS | HELPER_METHODS | ADMIN_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | BOARD_METHODS | ROUTINE_METHODS | HELPER_METHODS | ADMIN_METHODS | \
+    HISTORY_METHODS | frozenset({"chat.edit"}) | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

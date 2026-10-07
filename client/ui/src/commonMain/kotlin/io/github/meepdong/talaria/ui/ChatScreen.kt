@@ -752,7 +752,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
     // dictation lands in the composer, to edit before sending unless auto-send is on
     LaunchedEffect(voice.dictation?.id) {
         val d = voice.dictation ?: return@LaunchedEffect
-        setText(listOf(field.text.trimEnd(), d.text).filter { it.isNotEmpty() }.joinToString(" ").take(32000))
+        setText(if (d.replace) d.text.take(32000) else listOf(field.text.trimEnd(), d.text).filter { it.isNotEmpty() }.joinToString(" ").take(32000))
         actions.dictationTaken(d.id)
         if (d.send) send()
     }
@@ -769,6 +769,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
             TextButton(onClick = actions::stopSpeaking, modifier = Modifier.testTag("stop-speaking")) { Text("🔊 Stop reading") }
         }
         view.helpers.forEach { h -> HelperRow(h, actions) }
+        if (view.editing) EditingBanner(actions)
         val mentions = mentionSuggestions(text, view.bots)
         if (mentions.isNotEmpty()) {
             Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("mentions")) {

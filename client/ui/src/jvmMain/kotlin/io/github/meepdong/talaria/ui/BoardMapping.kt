@@ -112,3 +112,34 @@ fun botEditorView(e: io.github.meepdong.talaria.control.BotEditing?, chat: io.gi
         picture = e.botId?.let { images[chat?.avatars?.get(it)] }, canPickPicture = canPickPicture && e.botId != null,
     )
 }
+
+/** The History page (§18.9): where each session happened in plain words, times as the chat list shows them. */
+fun historyView(s: ControlState?, chat: io.github.meepdong.talaria.chat.ChatState?, nowMs: Long): HistoryView {
+    val past = s?.past ?: return HistoryView(loading = true)
+    val bots = chat?.bots.orEmpty()
+    val who: Pair<String?, String> = past.botId?.let { id -> id to (bots.firstOrNull { it.id == id }?.name ?: id.removePrefix("bot:")) }
+        ?: (null to "Hermes")
+    fun item(p: io.github.meepdong.talaria.control.PastSession) = HistoryItem(p.id, p.title, whereFrom(p.source),
+        shortTime((p.lastActive ?: p.startedAt) * 1000, nowMs).orEmpty(), p.messages, p.snippet?.replace(">>>", "")?.replace("<<<", ""),
+        p.conversationId)
+    return HistoryView(
+        query = past.query.orEmpty(), who = who, whoOptions = listOf<Pair<String?, String>>(null to "Hermes") + bots.map { it.id to it.name },
+        sessions = past.sessions.map(::item), hasMore = past.hasMore, loading = past.loading,
+        open = past.open?.let(::item),
+        messages = past.messages.map { Triple(it.role == "user", it.text, shortTime(it.at * 1000, nowMs).orEmpty()) },
+        moreMessages = past.moreMessages, reading = past.reading, canContinue = past.botId == null, notice = s.notice,
+    )
+}
+
+fun whereFrom(source: String): String = when (source) {
+    "api_server" -> "Talaria"
+    "telegram" -> "Telegram"
+    "desktop" -> "Hermes Desktop"
+    "cli", "tui" -> "Terminal"
+    "cron" -> "Routine"
+    "whatsapp" -> "WhatsApp"
+    "discord" -> "Discord"
+    "slack" -> "Slack"
+    "" -> "Hermes"
+    else -> source.replaceFirstChar { it.uppercase() }
+}

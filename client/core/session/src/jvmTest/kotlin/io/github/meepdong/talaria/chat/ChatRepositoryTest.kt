@@ -179,6 +179,32 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun aBotsChatIsEditedAndRegenerated() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"bot:scout","title":"Scout","created_at":1,"updated_at":2}]}""") }
+        api.answers["chat.history"] = { json("""{"messages":[{"id":"1","role":"user","text":"First","ts":1},{"id":"2","role":"assistant","text":"One","ts":2},
+            {"id":"3","role":"user","text":"Second","ts":3},{"id":"4","role":"assistant","text":"Two","ts":4}],"next_before":null}""") }
+        api.answers["chat.edit"] = { json("""{"conversation_id":"c-1","turn_id":"t-9","title":"Scout"}""") }
+        api.answers["commands.list"] = { json("""{"available":true,"commands":[]}""") }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.open("c-1")
+        advanceUntilIdle()
+        repo.editMessage("h:3", "Second, better")
+        advanceUntilIdle()
+        val sent = api.calls.last { it.first == "chat.edit" }.second
+        assertEquals("""{"conversation_id":"c-1","message_id":"3","text":"Second, better"}""", sent.toString())
+        assertEquals(listOf("First", "One"), repo.state.value.openMessages.map { it.text })
+
+        repo.regenerate("h:2")
+        advanceUntilIdle()
+        assertEquals("""{"conversation_id":"c-1","message_id":"1","text":"First"}""", api.calls.last { it.first == "chat.edit" }.second.toString())
+        assertEquals(emptyList(), repo.state.value.openMessages)
+    }
+
+    @Test
     fun hidingMessagesAndPinning() = chatTest { scope ->
         val api = FakeApi()
         api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }

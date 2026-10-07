@@ -179,6 +179,7 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
         if (view.settings.isNotEmpty()) {
             Section("Hermes's settings") { HermesSettings(view, actions) }
         }
+        view.memory?.let { mem -> Section("Hermes's memory") { MemorySection(mem, actions) } }
         if (view.canFindSkills) {
             Section("Find skills") { FindSkills(view, actions) }
         }

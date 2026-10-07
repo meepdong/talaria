@@ -194,6 +194,9 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
             BackHandler(enabled = current is Screen.Server) { controller.showChats() }
             BackHandler(enabled = current is Screen.BotEditor) { controller.closeBotEditor() }
+            BackHandler(enabled = current is Screen.History) {
+                if ((current as Screen.History).view.open != null) controller.historyOpen(null) else controller.closeHistory()
+            }
             BackHandler(enabled = current is Screen.Terminal) {
                 if ((current as Screen.Terminal).view.open != null) controller.closeTerminal() else controller.showChats()
             }

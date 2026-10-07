@@ -170,4 +170,32 @@ class ControlRepositoryTest {
         assertEquals("bot:tripplanner", saved)
         assertEquals("""{"name":"Trip Planner","about":"Plans trips"}""", api.calls.last { it.first == "bots.create" }.second.toString())
     }
+
+    @Test
+    fun historyIsListedReadAndCarriedOn() = test { scope ->
+        val api = FakeApi()
+        api.answers["history.list"] = { p ->
+            if ("offset" in p) json("""{"sessions":[{"session_id":"cron_1","title":"Morning","source":"cron","started_at":1,"messages":4}],"has_more":false}""")
+            else json("""{"sessions":[{"session_id":"tg_1","title":"Flights","source":"telegram","started_at":1700000000,"last_active":1700000500,"messages":6,"snippet":"cheap >>>flights<<<"}],"has_more":true}""")
+        }
+        api.answers["history.read"] = { json("""{"messages":[{"role":"user","text":"Find flights","at":1700000000},{"role":"assistant","text":"Two","at":1700000002}],"has_more":false}""") }
+        api.answers["history.continue"] = { json("""{"conversation_id":"c-9","title":"Flights (continued)"}""") }
+        val repo = ControlRepository(scope, api).also { it.start() }
+        repo.loadPast("flights", null)
+        advanceUntilIdle()
+        assertEquals("flights", api.calls.last().second["query"].toString().trim('"'))
+        assertEquals(listOf("tg_1"), repo.state.value.past.sessions.map { it.id })
+        repo.loadPast(more = true)
+        advanceUntilIdle()
+        assertEquals(listOf("tg_1", "cron_1"), repo.state.value.past.sessions.map { it.id })
+        repo.readPast(repo.state.value.past.sessions.first())
+        advanceUntilIdle()
+        assertEquals(listOf("user", "assistant"), repo.state.value.past.messages.map { it.role })
+        var opened: String? = null
+        repo.continuePast("tg_1") { opened = it }
+        advanceUntilIdle()
+        assertEquals("c-9", opened)
+        repo.readPast(null)
+        assertNull(repo.state.value.past.open)
+    }
 }

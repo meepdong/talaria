@@ -489,6 +489,43 @@ class ChatRepository(
     }
 
     /** Ask the open conversation's last question again (Hermes's /retry). */
+    /**
+     * In a bot's chat (§18.10): cut it back to before the owner's message [key] (a history message) and send [text] in
+     * its place; the same text again regenerates the reply. What came after goes from this device's view at once.
+     */
+    fun editMessage(key: String, text: String) {
+        val conv = _state.value.openId ?: return
+        if (!key.startsWith(HISTORY_KEY) || text.isBlank()) return
+        scope.launch {
+            try {
+                api.request("chat.edit", buildJsonObject {
+                    put("conversation_id", conv)
+                    put("message_id", key.removePrefix(HISTORY_KEY))
+                    put("text", text.trim())
+                })
+                lock.withLock {
+                    _state.update { s ->
+                        val thread = s.threads[conv] ?: return@update s
+                        val at = thread.messages.indexOfFirst { it.key == key }
+                        if (at < 0) s else s.copy(threads = s.threads + (conv to thread.copy(messages = thread.messages.take(at))))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice("Couldn't change it: ${e.message}")
+            }
+        }
+    }
+
+    /** Regenerate the bot's reply [replyKey]: the owner's message before it is sent again, cutting from there. */
+    fun regenerate(replyKey: String) {
+        val messages = _state.value.openMessages
+        val at = messages.indexOfFirst { it.key == replyKey }
+        val ask = messages.take(at.coerceAtLeast(0)).lastOrNull { it.role == Role.USER && it.key.startsWith(HISTORY_KEY) }
+        if (at < 0 || ask == null) notice("Nothing to answer again here") else editMessage(ask.key, ask.text)
+    }
+
     fun retryLast() {
         val last = _state.value.openMessages.lastOrNull { it.role == Role.USER && it.text.isNotBlank() }
         if (last == null) notice("Nothing to retry yet") else send(last.text)

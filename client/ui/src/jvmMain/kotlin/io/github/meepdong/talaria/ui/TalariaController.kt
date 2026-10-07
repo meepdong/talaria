@@ -139,6 +139,10 @@ class TalariaController(
         val board: Boolean = false,
         /** The bot editor shows (§18.8). */
         val botEditor: Boolean = false,
+        /** The History page shows (§18.9). */
+        val history: Boolean = false,
+        /** One of the owner's messages being edited in a bot's chat (§18.10): its key. */
+        val editKey: String? = null,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
         val modelQuery: String? = null,
@@ -894,6 +898,11 @@ class TalariaController(
 
     override fun sendMessage(text: String) {
         val c = chat ?: return
+        page.value.editKey?.let { key ->  // an edit in a bot's chat (§18.10)
+            page.update { it.copy(editKey = null) }
+            c.editMessage(key, text)
+            return
+        }
         val bots = c.state.value.bots.map { BotItem(it.id, it.name, it.profile, it.description) }
         parseMention(text, bots)?.let { (bot, rest) ->
             // "@scout find a cafe": that goes to Scout's chat, which opens (§18.1)
@@ -1538,8 +1547,44 @@ class TalariaController(
     }
 
     override fun showChats() {
-        page.value = page.value.copy(status = false, server = false, terminal = false, botEditor = false)
+        page.value = page.value.copy(status = false, server = false, terminal = false, botEditor = false, history = false)
     }
+
+    // History (§18.9) and editing a bot's chat (§18.10)
+
+    override fun showHistory() {
+        page.update { it.copy(history = true, menuOpen = false) }
+        control?.loadPast(null, null)
+    }
+
+    override fun closeHistory() {
+        control?.readPast(null)
+        page.update { it.copy(history = false) }
+    }
+
+    override fun historyLoad(query: String?, botId: String?) { control?.loadPast(query, botId) }
+    override fun historyMore() { control?.loadPast(more = true) }
+    override fun historyOpen(sessionId: String?) {
+        val c = control ?: return
+        c.readPast(sessionId?.let { id -> c.state.value.past.sessions.firstOrNull { it.id == id } })
+    }
+    override fun historyMoreMessages() { control?.let { c -> c.readPast(c.state.value.past.open, more = true) } }
+    override fun historyContinue(sessionId: String) {
+        control?.continuePast(sessionId) { conv ->
+            chat?.refresh()
+            page.update { it.copy(history = false, tab = Tab.CHATS) }
+            openConversation(conv)
+        }
+    }
+
+    override fun editMessage(key: String, text: String) {
+        page.update { it.copy(editKey = key) }
+        voice.update { it.copy(dictation = Dictation(++dictations, text, send = false, replace = true)) }
+    }
+
+    override fun regenerate(key: String) { chat?.regenerate(key) }
+
+    override fun cancelEdit() { page.update { it.copy(editKey = null) } }
 
     // managing bots (§18.8)
 
@@ -1731,6 +1776,8 @@ class TalariaController(
             } else if (x.page.terminal) {
                 Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now,
                     locked = authenticator != null && !terminalLock.unlocked), status)
+            } else if (x.page.history) {
+                Screen.History(historyView(l.control, l.chat, now), status)
             } else if (x.page.botEditor) {
                 Screen.BotEditor(botEditorView(l.control?.editing, l.chat, images, picturePicker != null), status)
             } else if (x.page.server) {
@@ -1744,7 +1791,8 @@ class TalariaController(
                     x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare,
                         openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
                     .withRooms(l.rooms, x.page.roomOpen, l.chat?.bots.orEmpty(), now)
-                    .let { v -> v.copy(helpers = helperItems(l.control, l.chat?.openId)) }
+                    .let { v -> v.copy(helpers = helperItems(l.control, l.chat?.openId),
+                        canRewind = v.openBot != null && v.runningTurnId == null, editing = x.page.editKey != null) }
                     .withBotWork(botWork(l.chat, l.rooms, l.control)) { id -> l.chat?.conversations?.firstOrNull { it.id == id }?.agentId }
                 Screen.Chat(
                     view, withBalance,

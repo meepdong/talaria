@@ -175,14 +175,17 @@ class BotChatClient:
             return False
         return True
 
-    async def chat_stream(self, session_id: str, text: str | list) -> AsyncIterator[tuple[str, dict]]:
-        """One turn, as the Hermes API's stream events (hermes.py) so the chat service runs it unchanged."""
+    async def chat_stream(self, session_id: str, text: str | list, rewind: int | None = None) -> AsyncIterator[tuple[str, dict]]:
+        """One turn, as the Hermes API's stream events (hermes.py) so the chat service runs it unchanged. [rewind]: first
+        cut the chat back to just before that message (its row id), as Hermes Desktop's edit and regenerate do (§18.10)."""
         live = await self.live(session_id)
         queue = self.backend.listen(live)
         try:
             message = text if isinstance(text, str) else "\n".join(
                 p.get("text", "") for p in text if isinstance(p, dict) and p.get("type") == "text")
-            await self._rpc("prompt.submit", {"session_id": live, "text": message})
+            cut = {"truncate_before_row_id": rewind, "confirm_truncate": True, "confirm_empty_truncate": True} \
+                if rewind is not None else {}
+            await self._rpc("prompt.submit", {"session_id": live, "text": message, **cut})
             yield "run.started", {"run_id": live}
             while True:
                 try:

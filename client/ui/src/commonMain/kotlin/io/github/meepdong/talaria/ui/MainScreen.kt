@@ -263,6 +263,9 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                 }
             }
 
+            TextButton(onClick = { actions.setMenuOpen(false); actions.showHistory() }, modifier = Modifier.testTag("menu-history")) {
+                Text("📜 History: every chat Hermes has had")
+            }
             MenuSection("Running now") {
                 if (menu.running.isEmpty()) {
                     Text("Nothing running.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("nothing-running"))

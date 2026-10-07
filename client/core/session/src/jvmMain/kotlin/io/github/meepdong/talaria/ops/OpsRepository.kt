@@ -96,6 +96,9 @@ class OpsRepository(
         for (op in listOf("system.overview", "services.list", "docker.ps", "bridge.version")) run(op)
         if (_state.value.catalogue.any { it.op == SKILLS }) run(SKILLS)
         if (_state.value.catalogue.any { it.op == SETTINGS }) run(SETTINGS)
+        // the memory shown stays the one picked (§16, "Hermes's memory")
+        val memory = (_state.value.reads[MEMORY]?.data as? Map<*, *>)?.get("profile") as? String
+        if (memory != null) run(MEMORY, mapOf("profile" to memory))
     }
 
     fun loadCatalogue() {
@@ -239,7 +242,8 @@ class OpsRepository(
 
         /** After these finish, the Server page's reads are out of date. */
         val REFRESH_AFTER = setOf("service.restart", "docker.restart", "bridge.update", "disk.cleanup", "apt.upgrade",
-            "hermes.skill.set", SKILLS_SET, "hermes.setting.set", "hermes.skill.install")
+            "hermes.skill.set", SKILLS_SET, "hermes.setting.set", "hermes.skill.install", "hermes.memory.set")
+        const val MEMORY = "hermes.memory"
         /** Hermes's settings a device may change (§16, "Hermes's settings"). */
         const val SETTINGS = "hermes.settings"
         /** Hermes's skills for Talaria, listed when the server offers it (§16). */

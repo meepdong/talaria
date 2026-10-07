@@ -77,6 +77,27 @@ data class BotEditing(
     val version: Int = 0,
 )
 
+/** One of Hermes's sessions from any surface (§18.9). [conversationId]: it is a Talaria conversation already. */
+data class PastSession(
+    val id: String, val title: String, val source: String, val startedAt: Long, val lastActive: Long?, val messages: Int,
+    val snippet: String? = null, val conversationId: String? = null,
+)
+
+data class PastMessage(val role: String, val text: String, val at: Long)
+
+/** The History page: the list (for Hermes or a bot, maybe searched) and the session being read. */
+data class PastState(
+    val query: String? = null,
+    val botId: String? = null,
+    val sessions: List<PastSession> = emptyList(),
+    val hasMore: Boolean = false,
+    val loading: Boolean = false,
+    val open: PastSession? = null,
+    val messages: List<PastMessage> = emptyList(),
+    val moreMessages: Boolean = false,
+    val reading: Boolean = false,
+)
+
 data class ControlState(
     /** False when the bridge has no board (no doorway, or an older bridge). */
     val boardAvailable: Boolean = false,
@@ -96,6 +117,8 @@ data class ControlState(
     val helpers: Map<String, List<Helper>> = emptyMap(),
     /** The bot editor (§18.8), while open. */
     val editing: BotEditing? = null,
+    /** The History page (§18.9). */
+    val past: PastState = PastState(),
 ) {
     val tasks: List<BoardTask> get() = columns.flatMap { it.tasks }
 }
@@ -229,6 +252,70 @@ class ControlRepository(private val scope: CoroutineScope, private val api: Chat
                 }
             }, notice = if (action == "run") "Started: it runs now, and its result goes where it always does" else s.notice)
         }
+    }
+
+    // History (§18.9)
+
+    /** List Hermes's (or [botId]'s) sessions, newest first or matching [query]; [more] adds the next page. */
+    fun loadPast(query: String? = _state.value.past.query, botId: String? = _state.value.past.botId, more: Boolean = false) {
+        val offset = if (more) _state.value.past.sessions.size else 0
+        _state.update { it.copy(past = it.past.copy(query = query, botId = botId, loading = true)) }
+        scope.launch {
+            try {
+                val r = api.request("history.list", buildJsonObject {
+                    query?.takeIf { it.isNotBlank() }?.let { put("query", it.trim()) }
+                    botId?.let { put("bot_id", it) }
+                    if (offset > 0) put("offset", offset)
+                })
+                val rows = (r["sessions"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    val o = e as? JsonObject ?: return@mapNotNull null
+                    PastSession(o.str("session_id") ?: return@mapNotNull null, o.str("title").orEmpty(), o.str("source").orEmpty(),
+                        o.long("started_at") ?: 0, o.long("last_active"), (o["messages"] as? JsonPrimitive)?.intOrNull ?: 0,
+                        o.str("snippet"), o.str("conversation_id"))
+                }
+                _state.update { s -> s.copy(past = s.past.copy(loading = false, hasMore = (r["has_more"] as? JsonPrimitive)?.booleanOrNull == true,
+                    sessions = if (more) s.past.sessions + rows else rows)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(past = it.past.copy(loading = false), notice = "Couldn't load the history: ${e.message}") }
+            }
+        }
+    }
+
+    /** Read a session (null closes it); [more] adds the next messages. */
+    fun readPast(session: PastSession?, more: Boolean = false) {
+        if (session == null) {
+            _state.update { it.copy(past = it.past.copy(open = null, messages = emptyList())) }
+            return
+        }
+        val offset = if (more) _state.value.past.messages.size else 0
+        _state.update { it.copy(past = it.past.copy(open = session, reading = true, messages = if (more) it.past.messages else emptyList())) }
+        scope.launch {
+            try {
+                val r = api.request("history.read", buildJsonObject {
+                    put("session_id", session.id)
+                    _state.value.past.botId?.let { put("bot_id", it) }
+                    if (offset > 0) put("offset", offset)
+                })
+                val rows = (r["messages"] as? JsonArray).orEmpty().mapNotNull { e ->
+                    val o = e as? JsonObject ?: return@mapNotNull null
+                    PastMessage(o.str("role") ?: return@mapNotNull null, o.str("text").orEmpty(), o.long("at") ?: 0)
+                }
+                _state.update { s -> s.copy(past = s.past.copy(reading = false, messages = s.past.messages + rows,
+                    moreMessages = (r["has_more"] as? JsonPrimitive)?.booleanOrNull == true)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(past = it.past.copy(reading = false), notice = "Couldn't read it: ${e.message}") }
+            }
+        }
+    }
+
+    /** Carry one of Hermes's sessions on in Talaria (a copy); [then] gets the conversation's id. */
+    fun continuePast(sessionId: String, then: (String) -> Unit) = launchCall("Couldn't carry it on") {
+        val r = api.request("history.continue", buildJsonObject { put("session_id", sessionId) }, timeoutMs = 60_000)
+        then(r.str("conversation_id") ?: error("no conversation"))
     }
 
     // the bot editor (§18.8)

@@ -28,6 +28,9 @@ sealed interface Screen {
     /** A bot's settings, or a new bot (spec §18.8). */
     data class BotEditor(val view: BotEditorView, val status: StatusView) : Screen
 
+    /** Hermes's sessions from every surface (spec §18.9). */
+    data class History(val view: HistoryView, val status: StatusView) : Screen
+
     /** Terminals (spec §16.1): root's tmux sessions, from the ☰ menu. */
     data class Terminal(val view: TerminalView, val status: StatusView) : Screen
 
@@ -436,6 +439,18 @@ interface TalariaActions {
     fun deleteBot() {}
     fun pickBotPicture() {}
     fun clearBotPicture() {}
+
+    // History (§18.9) and editing a bot's chat (§18.10)
+    fun showHistory() {}
+    fun closeHistory() {}
+    fun historyLoad(query: String?, botId: String?) {}
+    fun historyMore() {}
+    fun historyOpen(sessionId: String?) {}
+    fun historyMoreMessages() {}
+    fun historyContinue(sessionId: String) {}
+    fun editMessage(key: String, text: String) {}
+    fun regenerate(key: String) {}
+    fun cancelEdit() {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 
@@ -480,6 +495,7 @@ val Screen.overall: Health
         is Screen.Status -> view.overall
         is Screen.Server -> status.overall
         is Screen.BotEditor -> status.overall
+        is Screen.History -> status.overall
         is Screen.Terminal -> status.overall
         is Screen.Chat -> status.overall
         else -> Health.UNKNOWN
@@ -493,10 +509,11 @@ val Screen.summary: String
         is Screen.Status -> view.summary
         is Screen.Server -> status.summary
         is Screen.BotEditor -> status.summary
+        is Screen.History -> status.summary
         is Screen.Terminal -> status.summary
         is Screen.Chat -> status.summary
     }
 
 /** Paired with a server, whichever page is showing. */
 val Screen.paired: Boolean
-    get() = this is Screen.Status || this is Screen.Server || this is Screen.Terminal || this is Screen.Chat || this is Screen.BotEditor
+    get() = this is Screen.Status || this is Screen.Server || this is Screen.Terminal || this is Screen.Chat || this is Screen.BotEditor || this is Screen.History

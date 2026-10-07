@@ -388,3 +388,25 @@ async def test_skills_are_found_and_installed_for_hermes_or_a_bot(tmp_path, regi
     for params in ({"identifier": "x", "profile": "nobody"}, {"identifier": "a b; rm"}):
         with pytest.raises(Exception):
             await d.prepare("hermes.skill.install", params, "device:X")
+
+
+async def test_memory_is_read_and_replaced_for_hermes_or_a_bot(tmp_path, registry_db, clock):
+    d, runner = await settings_daemon(tmp_path, registry_db, clock,
+                                      {(HERMES, "config", "get", "memory", "--json"): Run(0, json.dumps({"memory_char_limit": 60, "user_char_limit": 40}))})
+    mem = tmp_path / "memories"
+    mem.mkdir()
+    (mem / "MEMORY.md").write_text("Prefers short answers\n§\nLives in Bangalore")
+    got = (await d.handle({"cmd": "run", "op": "hermes.memory", "params": {}, "requested_by": "device:X"}))["result"]
+    assert got["data"] == {"profile": "default", "memory": ["Prefers short answers", "Lives in Bangalore"], "user": [],
+                           "limits": {"memory": 60, "user": 40}}
+    prepared, out = await run_approved(d, "hermes.memory.set", {"target": "user", "content": "Name: Maurice\n§\n  \n§\nIST"})
+    assert prepared["summary"] == "Replace Hermes's notes about you with 2 entries" and out["ok"]
+    assert (mem / "USER.md").read_text() == "Name: Maurice\n§\nIST" and (mem / "USER.md.lock").exists()
+    _, too_long = await run_approved(d, "hermes.memory.set", {"target": "memory", "content": "x" * 61})
+    assert not too_long["ok"] and "at most 60" in too_long["summary"]
+    prepared, out = await run_approved(d, "hermes.memory.set", {"profile": "research", "target": "memory", "content": ""})
+    assert prepared["summary"] == "Clear research's notes" and out["ok"]
+    assert (tmp_path / "profiles" / "research" / "memories" / "MEMORY.md").read_text() == ""
+    assert [HERMES, "-p", "research", "config", "get", "memory", "--json"] in runner.argvs()
+    with pytest.raises(Exception):
+        await d.prepare("hermes.memory.set", {"target": "secrets", "content": "x"}, "device:X")

@@ -67,6 +67,10 @@ fun WithMessageMenu(m: MessageItem, view: ChatView, actions: TalariaActions, con
                 item("Select text", "select") { dialog = MessageDialog.SELECT }
                 if (view.canShare) item("Share", "share") { actions.shareText(m.text) }
             }
+            if (view.canRewind && m.key.startsWith("h:") && m.state == ItemState.DONE) {  // a bot's chat (§18.10)
+                if (m.fromUser) item("Edit", "edit-message") { actions.editMessage(m.key, m.text) }
+                else item("Regenerate", "regenerate") { actions.regenerate(m.key) }
+            }
             if (canRemove) {
                 if (hasText) item("Move to…", "move") { dialog = MessageDialog.MOVE }
                 item("Delete", "delete-message") { dialog = MessageDialog.DELETE }

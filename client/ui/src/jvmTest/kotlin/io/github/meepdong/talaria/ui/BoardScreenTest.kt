@@ -51,6 +51,12 @@ class BoardScreenTest {
         override fun deleteBot() { calls += "delete" }
         override fun closeBotEditor() { calls += "close" }
         override fun pickBotPicture() { calls += "pick" }
+        override fun historyLoad(query: String?, botId: String?) { calls += "load $query $botId" }
+        override fun historyOpen(sessionId: String?) { calls += "open-past $sessionId" }
+        override fun historyContinue(sessionId: String) { calls += "continue $sessionId" }
+        override fun serverRun(op: String, params: Map<String, String>) {
+            calls += (listOf(op) + params.entries.sortedBy { it.key }.map { "${it.key}=${it.value}" }).joinToString(" ")
+        }
     }
 
     private val bots = listOf(Bot("bot:meetingminder", "Meeting Minder", "meetingminder"), Bot("bot:research", "Research", "research"))
@@ -259,5 +265,52 @@ class BoardScreenTest {
         onNodeWithTag("bot-at-work").assertExists()
         onNodeWithText("Meeting Minder is working: On the board task “Summarise Monday's call”").performClick()
         assertEquals(listOf("show true"), actions.calls)
+    }
+
+    @Test
+    fun historyMappingAndPage() = runComposeUiTest {
+        val actions = Recorder()
+        val past = io.github.meepdong.talaria.control.PastState(sessions = listOf(
+            io.github.meepdong.talaria.control.PastSession("tg_1", "Flights", "telegram", 1_700_000_000, 1_700_009_000, 6, "cheap >>>flights<<<"),
+            io.github.meepdong.talaria.control.PastSession("talaria_x", "Groceries", "api_server", 1_700_000_000, null, 2, conversationId = "c-2")))
+        val chat = io.github.meepdong.talaria.chat.ChatState(bots = bots)
+        val v = historyView(ControlState(past = past), chat, now)
+        assertEquals(listOf("Telegram" to "cheap flights", "Talaria" to null), v.sessions.map { it.where to it.snippet })
+        assertEquals(listOf("Hermes", "Meeting Minder", "Research"), v.whoOptions.map { it.second })
+        setContent { Box(Modifier.size(380.dp, 1000.dp)) { HistoryScreen(v, actions) } }
+        onNodeWithTag("history-query").performTextInput("flights")
+        onNodeWithTag("history-search").performClick()
+        onNodeWithTag("history-who").performClick()
+        onNodeWithTag("history-who-bot:research").performClick()
+        onNodeWithTag("past-tg_1").performClick()
+        assertEquals(listOf("load flights null", "load flights bot:research", "open-past tg_1"), actions.calls)
+    }
+
+    @Test
+    fun aSessionBeingRead() = runComposeUiTest {
+        val actions = Recorder()
+        val open = HistoryItem("tg_1", "Flights", "Telegram", "Mon 09:12", 6)
+        setContent { Box(Modifier.size(380.dp, 1000.dp)) {
+            HistoryScreen(HistoryView(open = open, messages = listOf(Triple(true, "Find flights", "09:12"), Triple(false, "Two on the 5th", "09:13"))), actions)
+        } }
+        onNodeWithText("Find flights").assertExists()
+        onNodeWithTag("history-continue").performClick()
+        assertEquals(listOf("continue tg_1"), actions.calls)
+    }
+
+    @Test
+    fun memoryIsEditedAndSavedWithAnApproval() = runComposeUiTest {
+        val actions = Recorder()
+        val v = MemoryView(notes = listOf("Prefers short answers", "Lives in Bangalore"), aboutYou = emptyList(), notesLimit = 100,
+            aboutYouLimit = 50, loaded = true, whoOptions = listOf("default" to "Hermes", "research" to "Research"))
+        setContent { Box(Modifier.size(380.dp, 1400.dp)) { androidx.compose.foundation.layout.Column { MemorySection(v, actions) } } }
+        onNodeWithTag("memory-save-memory").assertDoesNotExist()
+        onNodeWithTag("entry-remove-memory-1").performClick()
+        onNodeWithTag("entry-add-memory").performTextInput("Uses metric units")
+        onNodeWithTag("memory-save-memory").performClick()
+        onNodeWithTag("memory-who").performClick()
+        onNodeWithTag("memory-who-research").performClick()
+        assertEquals(listOf("hermes.memory.set content=Prefers short answers\n§\nUses metric units profile=default target=memory",
+            "hermes.memory profile=research"), actions.calls)
     }
 }

@@ -95,6 +95,21 @@ fun serverView(s: OpsState, deviceId: String, bots: List<Pair<String, String>> =
         skillsFoundSummary = s.reads["hermes.skill.search"]?.summary,
         searchingSkills = "hermes.skill.search" in s.busy,
         installFor = listOf("default" to "Hermes") + bots,
+        memory = if (s.catalogue.none { it.op == "hermes.memory" }) null else (s.reads["hermes.memory"]?.data as? Map<*, *>).let { d ->
+            val limits = d?.get("limits") as? Map<*, *>
+            MemoryView(
+                profile = d?.get("profile") as? String ?: "default", whoOptions = listOf("default" to "Hermes") + bots,
+                notes = (d?.get("memory") as? List<*>).orEmpty().filterIsInstance<String>(),
+                aboutYou = (d?.get("user") as? List<*>).orEmpty().filterIsInstance<String>(),
+                notesLimit = (limits?.get("memory") as? Number)?.toInt() ?: 2200, aboutYouLimit = (limits?.get("user") as? Number)?.toInt() ?: 1375,
+                loaded = d != null,
+                applying = when {
+                    s.pending.any { it.op == "hermes.memory.set" } -> "Waiting for your approval…"
+                    s.busy.any { it == "hermes.memory.set" || it == "hermes.memory" } -> "…"
+                    else -> null
+                },
+            )
+        },
         skillsApplying = when {
             s.pending.any { it.op == "hermes.skills.set" || it.op == "hermes.skill.set" } -> "Waiting for your approval…"
             s.busy.any { it == "hermes.skills.set" || it == "hermes.skill.set" } -> "Applying…"

@@ -10,6 +10,13 @@ release notes the app shows.
 - You can see when a bot is at work: its picture in the bot row gets a ring and says "working…", its chat shows as
   busy in the list, and inside its chat a line says what it's doing elsewhere (a group chat, a board task, a routine);
   tap the line to go there.
+- History (☰ → History): every conversation Hermes has had, wherever it was (Talaria, Telegram, Hermes Desktop, the
+  terminal, routines), newest first or searched, for Hermes or a bot. Open one to read it; "Continue in Talaria" makes
+  a copy you can carry on here (the original stays as it was).
+- Server page, "Hermes's memory": what Hermes (or a bot) keeps in its two notebooks, its notes and what it knows about
+  you, which it reads at the start of every chat. Edit, remove or add entries; Save asks for your approval.
+- Bot chats: hold one of your messages → Edit, to change it and have the bot answer again (what came after it is
+  rewound, in Hermes too); hold a reply → Regenerate. Hermes's own chats can't be rewound (its API keeps them whole).
 
 ## [0.2.0-beta.24] - 2026-10-07
 

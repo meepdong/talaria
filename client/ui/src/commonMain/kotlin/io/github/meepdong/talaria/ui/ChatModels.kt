@@ -154,6 +154,10 @@ data class ChatView(
     val hermesCommands: List<Command.Help> = emptyList(),
     /** Helper agents of the open bot chat's running reply (§18.7). */
     val helpers: List<HelperItem> = emptyList(),
+    /** A bot's chat with no reply running: its messages can be edited and its replies regenerated (§18.10). */
+    val canRewind: Boolean = false,
+    /** The composer edits one of the owner's messages (§18.10). */
+    val editing: Boolean = false,
     /** /status, while it's showing. */
     val status: ConversationStatusView? = null,
     /** Whether this app can hand text to other apps (Share in a message's menu). */
@@ -205,7 +209,7 @@ data class AsideItem(val id: String, val question: String, val answer: String?, 
 data class ConversationStatusView(val title: String, val lines: List<Pair<String, String>>)
 
 /** Text for the composer, heard by dictation or shared from another app. [id] tells one from the next. */
-data class Dictation(val id: Long, val text: String, val send: Boolean)
+data class Dictation(val id: Long, val text: String, val send: Boolean, val replace: Boolean = false)
 
 /** The 🎤 and 🔊 controls. */
 data class VoiceView(
