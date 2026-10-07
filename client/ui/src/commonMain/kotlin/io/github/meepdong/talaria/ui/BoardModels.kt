@@ -55,3 +55,33 @@ val BOARD_LABELS = mapOf(
     "triage" to "Ideas", "todo" to "To do", "scheduled" to "Scheduled", "ready" to "Ready to start",
     "running" to "Working on it", "blocked" to "Blocked", "review" to "To check", "done" to "Done", "archived" to "Archive",
 )
+
+/** Bots' routines (spec §18.6), on the Schedule tab below Talaria's own automations. */
+data class RoutinesView(
+    val items: List<RoutineItem> = emptyList(),
+    /** Bots a new routine can be for: (id, name). */
+    val bots: List<Pair<String, String>> = emptyList(),
+    val notice: String? = null,
+)
+
+data class RoutineItem(
+    val id: String, val botId: String,
+    /** "Meeting Minder", or "Hermes" for the owner's own assistant. */
+    val who: String,
+    val name: String, val schedule: String, val task: String, val on: Boolean,
+    /** "Tomorrow 09:00" */
+    val next: String?,
+    /** "Ran 09:00", "Failed Mon 09:00: …" */
+    val last: String?,
+    val failed: Boolean,
+    /** Its results go to the bot's chat. */
+    val toChat: Boolean,
+)
+
+/** A helper agent working for a bot right now (spec §18.7). */
+data class HelperItem(
+    val id: String, val goal: String,
+    /** "running · 3 tools · web_search" */
+    val detail: String,
+    val canSteer: Boolean,
+)

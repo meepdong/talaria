@@ -744,6 +744,7 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
         if (voice.speakingKey != null) {
             TextButton(onClick = actions::stopSpeaking, modifier = Modifier.testTag("stop-speaking")) { Text("🔊 Stop reading") }
         }
+        view.helpers.forEach { h -> HelperRow(h, actions) }
         val mentions = mentionSuggestions(text, view.bots)
         if (mentions.isNotEmpty()) {
             Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("mentions")) {

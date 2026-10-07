@@ -145,6 +145,8 @@ data class ChatView(
     val asides: List<AsideItem> = emptyList(),
     /** Hermes's own commands in the open chat (§18.3), offered after Talaria's in the / menu. */
     val hermesCommands: List<Command.Help> = emptyList(),
+    /** Helper agents of the open bot chat's running reply (§18.7). */
+    val helpers: List<HelperItem> = emptyList(),
     /** /status, while it's showing. */
     val status: ConversationStatusView? = null,
     /** Whether this app can hand text to other apps (Share in a message's menu). */

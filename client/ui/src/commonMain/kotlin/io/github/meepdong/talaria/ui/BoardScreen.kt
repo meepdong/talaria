@@ -199,3 +199,123 @@ fun UsageSection(u: UsageView, actions: TalariaActions) {
         }
     }
 }
+
+/** Bots' routines on the Schedule tab (§18.6): each with on/off, Run now and Delete; and a new one for a bot. */
+@Composable
+fun RoutinesCard(view: RoutinesView, actions: TalariaActions, modifier: Modifier = Modifier) {
+    SectionCard("Bots' routines", modifier = modifier.testTag("routines")) {
+        Text("Tasks your bots do on a schedule. Their results go to the bot's chat. Hermes Desktop shows the same ones.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        view.notice?.let { n ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(n, Modifier.weight(1f).testTag("routines-notice"), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = actions::boardDismiss) { Text("OK") }
+            }
+        }
+        if (view.items.isEmpty()) {
+            Text("None yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        view.items.forEach { r -> RoutineRow(r, actions) }
+        NewRoutine(view.bots, actions)
+    }
+}
+
+@Composable
+private fun RoutineRow(r: RoutineItem, actions: TalariaActions) {
+    var confirm by remember(r.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("routine-${r.id}")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(r.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("🤖 ${r.who} · ${r.schedule}", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            androidx.compose.material3.Switch(checked = r.on, onCheckedChange = { actions.routineSet(r.botId, r.id, if (it) "resume" else "pause") },
+                modifier = Modifier.testTag("routine-on-${r.id}"))
+        }
+        Text(r.task, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val facts = listOfNotNull(r.next?.let { "Next: $it" }, r.last)
+        if (facts.isNotEmpty()) {
+            Text(facts.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                color = if (r.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Row {
+            TextButton(onClick = { actions.routineSet(r.botId, r.id, "run") }, modifier = Modifier.testTag("routine-run-${r.id}")) { Text("Run now") }
+            if (confirm) {
+                TextButton(onClick = { confirm = false; actions.routineSet(r.botId, r.id, "remove") },
+                    modifier = Modifier.testTag("routine-delete-sure-${r.id}")) { Text("Delete it", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { confirm = false }) { Text("Keep") }
+            } else {
+                TextButton(onClick = { confirm = true }, modifier = Modifier.testTag("routine-delete-${r.id}")) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewRoutine(bots: List<Pair<String, String>>, actions: TalariaActions) {
+    var open by remember { mutableStateOf(false) }
+    var bot by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var picking by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var schedule by remember { mutableStateOf("") }
+    var task by remember { mutableStateOf("") }
+    if (!open) {
+        TextButton(onClick = { open = true }, enabled = bots.isNotEmpty(), modifier = Modifier.testTag("routine-new")) { Text("+ New routine") }
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("routine-form")) {
+        Box {
+            OutlinedButton(onClick = { picking = true }, modifier = Modifier.testTag("routine-bot")) { Text("Bot: " + (bot?.second ?: "pick one")) }
+            DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
+                bots.forEach { b ->
+                    DropdownMenuItem(text = { Text(b.second) }, modifier = Modifier.testTag("routine-bot-${b.first}"),
+                        onClick = { bot = b; picking = false })
+                }
+            }
+        }
+        OutlinedTextField(name, { name = it.take(200) }, singleLine = true, placeholder = { Text("Name, e.g. Monday inbox sweep") },
+            modifier = Modifier.fillMaxWidth().testTag("routine-name"))
+        OutlinedTextField(schedule, { schedule = it.take(200) }, singleLine = true,
+            placeholder = { Text("When: weekdays at 9am, every 2h, every monday 8am") }, modifier = Modifier.fillMaxWidth().testTag("routine-when"))
+        OutlinedTextField(task, { task = it.take(8000) }, placeholder = { Text("What to do each time") },
+            modifier = Modifier.fillMaxWidth().testTag("routine-task"))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val b = bot
+            Button(onClick = { if (b != null) actions.routineAdd(b.first, name, schedule, task); open = false; name = ""; schedule = ""; task = "" },
+                enabled = b != null && name.isNotBlank() && schedule.isNotBlank() && task.isNotBlank(),
+                modifier = Modifier.testTag("routine-add")) { Text("Add routine") }
+            TextButton(onClick = { open = false }) { Text("Cancel") }
+        }
+    }
+}
+
+/** A helper agent working for the bot (§18.7): what it's doing, a note for it, Stop. */
+@Composable
+fun HelperRow(h: HelperItem, actions: TalariaActions) {
+    var noting by remember(h.id) { mutableStateOf(false) }
+    var note by remember(h.id) { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("helper-${h.id}"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("🧩 ${h.goal}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(h.detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (h.canSteer) TextButton(onClick = { noting = !noting }, modifier = Modifier.testTag("helper-note-${h.id}")) { Text("Note") }
+                TextButton(onClick = { actions.helperStop(h.id) }, modifier = Modifier.testTag("helper-stop-${h.id}")) { Text("Stop") }
+            }
+            if (noting) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(note, { note = it.take(4000) }, singleLine = true, placeholder = { Text("A note for this helper") },
+                        modifier = Modifier.weight(1f).testTag("helper-text-${h.id}"))
+                    TextButton(onClick = { actions.helperSteer(h.id, note); note = ""; noting = false }, enabled = note.isNotBlank(),
+                        modifier = Modifier.testTag("helper-send-${h.id}")) { Text("Send") }
+                }
+            }
+        }
+    }
+}

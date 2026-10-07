@@ -93,4 +93,37 @@ class ControlRepositoryTest {
         assertEquals("qwen/qwen3.8-flash", u.byModel.single().first)
         assertNull(repo.state.value.notice)
     }
+
+    @Test
+    fun routinesAndHelpers() = test { scope ->
+        val api = FakeApi()
+        val routine = """{"id":"r1","bot_id":"bot:research","name":"Weekly digest","schedule":"every monday 8am","task":"Digest",
+            "enabled":true,"state":"scheduled","next_run_at":1700100000,"to_chat":true}"""
+        api.answers["routines.list"] = { json("""{"routines":[$routine],"available":true}""") }
+        api.answers["routines.set"] = { p ->
+            if (p["action"].toString() == "\"remove\"") json("{}") else json("""{"routine":${routine.replace("\"enabled\":true", "\"enabled\":false")}}""")
+        }
+        api.answers["helpers.stop"] = { json("""{"stopped":true}""") }
+        val repo = ControlRepository(scope, api).also { it.start() }
+        repo.loadRoutines()
+        advanceUntilIdle()
+        assertEquals(listOf("Weekly digest"), repo.state.value.routines!!.map { it.name })
+        repo.setRoutine("bot:research", "r1", "pause")
+        advanceUntilIdle()
+        assertEquals(false, repo.state.value.routines!!.single().enabled)
+        repo.setRoutine("bot:research", "r1", "remove")
+        advanceUntilIdle()
+        assertEquals(emptyList(), repo.state.value.routines)
+
+        api.notifications.emit(json("""{"jsonrpc":"2.0","tnp":0,"method":"helpers.update","params":{"conversation_id":"c-1",
+            "helpers":[{"id":"sa-1","goal":"Find cafes","status":"running","tools":2,"last_tool":"web_search","can_steer":true}]}}"""))
+        advanceUntilIdle()
+        assertEquals("Find cafes", repo.state.value.helpers["c-1"]!!.single().goal)
+        repo.stopHelper("c-1", "sa-1")
+        advanceUntilIdle()
+        assertEquals(emptyList(), repo.state.value.helpers["c-1"])
+        api.notifications.emit(json("""{"jsonrpc":"2.0","tnp":0,"method":"helpers.update","params":{"conversation_id":"c-1","helpers":[]}}"""))
+        advanceUntilIdle()
+        assertNull(repo.state.value.helpers["c-1"])
+    }
 }

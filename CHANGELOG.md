@@ -11,6 +11,11 @@ release notes the app shows.
   shows). Add a task and pick a bot ("Add and start"): the bot works on it by itself and its notes show on the
   card. Tap a task to see its details, move it, give it to another bot or comment on it. The board updates by itself
   while it's open.
+- Schedule tab: "Bots' routines", the tasks your bots do on a schedule (Hermes's own scheduled jobs; Hermes Desktop
+  shows the same). Turn one off or on, run it now, delete it, or add one: pick a bot, a name, when ("weekdays at 9am",
+  "every 2h", "every monday 8am") and what to do. Its results go to the bot's chat.
+- Bot chats: while a bot works, the helper agents it starts show above the message box, with what each is doing;
+  give one a note or stop it.
 - Server page: "Hermes's usage", what Hermes spent over the last 7 or 30 days (all of it: chats, Talk, bots,
   automations, Hermes Desktop), day by day and by model.
 - Hermes's own commands work in Talaria: in a chat with Hermes or a bot, type / to see Talaria's commands and then

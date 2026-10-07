@@ -16,6 +16,8 @@ import io.github.meepdong.talaria.control.BoardColumn
 import io.github.meepdong.talaria.control.BoardComment
 import io.github.meepdong.talaria.control.BoardTask
 import io.github.meepdong.talaria.control.ControlState
+import io.github.meepdong.talaria.control.Helper
+import io.github.meepdong.talaria.control.Routine
 import io.github.meepdong.talaria.control.Usage
 import io.github.meepdong.talaria.control.UsageReport
 import kotlin.test.Test
@@ -39,6 +41,10 @@ class BoardScreenTest {
         override fun boardGive(taskId: String, assignee: String) { calls += "give $taskId $assignee" }
         override fun boardComment(taskId: String, text: String) { calls += "comment $taskId $text" }
         override fun loadUsage(days: Int) { calls += "usage $days" }
+        override fun routineAdd(botId: String, name: String, schedule: String, task: String) { calls += "routine $botId $name|$schedule|$task" }
+        override fun routineSet(botId: String, routineId: String, action: String) { calls += "set $botId $routineId $action" }
+        override fun helperSteer(helperId: String, text: String) { calls += "steer $helperId $text" }
+        override fun helperStop(helperId: String) { calls += "stop $helperId" }
     }
 
     private val bots = listOf(Bot("bot:meetingminder", "Meeting Minder", "meetingminder"), Bot("bot:research", "Research", "research"))
@@ -109,5 +115,57 @@ class BoardScreenTest {
         setContent { Box(Modifier.size(380.dp, 800.dp)) { TodosTab(TodosView(), BoardView(), Recorder()) } }
         onNodeWithTag("show-board").assertDoesNotExist()
         onNodeWithTag("todos-page").assertExists()
+    }
+
+    private val zone = java.time.ZoneId.of("Asia/Kolkata")
+    private val routines = ControlState(routines = listOf(
+        Routine("r1", "bot:research", "Weekly digest", "every monday 8am", "Digest the week's news", true, "scheduled",
+            nextRunAt = 1_700_012_000, lastRunAt = 1_700_005_000, lastStatus = "error", lastError = "sandbox down", toChat = true),
+        Routine("r2", "assistant", "Flight watch", "0 */6 * * *", "Check prices", false, "paused")),
+        helpers = mapOf("c-1" to listOf(Helper("sa-1", "Find three cafes", "running", 2, "web_search", canSteer = true))))
+
+    @Test
+    fun routinesMapping() {
+        val v = routinesView(routines, bots, now, zone)!!
+        val r = v.items[0]
+        assertEquals("Research" to "in 33 min", r.who to r.next)
+        assertEquals("Failed 05:06: sandbox down", r.last)
+        assertEquals(true, r.failed)
+        assertEquals("Hermes" to false, v.items[1].who to v.items[1].on)
+        assertEquals(null, routinesView(ControlState(), bots, now, zone), "no routines on this bridge")
+        assertEquals(listOf(HelperItem("sa-1", "Find three cafes", "running · 2 tools · web_search", true)), helperItems(routines, "c-1"))
+    }
+
+    @Test
+    fun routinesAndHelpersOnAPhone() = runComposeUiTest {
+        val actions = Recorder()
+        val v = routinesView(routines, bots, now, zone)!!
+        val helpers = helperItems(routines, "c-1")
+        setContent {
+            Box(Modifier.size(380.dp, 1600.dp)) {
+                androidx.compose.foundation.layout.Column {
+                    RoutinesCard(v, actions)
+                    helpers.forEach { HelperRow(it, actions) }
+                }
+            }
+        }
+        onNodeWithTag("routine-on-r1").performClick()
+        onNodeWithTag("routine-run-r2").performClick()
+        onNodeWithTag("routine-delete-r1").performClick()
+        onNodeWithTag("routine-delete-sure-r1").performClick()
+        onNodeWithTag("routine-new").performClick()
+        onNodeWithTag("routine-bot").performClick()
+        onNodeWithTag("routine-bot-bot:meetingminder").performClick()
+        onNodeWithTag("routine-name").performTextInput("Monday recap")
+        onNodeWithTag("routine-when").performTextInput("every monday 9am")
+        onNodeWithTag("routine-task").performTextInput("Recap last week's meetings")
+        onNodeWithTag("routine-add").performClick()
+        onNodeWithTag("helper-note-sa-1").performClick()
+        onNodeWithTag("helper-text-sa-1").performTextInput("Only vegan")
+        onNodeWithTag("helper-send-sa-1").performClick()
+        onNodeWithTag("helper-stop-sa-1").performClick()
+        assertEquals(listOf("set bot:research r1 pause", "set assistant r2 run", "set bot:research r1 remove",
+            "routine bot:meetingminder Monday recap|every monday 9am|Recap last week's meetings", "steer sa-1 Only vegan", "stop sa-1"),
+            actions.calls)
     }
 }

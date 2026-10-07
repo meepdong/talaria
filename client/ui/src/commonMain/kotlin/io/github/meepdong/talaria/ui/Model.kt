@@ -416,6 +416,12 @@ interface TalariaActions {
     fun boardComment(taskId: String, text: String) {}
     fun boardDismiss() {}
     fun loadUsage(days: Int) {}
+
+    // bots' routines (§18.6) and helper agents (§18.7)
+    fun routineAdd(botId: String, name: String, schedule: String, task: String) {}
+    fun routineSet(botId: String, routineId: String, action: String) {}
+    fun helperSteer(helperId: String, text: String) {}
+    fun helperStop(helperId: String) {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 

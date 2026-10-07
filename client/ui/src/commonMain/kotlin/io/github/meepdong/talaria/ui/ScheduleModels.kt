@@ -9,6 +9,8 @@ data class ScheduleView(
     /** Why the calendar is empty: not set up, or couldn't be read. */
     val calendarNote: String? = null,
     val automations: List<AutomationItem> = emptyList(),
+    /** Bots' routines (§18.6); null when the bridge has none. */
+    val routines: RoutinesView? = null,
     val loaded: Boolean = false,
     val error: String? = null,
     val describing: Boolean = false,

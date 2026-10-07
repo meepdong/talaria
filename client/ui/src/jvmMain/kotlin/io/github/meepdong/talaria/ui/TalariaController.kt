@@ -594,6 +594,7 @@ class TalariaController(
         }
         if (tab == Tab.FILES) files?.load()
         if (tab == Tab.HOME || tab == Tab.SCHEDULE) schedule?.refresh()
+        if (tab == Tab.SCHEDULE) control?.loadRoutines()
     }
 
     override fun setMenuOpen(open: Boolean) {
@@ -1448,6 +1449,14 @@ class TalariaController(
     override fun boardComment(taskId: String, text: String) { control?.comment(taskId, text) }
     override fun boardDismiss() { control?.dismissNotice() }
     override fun loadUsage(days: Int) { control?.loadUsage(days) }
+    override fun routineAdd(botId: String, name: String, schedule: String, task: String) { control?.addRoutine(botId, name, schedule, task) }
+    override fun routineSet(botId: String, routineId: String, action: String) { control?.setRoutine(botId, routineId, action) }
+    override fun helperSteer(helperId: String, text: String) {
+        chat?.state?.value?.openId?.let { control?.steerHelper(it, helperId, text) }
+    }
+    override fun helperStop(helperId: String) {
+        chat?.state?.value?.openId?.let { control?.stopHelper(it, helperId) }
+    }
 
     override fun refreshServer() {
         ops?.refresh()
@@ -1647,6 +1656,7 @@ class TalariaController(
                     x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare,
                         openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
                     .withRooms(l.rooms, x.page.roomOpen, l.chat?.bots.orEmpty(), now)
+                    .let { v -> v.copy(helpers = helperItems(l.control, l.chat?.openId)) }
                 Screen.Chat(
                     view, withBalance,
                     undo = x.page.undo,
@@ -1657,7 +1667,7 @@ class TalariaController(
                     menu = menuView(view, withBalance, l.chat?.models, VERSION).withUpdate(l.updates, installer != null),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice, x.fileTask.progress),
-                    schedule = scheduleView(l.schedule, now),
+                    schedule = scheduleView(l.schedule, now).copy(routines = routinesView(l.control, l.chat?.bots.orEmpty(), now)),
                     todos = todosView(todosShown, view, now),
                     board = boardView(l.control, x.page.board, l.chat?.bots.orEmpty(), now),
                 )

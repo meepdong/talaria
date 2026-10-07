@@ -63,3 +63,35 @@ private fun dayLabel(day: String): String = runCatching {
     val d = LocalDate.parse(day)
     d.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, Locale.ENGLISH) + " " + d.dayOfMonth
 }.getOrDefault(day)
+
+/** Bots' routines for the Schedule tab (§18.6); null when the bridge has none. */
+fun routinesView(s: ControlState?, bots: List<Bot>, nowMs: Long, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): RoutinesView? {
+    val routines = s?.routines ?: return null
+    val names = mapOf("assistant" to "Hermes") + bots.associate { it.id to it.name }
+    val today = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    return RoutinesView(
+        items = routines.map { r ->
+            val last = r.lastRunAt?.let { java.time.Instant.ofEpochSecond(it).atZone(zone) }?.let { at ->
+                val t = if (at.toLocalDate() == today) HM_FMT.format(at) else DAY_HM_FMT.format(at)
+                if (r.lastStatus == "error") "Failed $t" + (r.lastError?.let { ": ${it.take(120)}" } ?: "") else "Ran $t"
+            }
+            RoutineItem(r.id, r.botId, names[r.botId] ?: r.botId.removePrefix("bot:"), r.name, r.schedule, r.task,
+                on = r.enabled && r.state != "paused",
+                next = r.nextRunAt?.takeIf { r.enabled && r.state != "completed" }?.let { untilLabel(it * 1000, nowMs, zone) },
+                last = last, failed = r.lastStatus == "error", toChat = r.toChat)
+        },
+        bots = bots.map { it.id to it.name },
+        notice = s.notice,
+    )
+}
+
+/** A bot's helper agents for the open chat (§18.7). */
+fun helperItems(s: ControlState?, conversationId: String?): List<HelperItem> =
+    conversationId?.let { s?.helpers?.get(it) }.orEmpty().map { h ->
+        HelperItem(h.id, h.goal.ifBlank { "Helping" },
+            listOfNotNull(h.status.ifBlank { null }, if (h.tools > 0) "${h.tools} tools" else null, h.lastTool).joinToString(" · "),
+            h.canSteer)
+    }
+
+private val HM_FMT = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+private val DAY_HM_FMT = java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ENGLISH)

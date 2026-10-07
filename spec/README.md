@@ -677,3 +677,47 @@ doorway.
 Schemas: `board.get`, `board.get.result`, `board.task`, `board.task.result`, `board.add`, `board.add.result`,
 `board.update`, `board.update.result`, `board.comment`, `board.comment.result`, `board.changed`, `usage.get`,
 `usage.get.result`.
+
+### 18.6 Bots' routines
+
+Hermes runs **routines**: a task on a schedule, for a bot or for the owner's own assistant (Hermes's cron jobs, one
+store per profile). Talaria's own automations (§14) are routines of the owner's assistant too; they are left out here
+because §14 shows them. Hermes Desktop shows the same routines.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `routines.list` | request | `{}` → `{routines, available}` |
+| `routines.add` | request | `{bot_id, name, schedule, task}` → `{routine}` |
+| `routines.set` | request | `{bot_id, routine_id, action}` → `{routine?}` |
+
+A **routine** is `{id, bot_id, name, schedule, task, enabled, state, next_run_at?, last_run_at?, last_status?,
+last_error?, to_chat}`: `bot_id` as in §18.1 or `"assistant"`, `schedule` as Hermes shows it, `task` what it does (the
+first 2000 characters), `state` Hermes's word (`scheduled`, `paused`, `running`, `completed`…), times in Unix seconds,
+`last_status` `ok` or `error`, and `to_chat` true when its results go to the bot's chat (§18.1). `routines.add` makes a
+routine for a bot (not `"assistant"`: those are §14's automations) whose results go to the bot's chat; `schedule` is
+Hermes's own words: `every 30m`, `every 2h`, `weekdays at 9am`, `every monday 8am`, a cron line (`0 9 * * *`) or an ISO
+time for once. `routines.set` `action` is `pause`, `resume`, `run` (now, once, besides its schedule) or `remove`.
+
+Errors: `NOT_FOUND` for an unknown routine or bot; `INVALID_PARAMS` for a bad field or a schedule Hermes doesn't
+understand (its words say why); `AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a doorway.
+
+### 18.7 Helper agents
+
+During a bot's reply the bot may start **helper agents** (Hermes's delegation: smaller agents doing part of the job in
+parallel). While a turn in a bot's chat runs, the bridge looks at its helpers every few seconds and tells devices.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `helpers.update` | notification | `{conversation_id, helpers}` |
+| `helpers.steer` | request | `{conversation_id, helper_id, text}` → `{queued}` |
+| `helpers.stop` | request | `{conversation_id, helper_id}` → `{stopped}` |
+
+A **helper** is `{id, goal, status, tools, last_tool?, model?, started_at?, can_steer}`. `helpers.update` is sent when
+the list changed, and once with an empty list when the turn ended. `helpers.steer` passes a note to the helper after
+its current step (`queued` false: it was too late); `helpers.stop` stops it (`stopped` false: it had already ended).
+
+Errors: `NOT_FOUND` for a conversation that isn't a bot's chat or has no turn running; `AGENT_UNAVAILABLE` when the
+doorway is down.
+
+Schemas: `routines.list`, `routines.list.result`, `routines.add`, `routines.add.result`, `routines.set`,
+`routines.set.result`, `helpers.update`, `helpers.steer`, `helpers.steer.result`, `helpers.stop`, `helpers.stop.result`.

@@ -77,12 +77,14 @@ fun ScheduleScreen(schedule: ScheduleView, actions: TalariaActions) {
                     Column(Modifier.weight(1.4f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         AutomationsCard(schedule, actions, Modifier.fillMaxWidth())
                         NewAutomationCard(schedule, actions, Modifier.fillMaxWidth())
+                        schedule.routines?.let { RoutinesCard(it, actions, Modifier.fillMaxWidth()) }
                     }
                 }
             } else {
                 AgendaCard(schedule, Modifier.fillMaxWidth())
                 AutomationsCard(schedule, actions, Modifier.fillMaxWidth())
                 NewAutomationCard(schedule, actions, Modifier.fillMaxWidth())
+                schedule.routines?.let { RoutinesCard(it, actions, Modifier.fillMaxWidth()) }
             }
         }
     }
