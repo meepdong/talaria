@@ -49,6 +49,10 @@ data class ServerView(
     val hasSkills: Boolean = false,
     val skillsSummary: String = "",
     val skills: List<SkillRow> = emptyList(),
+    /** The server takes several skill changes at once (hermes.skills.set): switches stage, Apply sends them. */
+    val skillsBatch: Boolean = false,
+    /** A skills change is waiting for approval or running: the switches are locked and this says why. */
+    val skillsApplying: String? = null,
 )
 
 data class SkillRow(val name: String, val description: String, val category: String, val enabled: Boolean)

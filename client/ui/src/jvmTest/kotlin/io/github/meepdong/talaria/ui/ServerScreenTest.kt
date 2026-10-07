@@ -7,6 +7,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
@@ -67,6 +68,48 @@ class ServerScreenTest {
         onNodeWithTag("skill-gif-search").performScrollTo().performClick()
         onNodeWithTag("skill-himalaya").performScrollTo().performClick()
         assertEquals(listOf("hermes.skill.set enabled=on skill=gif-search", "hermes.skill.set enabled=off skill=himalaya"), actions.calls)
+    }
+
+    private fun skillsState(pendingOp: String? = null) = state.copy(
+        pending = listOfNotNull(pendingOp?.let { OpsApproval("op-9", it, "{}", 1, "For Talaria, turn on gif-search", "device:D1", 9_999_999_999) }),
+        catalogue = listOf(OpInfo("hermes.skills", 0, "Hermes's skills", emptyMap()), OpInfo("hermes.skills.set", 1, "Change several skills", emptyMap())),
+        reads = state.reads + ("hermes.skills" to outcome("hermes.skills", "1 of 3 skills on for Talaria", listOf(
+            mapOf("name" to "himalaya", "description" to "Email", "category" to "email", "enabled" to true),
+            mapOf("name" to "gif-search", "description" to "", "category" to "media", "enabled" to false),
+            mapOf("name" to "obsidian", "description" to "", "category" to "notes", "enabled" to false)))))
+
+    @Test
+    fun skillSwitchesWaitForApplyAndSendOneChange() = runComposeUiTest {
+        // #52: switching only marks changes; Apply sends them all as one operation (one approval, one restart)
+        val actions = Recorder()
+        var view by mutableStateOf(serverView(skillsState(), "D1"))
+        setContent { TalariaTheme { ServerScreen(view, actions) } }
+        onNodeWithTag("skill-gif-search").performScrollTo().performClick()
+        onNodeWithTag("skill-himalaya").performScrollTo().performClick()
+        onNodeWithTag("skill-obsidian").performScrollTo().performClick()
+        onNodeWithTag("skill-obsidian").performScrollTo().performClick()  // and back: not a change
+        assertEquals(emptyList(), actions.calls)
+        onNodeWithText("2 changes not applied yet").performScrollTo().assertExists()
+        onNodeWithTag("skills-apply").performScrollTo().performClick()
+        assertEquals(listOf("hermes.skills.set changes=gif-search=on,himalaya=off"), actions.calls)
+
+        view = serverView(skillsState(pendingOp = "hermes.skills.set"), "D1")  // the approval is out: locked
+        waitForIdle()
+        onNodeWithTag("skills-applying").performScrollTo().assertTextContains("Waiting for your approval", substring = true)
+        onNodeWithTag("skills-pending").assertDoesNotExist()
+        onNodeWithTag("skill-obsidian").performScrollTo().assertIsNotEnabled()
+        onNodeWithTag("skill-obsidian").performClick()
+        assertEquals(1, actions.calls.size)
+    }
+
+    @Test
+    fun undoDropsTheMarkedChanges() = runComposeUiTest {
+        val actions = Recorder()
+        setContent { TalariaTheme { ServerScreen(serverView(skillsState(), "D1"), actions) } }
+        onNodeWithTag("skill-gif-search").performScrollTo().performClick()
+        onNodeWithTag("skills-undo").performScrollTo().performClick()
+        onNodeWithTag("skills-pending").assertDoesNotExist()
+        assertEquals(emptyList(), actions.calls)
     }
 
     @Test

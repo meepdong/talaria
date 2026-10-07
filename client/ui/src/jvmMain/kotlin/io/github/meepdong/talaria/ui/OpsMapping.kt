@@ -78,6 +78,13 @@ fun serverView(s: OpsState, deviceId: String): ServerView {
         hasSkills = s.catalogue.any { it.op == "hermes.skills" },
         skillsSummary = skills?.summary.orEmpty(),
         skills = skillRows,
+        skillsBatch = s.catalogue.any { it.op == "hermes.skills.set" },
+        skillsApplying = when {
+            s.pending.any { it.op == "hermes.skills.set" || it.op == "hermes.skill.set" } -> "Waiting for your approval…"
+            s.busy.any { it == "hermes.skills.set" || it == "hermes.skill.set" } -> "Applying…"
+            "hermes.skills" in s.busy -> "Checking Hermes's skills…"
+            else -> null
+        },
     )
 }
 

@@ -237,8 +237,10 @@ class OpsRepository(
 
         /** After these finish, the Server page's reads are out of date. */
         val REFRESH_AFTER = setOf("service.restart", "docker.restart", "bridge.update", "disk.cleanup", "apt.upgrade",
-            "hermes.skill.set")
+            "hermes.skill.set", SKILLS_SET)
         /** Hermes's skills for Talaria, listed when the server offers it (§16). */
         const val SKILLS = "hermes.skills"
+        /** Several skill changes, one approval and one restart (#52). */
+        const val SKILLS_SET = "hermes.skills.set"
     }
 }

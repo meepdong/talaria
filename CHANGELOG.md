@@ -12,6 +12,9 @@ release notes the app shows.
   answers you itself; the job shows as a card in that bot's chat.
 
 ### Fixed
+- Server page, Hermes's skills: switching now only marks a change; an Apply button sends all of them as one
+  approval and one Hermes restart (it used to restart Hermes for every switch, and a switch tapped again while it
+  applied asked again). While it waits for approval or applies, the switches are locked and say so.
 - Opening a bot made in Hermes Desktop failed ("The bot's chat isn't available"): Talaria now finds the bot's existing
   chat the way Hermes reports it.
 

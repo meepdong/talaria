@@ -277,3 +277,34 @@ async def test_hermes_skills_are_listed_and_switched_for_talaria(tmp_path, regis
 
     with pytest.raises(Exception):
         await d.prepare("hermes.skill.set", {"skill": "not-installed", "enabled": "on"}, "device:X")
+
+
+async def test_several_skills_change_with_one_approval_and_one_restart(tmp_path, registry_db, clock):
+    """#52: the Server page sends all its switch changes as one hermes.skills.set."""
+    for cat, name in (("email", "himalaya"), ("media", "gif-search"), ("note-taking", "obsidian")):
+        d = tmp_path / "skills" / cat / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n---\n")
+    hermes = "/home/hermes/.local/bin/hermes"
+    runner = FakeRunner({(hermes, "config", "get"): Run(0, "  - gif-search\n  - airtable\n")})
+    d = OpsDaemon(registry_db, AuditLog(tmp_path / "a.jsonl"), runner, clock, hermes_home=tmp_path)
+    ops = {o["op"]: o for o in (await d.handle({"cmd": "catalogue"}))["ops"]}
+    assert ops["hermes.skills.set"]["tier"] == 1
+    prepared = await d.prepare("hermes.skills.set", {"changes": "gif-search=on,obsidian=off,himalaya=on"}, "device:X")
+    assert prepared["summary"] == ("For Talaria, turn on gif-search, himalaya; turn off obsidian "
+                                   "(Hermes restarts once; a reply in progress stops)")
+    result = (await d.handle({"cmd": "execute", "request_id": prepared["request_id"], "device_id": PHONE_ID,
+                              "choice": "once", "sig": sign(prepared)}))["result"]
+    assert result["ok"] and "3 skill changes (2 on, 1 off) for Talaria; Hermes is restarting once" in result["summary"]
+    sets = [a for a in runner.argvs() if a[:3] == [hermes, "config", "set"]]
+    assert sets == [[hermes, "config", "set", "skills.platform_disabled.api_server", '["airtable", "obsidian"]']]
+    restarts = [a for a in runner.argvs() if "restart" in a]
+    assert restarts == [["systemctl", "--user", "-M", "hermes@", "restart", "--no-block", "hermes-gateway.service"]]
+
+    for bad in ("gif-search", "gif-search=maybe", "a=on;rm -rf /=off", "", "x=on," * 101):
+        with pytest.raises(Exception):
+            await d.prepare("hermes.skills.set", {"changes": bad}, "device:X")
+    unknown = await d.prepare("hermes.skills.set", {"changes": "not-installed=on"}, "device:X")
+    out = (await d.handle({"cmd": "execute", "request_id": unknown["request_id"], "device_id": PHONE_ID,
+                           "choice": "once", "sig": sign(unknown)}))["result"]
+    assert not out["ok"] and out["summary"] == "no skill called not-installed"

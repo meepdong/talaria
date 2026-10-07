@@ -372,7 +372,7 @@ PROTOCOL §10.8 describes them. `talaria-ops` (root, `bridge/src/talaria_bridge/
 
 Any failure is `{"error": "<sentence>"}`. `params_json` is `json.dumps(params, sort_keys=True, separators=(",", ":"))`. A prepared request lives 120 s and is used at most once. Every run, of any tier, is appended to `/var/log/talaria-ops/audit.jsonl`.
 
-**Hermes's skills.** `hermes.skills` (tier 0) lists the skills installed for the agent, `data` `[{name, description, category, enabled}]`, where `enabled` means it is loaded for Talaria (it isn't in Hermes's `skills.platform_disabled.api_server`). `hermes.skill.set {skill, enabled: "on"|"off"}` (tier 1) changes that with `hermes config set` and restarts Hermes, which stops a reply in progress. Devices show them as switches on the Server page.
+**Hermes's skills.** `hermes.skills` (tier 0) lists the skills installed for the agent, `data` `[{name, description, category, enabled}]`, where `enabled` means it is loaded for Talaria (it isn't in Hermes's `skills.platform_disabled.api_server`). `hermes.skill.set {skill, enabled: "on"|"off"}` (tier 1) changes that with `hermes config set` and restarts Hermes, which stops a reply in progress. `hermes.skills.set {changes}` (tier 1) does several at once with one restart: `changes` is `name=on|off` pairs separated by commas (at most 100), every name one of the listed skills. Devices show the skills as switches on the Server page; switching only marks a change, and an Apply button sends them all as one `hermes.skills.set`, so one approval and one restart cover them. While that approval waits or the operation runs, the switches are locked and say so.
 
 ### 16.1 Terminals
 

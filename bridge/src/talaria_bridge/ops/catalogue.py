@@ -433,6 +433,46 @@ async def hermes_skill_set(ctx: Context, p: dict) -> Outcome:
     return _done(restart, f"{name} is {'on' if on else 'off'} for Talaria; Hermes is restarting")
 
 
+SKILL_CHANGES = r"[A-Za-z0-9._-]{1,80}=(on|off)(,[A-Za-z0-9._-]{1,80}=(on|off)){0,99}"
+
+
+def _skill_changes(text: str) -> dict[str, bool]:
+    return {name: state == "on" for name, _, state in (part.partition("=") for part in text.split(","))}
+
+
+async def hermes_skills_set(ctx: Context, p: dict) -> Outcome:
+    """Several skills on or off for Talaria with one config change and one Hermes restart (#52)."""
+    off = await _skills_off(ctx)
+    if off is None:
+        return Outcome(False, "couldn't read Hermes's skills settings", "", None)
+    changes = _skill_changes(p["changes"])
+    known = set(await _skill_names(ctx))
+    unknown = sorted(n for n in changes if n not in known)
+    if unknown:
+        return Outcome(False, f"no skill called {', '.join(unknown)}", "", None)
+    new = set(off)
+    for name, on in changes.items():
+        (new.discard if on else new.add)(name)
+    if sorted(new) == sorted(off):
+        return Outcome(True, "nothing to change: the skills were already like that", "", 0)
+    run = await ctx.run([HERMES_CLI, "config", "set", SKILLS_OFF, json.dumps(sorted(new))], user="hermes", timeout=60)
+    if run.exit_code != 0:
+        return _done(run, "changing the skills")
+    kind, unit = SERVICES["hermes-gateway"]
+    restart = await ctx.run([*_systemctl(kind), "restart", "--no-block", unit], timeout=30)
+    ons = sum(1 for on in changes.values() if on)
+    return _done(restart, f"{len(changes)} skill change{'s' if len(changes) != 1 else ''} ({ons} on, "
+                          f"{len(changes) - ons} off) for Talaria; Hermes is restarting once")
+
+
+def _skills_summary(p: dict) -> str:
+    changes = _skill_changes(p["changes"])
+    on = [n for n, v in changes.items() if v]
+    off = [n for n, v in changes.items() if not v]
+    parts = ([f"turn on {', '.join(on)}"] if on else []) + ([f"turn off {', '.join(off)}"] if off else [])
+    return ("For Talaria, " + "; ".join(parts) + " (Hermes restarts once; a reply in progress stops)")[:500]
+
+
 async def _tmux_names(ctx: Context) -> list[str]:
     return await ctx.terminals.names() if ctx.terminals is not None else []
 
@@ -513,6 +553,8 @@ OPS: dict[str, Op] = {op.name: op for op in [
     Op("hermes.skill.set", 1, "Turn a skill on or off", hermes_skill_set,
        {"skill": Param("string", choices=_skill_names), "enabled": Param("string", enum=["on", "off"])},
        lambda p: f"Turn the skill {p['skill']} {p['enabled']} for Talaria (Hermes restarts; a reply in progress stops)"),
+    Op("hermes.skills.set", 1, "Change several skills", hermes_skills_set,
+       {"changes": Param("string", pattern=SKILL_CHANGES, max_length=8200)}, _skills_summary),
     Op("tmux.sessions", 0, "Terminal sessions", tmux_sessions),
     Op("terminal.watch", 1, "Watch a terminal", terminal_watch, {"session": Param("string", choices=_tmux_names)},
        lambda p: f"Watch the tmux session {p['session']} on this device for up to 30 minutes"),

@@ -23,6 +23,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -130,18 +131,43 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
                 Text(view.skillsSummary.ifEmpty { "…" } + ". Fewer skills make each reply quicker and cheaper; a change restarts Hermes.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("skills-summary"))
+                // switches only mark changes; Apply sends them as one operation: one approval, one restart (#52)
+                var staged by remember { mutableStateOf(mapOf<String, Boolean>()) }
+                val live = view.skills.associate { it.name to it.enabled }
+                val changes = staged.filter { (name, on) -> live[name] != null && live[name] != on }  // not done yet
+                val locked = view.skillsApplying != null
+                view.skillsApplying?.let {
+                    Text("⏳ $it Hermes restarts once when it's applied.", style = MaterialTheme.typography.bodySmall,
+                        color = Brand.Brass, modifier = Modifier.testTag("skills-applying"))
+                }
+                if (changes.isNotEmpty() && !locked) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("skills-pending")) {
+                        Text("${changes.size} change${if (changes.size != 1) "s" else ""} not applied yet",
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { staged = emptyMap() }, modifier = Modifier.testTag("skills-undo")) { Text("Undo") }
+                        Button(onClick = {
+                            actions.serverRun("hermes.skills.set", mapOf("changes" to
+                                changes.entries.sortedBy { it.key }.joinToString(",") { (n, on) -> "$n=${if (on) "on" else "off"}" }))
+                        }, modifier = Modifier.testTag("skills-apply")) { Text("Apply") }
+                    }
+                }
                 view.skills.forEachIndexed { i, k ->
                     if (i > 0) HorizontalDivider()
+                    val shown = changes[k.name] ?: k.enabled
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
                         Column(Modifier.weight(1f)) {
-                            Text(k.name)
+                            Text(k.name + if (k.name in changes) " •" else "")
                             if (k.description.isNotEmpty()) {
                                 Text(k.description, style = MaterialTheme.typography.bodySmall, maxLines = 2,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        Switch(checked = k.enabled, modifier = Modifier.testTag("skill-${k.name}"), onCheckedChange = { on ->
-                            actions.serverRun("hermes.skill.set", mapOf("skill" to k.name, "enabled" to if (on) "on" else "off"))
+                        Switch(checked = shown, enabled = !locked, modifier = Modifier.testTag("skill-${k.name}"), onCheckedChange = { on ->
+                            if (view.skillsBatch) {
+                                staged = if (on == k.enabled) staged - k.name else staged + (k.name to on)
+                            } else {
+                                actions.serverRun("hermes.skill.set", mapOf("skill" to k.name, "enabled" to if (on) "on" else "off"))
+                            }
                         })
                     }
                 }
