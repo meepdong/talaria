@@ -272,9 +272,16 @@ class Bots:
             name = p.get("name") if isinstance(p, dict) else None
             if not isinstance(name, str) or not PROFILE_RE.match(name) or p.get("is_default") or name == "default":
                 continue
-            bot = {"id": bot_id(name), "name": str(p.get("display_name") or name)[:100], "profile": name,
+            # Hermes Desktop keeps a bot's title in front of its description ("ChainMail — Use for: …") and leaves
+            # display_name empty; profiles.list doesn't carry the title itself
+            desc = p.get("description") if isinstance(p.get("description"), str) else ""
+            title, sep, rest = desc.partition(" — ")
+            title = title.strip() if sep and 0 < len(title.strip()) <= 60 else ""
+            bot = {"id": bot_id(name), "name": str(p.get("display_name") or title or name)[:100], "profile": name,
                    "has_avatar": bool(p.get("has_avatar"))}
-            for key in ("description", "role", "model"):
+            if (rest.strip() if title else desc.strip()):
+                bot["description"] = (rest.strip() if title else desc.strip())[:500]
+            for key in ("role", "model"):
                 if isinstance(p.get(key), str) and p[key]:
                     bot[key] = p[key][:500]
             bots.append(bot)

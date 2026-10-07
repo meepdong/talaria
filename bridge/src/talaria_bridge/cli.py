@@ -32,6 +32,7 @@ from .ops.client import OpsClient
 from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
 from .bots import Bots
+from .rooms import Rooms
 from .hermes_check import HermesWatch
 from .hermes_serve import HermesBackend, read_token
 from .operator import APPROVAL_TIMEOUT_S, DEFAULT_TTL_S, confirm_request, create_pairing, wait_for_request
@@ -247,6 +248,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
             chat.hermes_watch.backend = doorway  # the daily check covers the doorway too
         chat.bots = Bots(doorway)  # Hermes's bots as chats (§18)
         chat.bots.broadcast = lambda msg: chat.broadcast(msg)
+        talker = next((a for a in agents if a.serve_url), None)
+        chat.rooms = Rooms(doorway, chat.bots, assistant_name=(talker.talk_name or talker.name) if talker else "Hermes")
+        chat.rooms.broadcast = lambda msg: chat.broadcast(msg)  # group chats (§18.2)
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates, doorway)
     tools = make_agent_tools(agents, chat, ops)
     print(f"Talaria bridge {__version__}")

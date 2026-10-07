@@ -31,6 +31,7 @@ from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .bots import profile_of
+from .rooms import ROOM_METHODS, RoomError
 from .workorders import mark_workers
 from .hermes import HermesClient, HermesError, HermesUnavailable
 from .protocol import messages as m
@@ -476,6 +477,7 @@ class ChatService:
         self.automations = automations  # the agent's scheduled jobs, the calendar and Home (§14)
         self.hermes_watch = None  # checks Hermes still answers as the bridge expects (hermes_check.py), set by make_chat
         self.bots = None  # Hermes's bots as chats (bots.py, §18), set by the server when the doorway is on
+        self.rooms = None  # Hermes's group chats (rooms.py, §18.2), likewise
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -510,7 +512,8 @@ class ChatService:
         """What runs while the bridge serves: watching the agent's jobs (§14) and Hermes's compatibility (§9)."""
         tasks = [t for t in (self.automations.poll() if self.automations is not None else None,
                              self.hermes_watch.run() if self.hermes_watch is not None else None,
-                             self.bots.run() if self.bots is not None else None) if t is not None]
+                             self.bots.run() if self.bots is not None else None,
+                             self.rooms.run() if self.rooms is not None else None) if t is not None]
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -1457,6 +1460,13 @@ class ChatService:
             return result, None
         if method in BOT_METHODS:
             return await self.bots_handle(method, p), None
+        if method in ROOM_METHODS:
+            if self.rooms is None:
+                raise RpcError(m.METHOD_NOT_FOUND, "Hermes's group chats aren't set up on this bridge")
+            try:
+                return await self.rooms.handle(method, p), None
+            except RoomError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method == "chat.send":
             return await self.send(p)
         if method == "chat.cancel":
@@ -1528,7 +1538,7 @@ class ChatService:
 
 
 BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
-CHAT_METHODS = BOT_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+CHAT_METHODS = BOT_METHODS | ROOM_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

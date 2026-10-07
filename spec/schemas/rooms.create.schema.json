@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/rooms.create.schema.json",
+  "title": "rooms.create",
+  "description": "Device to bridge (request): a new room with 2\u20136 members (\u00a718.2).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "rooms.create"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "pattern": "^(assistant|bot:[A-Za-z0-9][A-Za-z0-9_.-]{0,59})$"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

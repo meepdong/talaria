@@ -245,6 +245,14 @@ interface TalariaActions {
     fun openConversation(id: String) {}
     /** Open one of Hermes's bots' chat (§18.1). */
     fun openBot(id: String) {}
+    /** Group chats (§18.2). */
+    fun openRoom(id: String) {}
+    fun closeRoom() {}
+    fun sendRoom(text: String, threadId: String?) {}
+    fun stopRoom() {}
+    fun approveRoom(approvalId: String, choice: String) {}
+    fun createRoom(name: String, members: List<String>) {}
+    fun dismissRoomNotice() {}
     fun newConversation() {}
 
     /** Back from a conversation to the list, on a phone. */

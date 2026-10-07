@@ -176,6 +176,8 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled = current is Screen.Chat && current.tab == Tab.CHATS && current.view.conversationOpen) {
                 controller.closeConversation()
             }
+            // a group chat open (§18.2): Back returns to the list
+            BackHandler(enabled = current is Screen.Chat && current.tab == Tab.CHATS && current.view.room != null) { controller.closeRoom() }
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
             BackHandler(enabled = current is Screen.Server) { controller.showChats() }
             BackHandler(enabled = current is Screen.Terminal) {

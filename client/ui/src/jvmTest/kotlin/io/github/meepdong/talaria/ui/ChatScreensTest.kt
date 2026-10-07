@@ -49,6 +49,12 @@ class ChatScreensTest {
         override fun forgetServer() {}
         override fun openConversation(id: String) { calls += "open $id" }
         override fun openBot(id: String) { calls += "bot $id" }
+        override fun openRoom(id: String) { calls += "room $id" }
+        override fun closeRoom() { calls += "close room" }
+        override fun sendRoom(text: String, threadId: String?) { calls += "room send $text ${threadId ?: "-"}" }
+        override fun stopRoom() { calls += "room stop" }
+        override fun approveRoom(approvalId: String, choice: String) { calls += "room approve $approvalId $choice" }
+        override fun createRoom(name: String, members: List<String>) { calls += "room create $name $members" }
         override fun openAttachment(root: String, path: String, name: String, mime: String) { calls += "file $root/$path $mime" }
         override fun newConversation() { calls += "new" }
         override fun closeConversation() { calls += "close" }
@@ -237,6 +243,70 @@ class ChatScreensTest {
             }
         }
         onNode(hasText("Scout") and hasAnyAncestor(hasTestTag("reply-h:9"))).assertExists()
+    }
+
+    private fun roomsState(open: Boolean, working: Boolean = false, approval: Boolean = false) = io.github.meepdong.talaria.rooms.RoomsState(
+        available = true,
+        rooms = listOf(io.github.meepdong.talaria.rooms.RoomSummary("r-1", "Trip", listOf(
+            io.github.meepdong.talaria.rooms.RoomMember("scout", "Scout", "scout", "bot:scout"),
+            io.github.meepdong.talaria.rooms.RoomMember("default", "Tally", "hermes")), 1_700_000_000, working = working,
+            needsYou = approval, previewSpeaker = "Scout", previewText = "Two options")),
+        threads = if (!open) emptyMap() else mapOf("r-1" to io.github.meepdong.talaria.rooms.RoomThread(
+            messages = listOf(
+                io.github.meepdong.talaria.rooms.RoomMessage(1, 1_700_000_000_000, io.github.meepdong.talaria.rooms.RoomMessageKind.USER, "You", "Plan Goa", "th-1"),
+                io.github.meepdong.talaria.rooms.RoomMessage(2, 1_700_000_001_000, io.github.meepdong.talaria.rooms.RoomMessageKind.MEMBER, "Scout", "Two options", "th-1", "scout"),
+                io.github.meepdong.talaria.rooms.RoomMessage(3, 1_700_000_002_000, io.github.meepdong.talaria.rooms.RoomMessageKind.NOTE, "Room", "Stopped. Mention a member (or @all) to go on.")),
+            working = working,
+            approvals = if (approval) listOf(io.github.meepdong.talaria.rooms.RoomApproval("a-1", "Scout", "curl x", null)) else emptyList())),
+    )
+
+    @Test
+    fun groupChatsListAndNewGroup() = runComposeUiTest {
+        val actions = Recorder()
+        val v = view(withBots(state(), openBot = false)).withRooms(roomsState(open = false, approval = true), null,
+            withBots(state(), openBot = false).bots, 1_700_000_100_000)
+        assertEquals(listOf("assistant" to "Your assistant", "bot:scout" to "Scout", "bot:code-helper" to "Code Helper"), v.roomCandidates)
+        setContent { androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 900.dp)) { ChatHome(v, actions) } }
+        onNodeWithTag("room-needs-you-r-1", useUnmergedTree = true).assertExists()
+        onNodeWithTag("room-r-1").performClick()
+        assertEquals("room r-1", actions.calls.last())
+        onNodeWithTag("new-room-button").performClick()
+        onNodeWithTag("new-room-create").assertIsNotEnabled()
+        onNodeWithTag("new-room-name").performTextInput("Goa trip")
+        onNodeWithTag("new-room-member-assistant").performClick()
+        onNodeWithTag("new-room-member-bot:scout").performClick()
+        onNodeWithTag("new-room-create").performClick()
+        assertEquals("room create Goa trip [assistant, bot:scout]", actions.calls.last())
+    }
+
+    @Test
+    fun aRoomShowsSpeakersApprovalsStopAndRepliesInThread() = runComposeUiTest {
+        val actions = Recorder()
+        val v = view(state()).withRooms(roomsState(open = true, working = true, approval = true), "r-1", emptyList(), 1_700_000_100_000)
+        assertEquals(listOf("user", "member", "note"), v.room?.messages?.map { it.kind })
+        setContent { androidx.compose.foundation.layout.Box(Modifier.size(1200.dp, 900.dp)) { ChatHome(v, actions) } }
+        onNodeWithTag("room-title").assertTextContains("👥 Trip")
+        onNode(hasText("Scout") and hasAnyAncestor(hasTestTag("room-msg-r2")), useUnmergedTree = true).assertExists()
+        onNodeWithTag("room-allow").performClick()
+        assertEquals("room approve a-1 once", actions.calls.last())
+        onNodeWithTag("room-stop").performClick()
+        assertEquals("room stop", actions.calls.last())
+        onNodeWithTag("room-msg-r2").performClick()  // reply in Scout's thread
+        onNodeWithTag("room-thread").assertExists()
+        onNodeWithTag("room-composer").performTextInput("@sc")
+        onNodeWithTag("room-mention-scout").performClick()
+        onNodeWithTag("room-composer").performTextInput("the cheaper one")
+        onNodeWithTag("room-send").performClick()
+        assertEquals("room send @scout the cheaper one th-1", actions.calls.last())
+        onNodeWithTag("room-thread").assertDoesNotExist()
+    }
+
+    @Test
+    fun roomMentionsOffersMembersAndEveryone() {
+        val members = listOf("Scout" to "scout", "Tally" to "hermes")
+        assertEquals(listOf("scout"), roomMentions("hey @sc", members).map { it.second })
+        assertEquals(listOf("scout", "hermes", "all"), roomMentions("@", members).map { it.second })
+        assertTrue(roomMentions("mail@sc", members).isEmpty() && roomMentions("@scout hi", members).isEmpty())
     }
 
     @Test

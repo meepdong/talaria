@@ -7,6 +7,10 @@ release notes the app shows.
 ## [Unreleased]
 
 ### Added
+- Group chats: Hermes's rooms (two to six bots, and your own assistant) are in Chats under "Group chats", with a
+  "needs you" mark when a member asks you (@user) or waits for an approval. Open one to see who said what, reply in a
+  thread (tap a message), @mention members (or @all), answer approvals and Stop. "+ New group" makes one: a name and
+  2–6 members. Rooms run on the server, so they keep going when the phone is off; rooms made on the laptop show too.
 - Hermes can hand jobs to your bots too, not only Tally in Talk: when you type a request that fits a bot (mail,
   calendar, Drive, sheets, PDFs, pictures, research, meetings, vendors), Hermes gives it the job, gets the report and
   answers you itself; the job shows as a card in that bot's chat.
@@ -15,6 +19,7 @@ release notes the app shows.
 - Server page, Hermes's skills: switching now only marks a change; an Apply button sends all of them as one
   approval and one Hermes restart (it used to restart Hermes for every switch, and a switch tapped again while it
   applied asked again). While it waits for approval or applies, the switches are locked and say so.
+- Bots showed their profile name ("chainmail") instead of their title ("ChainMail").
 - Opening a bot made in Hermes Desktop failed ("The bot's chat isn't available"): Talaria now finds the bot's existing
   chat the way Hermes reports it.
 

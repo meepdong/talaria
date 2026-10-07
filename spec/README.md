@@ -553,3 +553,44 @@ bot's chat; `METHOD_NOT_FOUND` when the bridge has no doorway.
 
 Schemas: `bots.list`, `bots.list.result`, `bots.open`, `bots.open.result`, `bots.avatar`, `bots.avatar.result`,
 `bots.changed`.
+
+### 18.2 Group chats (rooms)
+
+A group chat is a Hermes **room**: two to six bots (and the owner's own assistant, the default profile) in one
+conversation. Hermes runs it on its backend, durably: a message from the owner starts up to three rounds of member
+turns; each member speaks when it has something to add and passes otherwise; @mentions address members, `@all`
+everyone; members ask the owner with `@user`. Rooms keep running with no device connected. The bridge watches them
+(every couple of seconds for a room that is busy or open on a device, every half minute for the rest) and tells
+devices what changed.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `rooms.list` | request | `{}` → `{rooms, available}` |
+| `rooms.open` | request | `{room_id, before?}` → `{room, messages, has_more, approvals}` |
+| `rooms.send` | request | `{room_id, text, thread_id?}` → `{message}` |
+| `rooms.stop` | request | `{room_id}` → `{stopped}` |
+| `rooms.approve` | request | `{room_id, approval_id, choice}` → `{}` |
+| `rooms.create` | request | `{name, members}` → `{room}` |
+| `rooms.changed` | notification | `{rooms}` |
+| `rooms.update` | notification | `{room_id, messages, working, approvals, needs_you}` |
+
+A room is `{id, name, members, updated_at, working, needs_you, preview?}`; a member `{member_id, name, handle,
+bot_id?}` (`bot_id` as in §18.1, absent for the owner's own assistant); `preview` `{speaker, text}` is the latest
+message. A **message** is `{seq, at, kind, speaker, text, thread_id?, member_id?}` with `kind` `user` (the owner),
+`member` (a member's reply) or `note` (a member couldn't answer, the room was stopped or renamed, a member wasn't
+available), in `seq` order. `rooms.open` returns the newest messages (at most 60; `before` a `seq` for older ones)
+and marks the room as watched by that device for 10 minutes; `rooms.update` carries messages a device hasn't had
+yet, after `seq`s it has, with the room's state. `working` is true while members are taking turns.
+`needs_you` is true while an approval waits or a member's latest message addresses `@user` after the owner's last
+message. An **approval** is `{approval_id, member, command?, description?, choices}`; `choices` are `once` and
+`deny`; `rooms.approve` answers it. `rooms.send` starts a new topic unless `thread_id` names one to reply in.
+`rooms.stop` cancels the room's queued and running turns and holds its members until the owner addresses them
+again. `rooms.create` takes a `name` and 2–6 `members` (bot ids from `bots.list`, or `"assistant"` for the owner's
+own assistant) and returns the new room; disbanding a room is done in Hermes Desktop.
+
+Errors: `NOT_FOUND` for an unknown room, member or approval (or one no longer pending); `INVALID_PARAMS` for a bad
+name, member list or text; `AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a doorway.
+
+Schemas: `rooms.list`, `rooms.list.result`, `rooms.open`, `rooms.open.result`, `rooms.send`, `rooms.send.result`,
+`rooms.stop`, `rooms.stop.result`, `rooms.approve`, `rooms.approve.result`, `rooms.create`, `rooms.create.result`,
+`rooms.changed`, `rooms.update`.

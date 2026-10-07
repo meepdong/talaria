@@ -11,6 +11,8 @@ import io.github.meepdong.talaria.chat.Role
 import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.chat.VoiceApi
 import io.github.meepdong.talaria.ops.OpsRepository
+import io.github.meepdong.talaria.rooms.RoomsRepository
+import io.github.meepdong.talaria.rooms.RoomsState
 import io.github.meepdong.talaria.ops.OpsState
 import io.github.meepdong.talaria.files.FilesRepository
 import io.github.meepdong.talaria.files.FilesState
@@ -114,7 +116,7 @@ class TalariaController(
         data class Connected(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
             val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
-            val updates: UpdateRepository, val terminals: TerminalRepository,
+            val updates: UpdateRepository, val terminals: TerminalRepository, val rooms: RoomsRepository,
             val voice: VoiceApi = VoiceApi(client.asChatApi()),
         ) : Mode
     }
@@ -127,6 +129,8 @@ class TalariaController(
         /** The Terminals page, from the ☰ menu (§16.1). */
         val terminal: Boolean = false,
         val conversationOpen: Boolean = false,
+        /** The group chat showing (§18.2), instead of a conversation. */
+        val roomOpen: String? = null,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
         val modelQuery: String? = null,
@@ -321,7 +325,7 @@ class TalariaController(
     private data class Live(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
         val todos: TodosState? = null, val schedule: ScheduleState? = null, val ops: OpsState? = null,
-        val updates: UpdateState? = null, val terminal: TerminalState? = null,
+        val updates: UpdateState? = null, val terminal: TerminalState? = null, val rooms: RoomsState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -330,8 +334,8 @@ class TalariaController(
             combine(
                 combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Triple(st, c, f) },
                 m.todos.state, m.schedule.state,
-                combine(m.ops.state, m.updates.state, m.terminals.state) { o, u, tm -> Triple(o, u, tm) },
-            ) { (st, c, f), t, sc, (o, u, tm) -> Live(m, st, c, f, t, sc, o, u, tm) }
+                combine(m.ops.state, m.updates.state, m.terminals.state, m.rooms.state) { o, u, tm, rm -> Quad(o, u, tm, rm) },
+            ) { (st, c, f), t, sc, q -> Live(m, st, c, f, t, sc, q.a, q.b, q.c, q.d) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -530,6 +534,39 @@ class TalariaController(
 
     override fun openBot(id: String) {
         chat?.openBot(id) { conv -> openConversation(conv) }
+    }
+
+    private val rooms: RoomsRepository? get() = (mode.value as? Mode.Connected)?.rooms
+
+    override fun openRoom(id: String) {
+        rooms?.open(id)
+        page.value = Page(tab = Tab.CHATS, roomOpen = id)
+    }
+
+    override fun closeRoom() {
+        page.value = Page(tab = Tab.CHATS)
+        rooms?.refresh()
+    }
+
+    override fun sendRoom(text: String, threadId: String?) {
+        val id = page.value.roomOpen ?: return
+        rooms?.send(id, text, threadId)
+    }
+
+    override fun stopRoom() {
+        page.value.roomOpen?.let { rooms?.stopRoom(it) }
+    }
+
+    override fun approveRoom(approvalId: String, choice: String) {
+        page.value.roomOpen?.let { rooms?.approve(it, approvalId, choice) }
+    }
+
+    override fun createRoom(name: String, members: List<String>) {
+        rooms?.create(name, members) { id -> openRoom(id) }
+    }
+
+    override fun dismissRoomNotice() {
+        rooms?.dismissNotice()
     }
 
     override fun newConversation() {
@@ -1541,7 +1578,9 @@ class TalariaController(
         val ops = OpsRepository(scope, client.asChatApi()).also { it.start() }
         val updates = UpdateRepository(scope, client.asChatApi(), versionCodeOf(TALARIA_VERSION) ?: 0).also { it.start() }
         val terminals = TerminalRepository(scope, client.asChatApi(), bridge.deviceId).also { it.start() }
-        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates, terminals)
+        val rooms = RoomsRepository(scope, client.asChatApi()).also { it.start() }
+        mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates,
+            terminals, rooms)
         client.start()
     }
 
@@ -1571,6 +1610,7 @@ class TalariaController(
                     state.phase == ConnectionState.Phase.CONNECTED, status, now, x.pending, x.canAttach, images,
                     x.serverPending, opsApprovals(opsState, m.bridge.deviceId), opsResults(opsState, m.bridge.deviceId)).copy(voice = x.voice, modelPicker = x.page.modelQuery, canShare = x.canShare,
                         openingFile = x.fileTask.opening, openingProgress = x.fileTask.progress)
+                    .withRooms(l.rooms, x.page.roomOpen, l.chat?.bots.orEmpty(), now)
                 Screen.Chat(
                     view, withBalance,
                     undo = x.page.undo,

@@ -157,6 +157,30 @@ data class ChatView(
     val bots: List<BotItem> = emptyList(),
     /** The open conversation is this bot's chat. */
     val openBot: BotItem? = null,
+    /** Hermes's group chats (§18.2), below the chats; empty without the doorway. */
+    val rooms: List<RoomItem> = emptyList(),
+    /** Who can sit in a new group chat (id, name): the owner's assistant and the bots. Two or more: "New group". */
+    val roomCandidates: List<Pair<String, String>> = emptyList(),
+    /** The open group chat, instead of a conversation. */
+    val room: RoomView? = null,
+)
+
+/** One group chat in the list. */
+data class RoomItem(
+    val id: String, val name: String, val members: String, val preview: String, val time: String,
+    val working: Boolean, val needsYou: Boolean,
+)
+
+data class RoomMessageItem(
+    val key: String, val kind: String, val speaker: String, val text: String, val time: String?, val threadId: String?,
+)
+
+data class RoomApprovalItem(val id: String, val member: String, val command: String?, val description: String?)
+
+/** An open group chat: its members (name, handle for @), messages, and what's going on. */
+data class RoomView(
+    val id: String, val name: String, val members: List<Pair<String, String>>, val messages: List<RoomMessageItem>,
+    val working: Boolean, val approvals: List<RoomApprovalItem>, val loading: Boolean, val notice: String? = null,
 )
 
 data class ModelGroup(val provider: String, val name: String, val models: List<ModelItem>)

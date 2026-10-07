@@ -28,7 +28,8 @@ class FakeBotServe:
     def __init__(self):
         self.profiles = [{"name": "default", "is_default": True, "model": "qwen/qwen3.8-flash"},
                          {"name": "scout", "display_name": "Scout", "description": "Finds things", "has_avatar": True},
-                         {"name": "coder", "model": "qwen/qwen3.8-flash"}]
+                         {"name": "coder", "model": "qwen/qwen3.8-flash"},
+                         {"name": "chainmail", "display_name": "", "description": "ChainMail — Use for: anything in Gmail."}]
         self.chats: dict[str, dict] = {}  # profile -> {"stored", "messages"}
         self.calls: list[tuple[str, dict]] = []
         self.answers: list[dict] = []
@@ -166,8 +167,9 @@ async def test_the_roster_lists_bots_but_not_hermes_itself(bots_bridge):
     phone = await connected(bridge)
     listed = check("bots.list.result", await call(phone, "1", "bots.list"))["result"]
     assert listed["available"] is True
-    assert [(b["id"], b["name"]) for b in listed["bots"]] == [("bot:coder", "coder"), ("bot:scout", "Scout")]
-    assert listed["bots"][1]["description"] == "Finds things" and listed["bots"][1]["has_avatar"] is True
+    assert [(b["id"], b["name"]) for b in listed["bots"]] == [("bot:chainmail", "ChainMail"), ("bot:coder", "coder"), ("bot:scout", "Scout")]
+    assert listed["bots"][0]["description"] == "Use for: anything in Gmail."  # the title comes off the description
+    assert listed["bots"][2]["description"] == "Finds things" and listed["bots"][2]["has_avatar"] is True
     pic = check("bots.avatar.result", await call(phone, "2", "bots.avatar", {"bot_id": "bot:scout"}))["result"]
     assert pic == {"found": True, "mime": "image/png", "data": "iVBORw0KGgo="}
 
@@ -396,7 +398,7 @@ async def test_hermes_hands_a_job_to_a_bot_and_gets_the_report(bots_bridge):
     assert state["status"] == "completed" and state["report"] == "Cleaned"
 
     nobody = await tools.call("ask_bot", {"bot": "nobody", "message": "x"})
-    assert nobody.get("isError") and "The bots are: coder, Scout" in nobody["content"][0]["text"]
+    assert nobody.get("isError") and "The bots are: ChainMail, coder, Scout" in nobody["content"][0]["text"]
     tools._bot_jobs = ["t-a", "t-b", "t-c"]
     from types import SimpleNamespace
     for t in tools._bot_jobs:

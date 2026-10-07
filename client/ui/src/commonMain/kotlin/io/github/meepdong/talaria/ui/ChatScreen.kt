@@ -93,8 +93,15 @@ fun ChatHome(view: ChatView, actions: TalariaActions, menu: @Composable () -> Un
             Row(Modifier.fillMaxSize()) {
                 ConversationList(view, actions, menu, Modifier.width(320.dp).fillMaxHeight())
                 VerticalDivider()
-                Conversation(view, actions, showBack = false, menu = {}, modifier = Modifier.weight(1f).fillMaxHeight())
+                val room = view.room
+                if (room != null) {
+                    RoomPane(room, actions, showBack = false, menu = {}, modifier = Modifier.weight(1f).fillMaxHeight())
+                } else {
+                    Conversation(view, actions, showBack = false, menu = {}, modifier = Modifier.weight(1f).fillMaxHeight())
+                }
             }
+        } else if (view.room != null) {
+            RoomPane(view.room, actions, showBack = true, menu = menu, modifier = Modifier.fillMaxSize())
         } else if (view.conversationOpen) {
             Conversation(view, actions, showBack = true, menu = menu, modifier = Modifier.fillMaxSize())
         } else {
@@ -132,7 +139,44 @@ private fun ConversationList(view: ChatView, actions: TalariaActions, menu: @Com
             Text(it, Modifier.padding(16.dp).testTag("list-message"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         var showArchived by remember { mutableStateOf(false) }
+        var newRoom by remember { mutableStateOf(false) }
+        if (newRoom) {
+            NewRoomDialog(view.roomCandidates, onDone = { name, members -> newRoom = false; actions.createRoom(name, members) },
+                onCancel = { newRoom = false })
+        }
         LazyColumn(Modifier.weight(1f).testTag("conversations")) {
+            if (view.rooms.isNotEmpty() || view.roomCandidates.size >= 2) {
+                item(key = "rooms-head") {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Group chats", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                        if (view.roomCandidates.size >= 2) {
+                            TextButton(onClick = { newRoom = true }, modifier = Modifier.testTag("new-room-button")) { Text("+ New group") }
+                        }
+                    }
+                }
+                items(view.rooms, key = { "room-" + it.id }) { r ->
+                    Column(Modifier.fillMaxWidth().background(if (view.room?.id == r.id) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.surface).clickable { actions.openRoom(r.id) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp).testTag("room-${r.id}")) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("👥 " + r.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f))
+                            if (r.needsYou) {
+                                Text("needs you", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(end = 6.dp).testTag("room-needs-you-${r.id}"))
+                            }
+                            Text(if (r.working) "⏳" else r.time, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(r.preview.ifEmpty { r.members }, style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                }
+                item(key = "chats-head") {
+                    Text("Chats", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
+                }
+            }
             items(view.conversations, key = { it.id }) { c ->
                 ConversationRow(c, selected = c.id == view.openId, actions)
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
