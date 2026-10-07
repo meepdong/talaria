@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -45,6 +47,10 @@ class BoardScreenTest {
         override fun routineSet(botId: String, routineId: String, action: String) { calls += "set $botId $routineId $action" }
         override fun helperSteer(helperId: String, text: String) { calls += "steer $helperId $text" }
         override fun helperStop(helperId: String) { calls += "stop $helperId" }
+        override fun saveBot(draft: BotDraft, confirm: Boolean) { calls += "save $draft $confirm" }
+        override fun deleteBot() { calls += "delete" }
+        override fun closeBotEditor() { calls += "close" }
+        override fun pickBotPicture() { calls += "pick" }
     }
 
     private val bots = listOf(Bot("bot:meetingminder", "Meeting Minder", "meetingminder"), Bot("bot:research", "Research", "research"))
@@ -167,5 +173,43 @@ class BoardScreenTest {
         assertEquals(listOf("set bot:research r1 pause", "set assistant r2 run", "set bot:research r1 remove",
             "routine bot:meetingminder Monday recap|every monday 9am|Recap last week's meetings", "steer sa-1 Only vegan", "stop sa-1"),
             actions.calls)
+    }
+
+    @Test
+    fun theBotEditor() = runComposeUiTest {
+        val actions = Recorder()
+        val v = BotEditorView(botId = "bot:scout", name = "Scout", about = "Finds things", personality = "Be kind.",
+            model = "qwen/qwen3.8-flash", models = listOf("google/gemini-3-flash", "qwen/qwen3.8-flash"),
+            skills = listOf(SwitchItem("research", "research", "", true), SwitchItem("spotify", "spotify", "", false)),
+            toolsets = listOf(SwitchItem("web", "Web", "Search the web", true)), version = 1, canPickPicture = true)
+        setContent { Box(Modifier.size(380.dp, 1800.dp)) { BotEditorScreen(v, actions) } }
+        onNodeWithTag("bot-save").assertIsNotEnabled()  // nothing changed yet
+        onNodeWithTag("bot-about").performTextReplacement("Finds places to eat")
+        onNodeWithTag("bot-Skills").performClick()
+        onNodeWithTag("switch-spotify").performClick()
+        onNodeWithTag("bot-model").performClick()
+        onNodeWithTag("bot-model-google/gemini-3-flash").performClick()
+        onNodeWithTag("bot-picture").performClick()
+        onNodeWithTag("bot-save").performClick()
+        onNodeWithTag("bot-delete").performClick()
+        onNodeWithTag("bot-delete-sure").performClick()
+        onNodeWithTag("bot-editor-back").performClick()
+        assertEquals(listOf("pick",
+            "save ${BotDraft("Scout", "Finds places to eat", "Be kind.", "google/gemini-3-flash", setOf("research", "spotify"), setOf("web"), emptySet())} false",
+            "delete", "close"), actions.calls)
+    }
+
+    @Test
+    fun aNewBotAndAnExpensiveModel() = runComposeUiTest {
+        val actions = Recorder()
+        setContent { Box(Modifier.size(380.dp, 1200.dp)) { BotEditorScreen(BotEditorView(confirm = "Expensive!"), actions) } }
+        onNodeWithTag("bot-save").assertTextContains("Make bot").assertIsNotEnabled()
+        onNodeWithTag("bot-name").performTextInput("Trip Planner")
+        onNodeWithTag("bot-delete").assertDoesNotExist()
+        onNodeWithTag("bot-picture").assertDoesNotExist()
+        onNodeWithTag("bot-confirm-yes").performClick()
+        onNodeWithTag("bot-save").performClick()
+        assertEquals(listOf("save ${BotDraft("Trip Planner", "", "", null, emptySet(), emptySet(), emptySet())} true",
+            "save ${BotDraft("Trip Planner", "", "", null, emptySet(), emptySet(), emptySet())} false"), actions.calls)
     }
 }

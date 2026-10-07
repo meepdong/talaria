@@ -106,7 +106,7 @@ fun chatView(
         !connected -> "Not connected. ${status.failure ?: status.summary}"
         else -> null
     }
-    val bots = state.bots.map { BotItem(it.id, it.name, it.profile, it.description) }
+    val bots = state.bots.map { BotItem(it.id, it.name, it.profile, it.description, images[state.avatars[it.id]]) }
     val openBot = state.openSummary?.agentId?.let { agent -> bots.firstOrNull { it.id == agent } }
         ?: state.openSummary?.agentId?.takeIf { it.startsWith("bot:") }?.let { BotItem(it, state.openSummary?.title ?: it, it.removePrefix("bot:")) }
     return ChatView(

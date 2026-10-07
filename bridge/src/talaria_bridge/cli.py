@@ -33,6 +33,7 @@ from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
 from .bots import Bots
 from .board import Board
+from .botadmin import BotAdmin
 from .commands import Commands
 from .routines import Routines
 from .rooms import Rooms
@@ -258,6 +259,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         chat.board.broadcast = lambda msg: chat.broadcast(msg)
         chat.routines = Routines(doorway, chat.bots)  # bots' routines and helper agents (§18.6–18.7)
         chat.routines.broadcast = lambda msg: chat.broadcast(msg)
+        chat.botadmin = BotAdmin(doorway, chat.bots)  # making, changing and deleting bots (§18.8)
         chat.rooms.broadcast = lambda msg: chat.broadcast(msg)  # group chats (§18.2)
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates, doorway)
     tools = make_agent_tools(agents, chat, ops)

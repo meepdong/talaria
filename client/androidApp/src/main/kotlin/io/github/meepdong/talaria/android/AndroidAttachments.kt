@@ -59,20 +59,29 @@ object AndroidAttachments {
     }
 
     private fun photo(context: Context, uri: Uri, baseName: String): OutgoingFile? {
+        val (bytes, png) = shrink(context, uri, LONG_EDGE) ?: return null
+        return if (png) OutgoingFile("$baseName.png", "image/png", bytes) else OutgoingFile("$baseName.jpg", "image/jpeg", bytes)
+    }
+
+    /** A bot's picture (spec §18.8): the photo at most 512 px, upright, without EXIF; null when it can't be read. */
+    fun picture(context: Context, uri: Uri): ByteArray? = shrink(context, uri, 512)?.first
+
+    /** The photo at most [longEdge] px on its long side, upright, re-encoded (PNG when it has transparency: true). */
+    private fun shrink(context: Context, uri: Uri, longEdge: Int): Pair<ByteArray, Boolean>? {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         val longest = maxOf(bounds.outWidth, bounds.outHeight)
         if (longest <= 0) return null
         var sample = 1
-        while (longest / (sample * 2) >= LONG_EDGE) sample *= 2
+        while (longest / (sample * 2) >= longEdge) sample *= 2
         val decoded = resolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: return null
         val orientation = runCatching {
             resolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
         }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
-        val scale = minOf(1f, LONG_EDGE.toFloat() / maxOf(decoded.width, decoded.height))
+        val scale = minOf(1f, longEdge.toFloat() / maxOf(decoded.width, decoded.height))
         val matrix = Matrix().apply {
             postScale(scale, scale)
             when (orientation) {
@@ -90,10 +99,10 @@ object AndroidAttachments {
         val bytes = ByteArrayOutputStream()
         return if (upright.hasAlpha()) {
             upright.compress(Bitmap.CompressFormat.PNG, 100, bytes)
-            OutgoingFile("$baseName.png", "image/png", bytes.toByteArray())
+            bytes.toByteArray() to true
         } else {
             upright.compress(Bitmap.CompressFormat.JPEG, 85, bytes)
-            OutgoingFile("$baseName.jpg", "image/jpeg", bytes.toByteArray())
+            bytes.toByteArray() to false
         }
     }
 }

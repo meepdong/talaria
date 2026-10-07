@@ -12,6 +12,7 @@ import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.chat.VoiceApi
 import io.github.meepdong.talaria.ops.OpsRepository
 import io.github.meepdong.talaria.rooms.RoomsRepository
+import io.github.meepdong.talaria.control.BotSettings
 import io.github.meepdong.talaria.control.ControlRepository
 import io.github.meepdong.talaria.control.ControlState
 import io.github.meepdong.talaria.rooms.RoomsState
@@ -136,6 +137,8 @@ class TalariaController(
         val roomOpen: String? = null,
         /** The To-dos tab shows Hermes's board (§18.4) instead of the list. */
         val board: Boolean = false,
+        /** The bot editor shows (§18.8). */
+        val botEditor: Boolean = false,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
         val modelQuery: String? = null,
@@ -185,6 +188,8 @@ class TalariaController(
      * the app can't pick files, which hides the 📎 button.
      */
     private val picker = MutableStateFlow<((photos: Boolean) -> Unit)?>(null)
+    /** The platform's one-photo picker for a bot's picture (§18.8): set while the app can show it. */
+    private var picturePicker: (() -> Unit)? = null
 
     /** Speech-to-text, set while the app can listen (on Android, while it's on screen). */
     private val speechInput = MutableStateFlow<SpeechInput?>(null)
@@ -1529,7 +1534,83 @@ class TalariaController(
     }
 
     override fun showChats() {
-        page.value = page.value.copy(status = false, server = false, terminal = false)
+        page.value = page.value.copy(status = false, server = false, terminal = false, botEditor = false)
+    }
+
+    // managing bots (§18.8)
+
+    override fun editBot(botId: String) {
+        control?.editBot(botId)
+        chat?.loadModels()
+        page.update { it.copy(botEditor = true, menuOpen = false) }
+    }
+
+    override fun newBot() {
+        control?.editBot(null)
+        chat?.loadModels()
+        page.update { it.copy(botEditor = true, menuOpen = false) }
+    }
+
+    override fun closeBotEditor() {
+        control?.closeEditor()
+        page.update { it.copy(botEditor = false) }
+    }
+
+    override fun saveBot(draft: BotDraft, confirm: Boolean) {
+        val c = control ?: return
+        val editing = c.state.value.editing ?: return
+        val was = editing.settings
+        val now = BotSettings(
+            botId = editing.botId ?: "", name = draft.name, about = draft.about, personality = draft.personality, model = draft.model,
+            skills = was?.skills.orEmpty().map { it.copy(enabled = it.name in draft.skillsOn) },
+            toolsets = was?.toolsets.orEmpty().map { it.copy(enabled = it.name in draft.toolsetsOn) },
+            connectors = was?.connectors.orEmpty().map { it.copy(enabled = it.name in draft.connectorsOn) },
+        )
+        c.saveBot(was, now, confirm) { id ->
+            chat?.refreshBots()
+            if (was == null) {  // a new bot: its chat opens
+                page.update { it.copy(botEditor = false) }
+                c.closeEditor()
+                openBot(id)
+            }
+        }
+    }
+
+    override fun deleteBot() {
+        val id = control?.state?.value?.editing?.botId ?: return
+        control?.deleteBot(id) {
+            page.update { it.copy(botEditor = false, conversationOpen = false) }
+            chat?.let { ch ->
+                ch.refreshBots()
+                ch.refresh()
+                if (ch.state.value.openSummary?.agentId == id) ch.open(null)
+            }
+        }
+    }
+
+    override fun pickBotPicture() {
+        picturePicker?.invoke()
+    }
+
+    override fun clearBotPicture() {
+        val id = control?.state?.value?.editing?.botId ?: return
+        control?.setPicture(id, null) { chat?.reloadAvatar(id) }
+    }
+
+    /** The platform's one-photo picker for bots' pictures; null where there is none. */
+    fun setPicturePicker(pick: (() -> Unit)?) {
+        picturePicker = pick
+    }
+
+    /** The picture picked for the bot being edited, already made small by the platform (or why it couldn't be). */
+    fun botPicturePicked(bytes: ByteArray?, problem: String? = null) {
+        val c = control ?: return
+        val id = c.state.value.editing?.botId ?: return
+        if (bytes == null) {
+            problem?.let { c.editorNotice(it) }
+            return
+        }
+        c.setPicture(id, bytes) { chat?.reloadAvatar(id) }
     }
 
     override fun checkForUpdates() {
@@ -1646,6 +1727,8 @@ class TalariaController(
             } else if (x.page.terminal) {
                 Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now,
                     locked = authenticator != null && !terminalLock.unlocked), status)
+            } else if (x.page.botEditor) {
+                Screen.BotEditor(botEditorView(l.control?.editing, l.chat, images, picturePicker != null), status)
             } else if (x.page.server) {
                 Screen.Server(serverView(opsState, m.bridge.deviceId).copy(usage = usageView(l.control)), status)
             } else {

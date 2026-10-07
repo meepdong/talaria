@@ -95,3 +95,20 @@ fun helperItems(s: ControlState?, conversationId: String?): List<HelperItem> =
 
 private val HM_FMT = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 private val DAY_HM_FMT = java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ENGLISH)
+
+/** The bot editor (§18.8): the loaded settings, the models the guardrail allows, the bot's picture. */
+fun botEditorView(e: io.github.meepdong.talaria.control.BotEditing?, chat: io.github.meepdong.talaria.chat.ChatState?,
+                  images: ImageCache, canPickPicture: Boolean): BotEditorView {
+    if (e == null) return BotEditorView(loading = true)
+    val s = e.settings
+    val models = chat?.models?.providers.orEmpty().flatMap { it.models }.distinct().sorted()
+    fun items(list: List<io.github.meepdong.talaria.control.BotSettings.Switch>?) =
+        list.orEmpty().map { SwitchItem(it.name, it.label, it.about, it.enabled) }
+    return BotEditorView(
+        botId = e.botId, loading = e.loading, saving = e.saving,
+        name = s?.name.orEmpty(), about = s?.about.orEmpty(), personality = s?.personality.orEmpty(), model = s?.model,
+        models = models, skills = items(s?.skills), toolsets = items(s?.toolsets), connectors = items(s?.connectors),
+        confirm = e.confirm, notice = e.notice, version = e.version,
+        picture = e.botId?.let { images[chat?.avatars?.get(it)] }, canPickPicture = canPickPicture && e.botId != null,
+    )
+}

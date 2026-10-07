@@ -25,6 +25,9 @@ sealed interface Screen {
     /** The Server page, from the ☰ menu (PROTOCOL §10.8). [status] keeps the tray icon right. */
     data class Server(val view: ServerView, val status: StatusView) : Screen
 
+    /** A bot's settings, or a new bot (spec §18.8). */
+    data class BotEditor(val view: BotEditorView, val status: StatusView) : Screen
+
     /** Terminals (spec §16.1): root's tmux sessions, from the ☰ menu. */
     data class Terminal(val view: TerminalView, val status: StatusView) : Screen
 
@@ -422,6 +425,15 @@ interface TalariaActions {
     fun routineSet(botId: String, routineId: String, action: String) {}
     fun helperSteer(helperId: String, text: String) {}
     fun helperStop(helperId: String) {}
+
+    // managing bots (§18.8)
+    fun editBot(botId: String) {}
+    fun newBot() {}
+    fun closeBotEditor() {}
+    fun saveBot(draft: BotDraft, confirm: Boolean) {}
+    fun deleteBot() {}
+    fun pickBotPicture() {}
+    fun clearBotPicture() {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 
@@ -465,6 +477,7 @@ val Screen.overall: Health
     get() = when (this) {
         is Screen.Status -> view.overall
         is Screen.Server -> status.overall
+        is Screen.BotEditor -> status.overall
         is Screen.Terminal -> status.overall
         is Screen.Chat -> status.overall
         else -> Health.UNKNOWN
@@ -477,10 +490,11 @@ val Screen.summary: String
         is Screen.Confirm -> "Pairing"
         is Screen.Status -> view.summary
         is Screen.Server -> status.summary
+        is Screen.BotEditor -> status.summary
         is Screen.Terminal -> status.summary
         is Screen.Chat -> status.summary
     }
 
 /** Paired with a server, whichever page is showing. */
 val Screen.paired: Boolean
-    get() = this is Screen.Status || this is Screen.Server || this is Screen.Terminal || this is Screen.Chat
+    get() = this is Screen.Status || this is Screen.Server || this is Screen.Terminal || this is Screen.Chat || this is Screen.BotEditor

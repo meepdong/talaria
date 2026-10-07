@@ -212,11 +212,25 @@ private fun BotStrip(bots: List<BotItem>, open: String?, actions: TalariaActions
                 Surface(shape = CircleShape, modifier = Modifier.size(44.dp),
                     color = if (b.id == open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
                     contentColor = if (b.id == open) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer) {
-                    Box(contentAlignment = Alignment.Center) { Text(b.initials, style = MaterialTheme.typography.titleSmall) }
+                    val pic = b.image
+                    if (pic != null) {
+                        androidx.compose.foundation.Image(pic, b.name, Modifier.size(44.dp).clip(CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    } else {
+                        Box(contentAlignment = Alignment.Center) { Text(b.initials, style = MaterialTheme.typography.titleSmall) }
+                    }
                 }
                 Text(b.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 4.dp))
             }
+        }
+        // a new bot (§18.8)
+        Column(Modifier.width(64.dp).clickable { actions.newBot() }.padding(vertical = 4.dp).testTag("new-bot"),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(shape = CircleShape, modifier = Modifier.size(44.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Box(contentAlignment = Alignment.Center) { Text("+", style = MaterialTheme.typography.titleMedium) }
+            }
+            Text("New bot", style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
@@ -315,7 +329,7 @@ private fun Conversation(
                 }
             }
             if (!showBack) view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions) }
-            ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
+            ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true }, botId = view.openBot?.id)
             menu()
         }
         HorizontalDivider()
@@ -415,7 +429,7 @@ internal fun filterModels(groups: List<ModelGroup>, query: String): List<ModelGr
 }
 
 @Composable
-private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActions, onRename: () -> Unit) {
+private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActions, onRename: () -> Unit, botId: String? = null) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var pickVoice by remember { mutableStateOf(false) }
@@ -442,6 +456,10 @@ private fun ConversationMenu(id: String?, voice: VoiceView, actions: TalariaActi
                     onClick = { open = false; pickVoice = true; actions.loadTalkVoices() })
             }
             if (id == null) return@DropdownMenu
+            if (botId != null) {
+                DropdownMenuItem(text = { Text("Bot settings") }, modifier = Modifier.testTag("bot-settings"),
+                    onClick = { open = false; actions.editBot(botId) })
+            }
             DropdownMenuItem(text = { Text("Rename") }, onClick = { open = false; onRename() })
             DropdownMenuItem(
                 text = { Text(if (confirmDelete) "Tap again to delete" else "Delete") },

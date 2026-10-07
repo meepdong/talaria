@@ -23,7 +23,8 @@ data class ConversationSummary(
  * One of Hermes's bots (spec/README.md §18.1): a Hermes profile with its own role, model and memory. Its chat is
  * an ordinary conversation whose agent is [id] (`bot:<profile>`).
  */
-data class Bot(val id: String, val name: String, val profile: String, val description: String? = null) {
+data class Bot(val id: String, val name: String, val profile: String, val description: String? = null,
+               val hasAvatar: Boolean = false) {
     /** What @mentions match: the profile name, or the name without spaces, lower case. */
     val handles: Set<String> get() = setOf(profile.lowercase(), name.lowercase().replace(" ", ""))
 }
@@ -200,6 +201,8 @@ data class ChatState(
     val balances: List<AccountBalance> = emptyList(),
     /** Hermes's bots, when the bridge has its doorway (§18.1); empty otherwise. */
     val bots: List<Bot> = emptyList(),
+    /** Bots' pictures (§18.1), by bot id, for the bots that have one. */
+    val avatars: Map<String, ByteArray> = emptyMap(),
     /** Hermes's own / commands by conversation (§18.3); a conversation without them maps to an empty list. */
     val commands: Map<String, List<HermesCommand>> = emptyMap(),
 ) {

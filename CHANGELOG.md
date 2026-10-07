@@ -4,6 +4,15 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Manage your bots from the phone: in a bot's chat, ⋮ → "Bot settings" changes its name, what it's for (Hermes
+  reads this when it picks a bot), its personality and rules, its model (only the ones your OpenRouter allows; an
+  expensive one asks first), its skills, tools and connectors, and its picture. "Delete bot" removes it with its
+  chats and memory. "+ New bot" at the end of the bot row makes one.
+- Bots' pictures show in the bot row.
+
 ## [0.2.0-beta.22] - 2026-10-07
 
 ### Added

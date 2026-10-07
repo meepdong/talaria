@@ -32,6 +32,7 @@ from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .bots import profile_of
 from .board import BOARD_METHODS, BoardError
+from .botadmin import ADMIN_METHODS, AdminError
 from .commands import COMMAND_METHODS, CommandError
 from .routines import HELPER_METHODS, ROUTINE_METHODS
 from .rooms import ROOM_METHODS, RoomError
@@ -484,6 +485,7 @@ class ChatService:
         self.commands = None  # Hermes's own / commands (commands.py, §18.3), likewise
         self.board = None  # Hermes's Kanban board and usage (board.py, §18.4–18.5), likewise
         self.routines = None  # bots' routines and helper agents (routines.py, §18.6–18.7), likewise
+        self.botadmin = None  # making, changing and deleting bots (botadmin.py, §18.8), likewise
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -1483,6 +1485,21 @@ class ChatService:
                 return await self.routines.helper_call(method, p, self.bots.client(conv.agent_id), conv.hermes_session_id), None
             except BoardError as exc:
                 raise RpcError(exc.code, exc.message) from None
+        if method in ADMIN_METHODS:
+            if self.botadmin is None:
+                raise RpcError(m.METHOD_NOT_FOUND, "Managing bots isn't set up on this bridge")
+            if method == "bots.delete":
+                busy = [c for c in self.store.all() if c.agent_id == p.get("bot_id") and c.id in self._active]
+                if busy:
+                    raise RpcError(m.CONFLICT, "Stop the bot's running reply before deleting it")
+            try:
+                result = await self.botadmin.handle(method, p)
+            except AdminError as exc:
+                raise RpcError(exc.code, exc.message) from None
+            if method == "bots.delete":  # its chat in Talaria goes with it
+                for c in [c for c in self.store.all() if c.agent_id == p.get("bot_id")]:
+                    self.store.delete(c.id)
+            return result, None
         if method in BOARD_METHODS:
             if self.board is None:
                 raise RpcError(m.METHOD_NOT_FOUND, "Hermes's board isn't set up on this bridge")
@@ -1575,7 +1592,7 @@ class ChatService:
 
 
 BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
-CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | BOARD_METHODS | ROUTINE_METHODS | HELPER_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | BOARD_METHODS | ROUTINE_METHODS | HELPER_METHODS | ADMIN_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

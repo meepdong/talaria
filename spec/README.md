@@ -721,3 +721,37 @@ doorway is down.
 
 Schemas: `routines.list`, `routines.list.result`, `routines.add`, `routines.add.result`, `routines.set`,
 `routines.set.result`, `helpers.update`, `helpers.steer`, `helpers.steer.result`, `helpers.stop`, `helpers.stop.result`.
+
+### 18.8 Managing bots
+
+Devices make, change and delete bots, as Hermes Desktop's bot editor does.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `bots.describe` | request | `{bot_id}` → `{bot}` |
+| `bots.create` | request | `{name, about, personality?, model?}` → `{bot_id}` |
+| `bots.update` | request | `{bot_id, name?, about?, personality?, model?, skills?, toolsets?, connectors?, confirm?}` → `{applied, confirm?}` |
+| `bots.picture` | request | `{bot_id, data?, clear?}` → `{}` |
+| `bots.delete` | request | `{bot_id}` → `{}` |
+
+A described **bot** is `{bot_id, name, about, personality, model?, skills, toolsets, connectors}`: `name` and `about`
+are its title and what it's for (Hermes keeps them as one description, `name — about`, which is also what Hermes
+reads when it picks a bot for a job), `personality` its SOUL.md, `model` an OpenRouter model id (absent: Hermes's
+default model), `skills` `[{name, enabled}]`, `toolsets` `[{name, label, about, enabled}]` and `connectors` (its MCP
+servers) `[{name, enabled}]`. In `bots.update`, `skills`, `toolsets` and `connectors` are the lists of names that
+should be **on** (all others go off); a field left out is left as it is. `applied` says, per field sent, whether
+Hermes saved it. A `model` must be one the bridge's OpenRouter key may use (§11, the owner's guardrail); when Hermes
+warns that a model is expensive, nothing about the model is saved and `confirm` carries Hermes's words: send again
+with `confirm: true` to use it anyway. `bots.create` makes a bot from `name` (its profile name is made from it:
+lowercase letters, digits and dashes) with Hermes's bundled skills and the default profile's keys; `CONFLICT` when a
+bot with that profile name exists. `bots.picture` sets the bot's picture (`data`: PNG, JPEG or WebP, base64, at
+most 512 KB; devices shrink a photo first) or removes it (`clear: true`). `bots.delete` deletes the bot in Hermes with its memory, chats and
+routines, for every device and Hermes Desktop; Talaria's conversation with it goes too. Hermes itself (the default
+profile) can't be deleted. Every change also updates `bots.changed` (§18.1).
+
+Errors: `NOT_FOUND` for an unknown bot; `INVALID_PARAMS` for a bad field or a model the guardrail doesn't allow;
+`CONFLICT` as above; `AGENT_UNAVAILABLE` when the doorway is down or Hermes fails; `METHOD_NOT_FOUND` without a
+doorway.
+
+Schemas: `bots.describe`, `bots.describe.result`, `bots.create`, `bots.create.result`, `bots.update`,
+`bots.update.result`, `bots.picture`, `bots.picture.result`, `bots.delete`, `bots.delete.result`.

@@ -20,6 +20,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 
 /**
  * A task on Hermes's Kanban board (spec/README.md §18.4). [assignee] is a bot id, "assistant" (the owner's own
@@ -53,6 +55,28 @@ data class Helper(
     val model: String? = null, val canSteer: Boolean = false,
 )
 
+/** A bot's settings, for its editor (§18.8). [model] null: Hermes's default model. */
+data class BotSettings(
+    val botId: String, val name: String, val about: String, val personality: String, val model: String?,
+    val skills: List<Switch>, val toolsets: List<Switch>, val connectors: List<Switch>,
+) {
+    data class Switch(val name: String, val enabled: Boolean, val label: String = name, val about: String = "")
+}
+
+/** What the bot editor shows: the settings once loaded, and how the last save went. */
+data class BotEditing(
+    /** The bot being changed, or null while making a new one. */
+    val botId: String?,
+    val settings: BotSettings? = null,
+    val loading: Boolean = false,
+    val saving: Boolean = false,
+    /** Hermes asks before using an expensive model: its words, until Save is pressed again or the model changes. */
+    val confirm: String? = null,
+    val notice: String? = null,
+    /** Bumped on every load, so the editor knows to start from the settings again. */
+    val version: Int = 0,
+)
+
 data class ControlState(
     /** False when the bridge has no board (no doorway, or an older bridge). */
     val boardAvailable: Boolean = false,
@@ -70,6 +94,8 @@ data class ControlState(
     val routines: List<Routine>? = null,
     /** Helper agents of bots' running replies, by conversation. */
     val helpers: Map<String, List<Helper>> = emptyMap(),
+    /** The bot editor (§18.8), while open. */
+    val editing: BotEditing? = null,
 ) {
     val tasks: List<BoardTask> get() = columns.flatMap { it.tasks }
 }
@@ -201,6 +227,111 @@ class ControlRepository(private val scope: CoroutineScope, private val api: Chat
                     else -> changed ?: x
                 }
             }, notice = if (action == "run") "Started: it runs now, and its result goes where it always does" else s.notice)
+        }
+    }
+
+    // the bot editor (§18.8)
+
+    /** Open the editor for [botId], or for a new bot when null. */
+    fun editBot(botId: String?) {
+        _state.update { it.copy(editing = BotEditing(botId, loading = botId != null)) }
+        if (botId != null) scope.launch { describe(botId) }
+    }
+
+    fun closeEditor() = _state.update { it.copy(editing = null) }
+
+    private suspend fun describe(botId: String) {
+        try {
+            val b = api.request("bots.describe", buildJsonObject { put("bot_id", botId) }).obj("bot") ?: error("no bot")
+            fun switches(key: String) = (b[key] as? JsonArray).orEmpty().mapNotNull { e ->
+                val o = e as? JsonObject ?: return@mapNotNull null
+                BotSettings.Switch(o.str("name") ?: return@mapNotNull null, (o["enabled"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                    o.str("label") ?: o.str("name")!!, o.str("about").orEmpty())
+            }
+            val settings = BotSettings(botId, b.str("name").orEmpty(), b.str("about").orEmpty(), b.str("personality").orEmpty(),
+                b.str("model"), switches("skills"), switches("toolsets"), switches("connectors"))
+            _state.update { s -> s.copy(editing = s.editing?.takeIf { it.botId == botId }?.let {
+                it.copy(settings = settings, loading = false, version = it.version + 1) }) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            editorNotice("Couldn't load the bot: ${e.message}")
+        }
+    }
+
+    fun editorNotice(text: String?) =
+        _state.update { s -> s.copy(editing = s.editing?.copy(loading = false, saving = false, notice = text)) }
+
+    /**
+     * Save what changed from [was] to [now]; a new bot when there's no [was]. [confirm]: use an expensive model
+     * anyway. [done] gets the bot's id once saved.
+     */
+    fun saveBot(was: BotSettings?, now: BotSettings, confirm: Boolean = false, done: (String) -> Unit = {}) {
+        _state.update { s -> s.copy(editing = s.editing?.copy(saving = true, notice = null)) }
+        scope.launch {
+            try {
+                if (was == null) {
+                    val r = api.request("bots.create", buildJsonObject {
+                        put("name", now.name.trim())
+                        put("about", now.about.trim())
+                        if (now.personality.isNotBlank()) put("personality", now.personality)
+                        now.model?.let { put("model", it) }
+                    })
+                    val id = r.str("bot_id") ?: error("no bot id")
+                    _state.update { s -> s.copy(editing = s.editing?.copy(botId = id, saving = false)) }
+                    describe(id)
+                    done(id)
+                    return@launch
+                }
+                val r = api.request("bots.update", buildJsonObject {
+                    put("bot_id", now.botId)
+                    if (now.name != was.name) put("name", now.name.trim())
+                    if (now.about != was.about) put("about", now.about.trim())
+                    if (now.personality != was.personality) put("personality", now.personality)
+                    if (now.model != null && now.model != was.model) put("model", now.model)
+                    if (now.skills != was.skills) putJsonArray("skills") { now.skills.filter { it.enabled }.forEach { add(it.name) } }
+                    if (now.toolsets != was.toolsets) putJsonArray("toolsets") { now.toolsets.filter { it.enabled }.forEach { add(it.name) } }
+                    if (now.connectors != was.connectors) putJsonArray("connectors") { now.connectors.filter { it.enabled }.forEach { add(it.name) } }
+                    if (confirm) put("confirm", true)
+                }, timeoutMs = 90_000)
+                val ask = r.str("confirm")
+                _state.update { s -> s.copy(editing = s.editing?.copy(saving = false, confirm = ask)) }
+                if (ask == null) {
+                    describe(now.botId)
+                    done(now.botId)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                editorNotice(e.message ?: "Couldn't save")
+            }
+        }
+    }
+
+    fun deleteBot(botId: String, done: () -> Unit) = scope.launch {
+        try {
+            api.request("bots.delete", buildJsonObject { put("bot_id", botId) }, timeoutMs = 90_000)
+            _state.update { it.copy(editing = null) }
+            done()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            editorNotice("Couldn't delete the bot: ${e.message}")
+        }
+    }
+
+    /** A new picture for [botId] (already small: PNG, JPEG or WebP), or none when [bytes] is null. */
+    fun setPicture(botId: String, bytes: ByteArray?, done: () -> Unit) = scope.launch {
+        try {
+            api.request("bots.picture", buildJsonObject {
+                put("bot_id", botId)
+                if (bytes == null) put("clear", true) else put("data", java.util.Base64.getEncoder().encodeToString(bytes))
+            }, timeoutMs = 60_000)
+            done()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            editorNotice("Couldn't change the picture: ${e.message}")
         }
     }
 

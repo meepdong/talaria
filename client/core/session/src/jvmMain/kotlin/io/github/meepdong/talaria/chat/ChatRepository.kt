@@ -567,6 +567,7 @@ class ChatRepository(
         try {
             val r = api.request("bots.list", JsonObject(emptyMap()))
             _state.update { it.copy(bots = parseBots(r["bots"] as? JsonArray)) }
+            loadAvatars()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -579,8 +580,37 @@ class ChatRepository(
         val o = e as? JsonObject ?: return@mapNotNull null
         val id = o.str("id")?.takeIf { it.startsWith("bot:") } ?: return@mapNotNull null
         Bot(id, o.str("name") ?: id.removePrefix("bot:"), o.str("profile") ?: id.removePrefix("bot:"),
-            o.str("description") ?: o.str("role"))
+            o.str("description") ?: o.str("role"), (o["has_avatar"] as? JsonPrimitive)?.booleanOrNull ?: false)
     }
+
+    /** Fetch the pictures of bots that have one and aren't here yet; drop those of bots without one. */
+    private fun loadAvatars() {
+        val bots = _state.value.bots
+        _state.update { s -> s.copy(avatars = s.avatars.filterKeys { id -> bots.any { it.id == id && it.hasAvatar } }) }
+        bots.filter { it.hasAvatar && it.id !in _state.value.avatars }.forEach { b ->
+            scope.launch {
+                try {
+                    val r = api.request("bots.avatar", buildJsonObject { put("bot_id", b.id) })
+                    val data = r.str("data")?.takeIf { (r["found"] as? JsonPrimitive)?.booleanOrNull == true } ?: return@launch
+                    val bytes = Base64.getDecoder().decode(data)
+                    _state.update { it.copy(avatars = it.avatars + (b.id to bytes)) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // no picture is no problem: the initials show
+                }
+            }
+        }
+    }
+
+    /** A bot's picture changed on this device: fetch it again. */
+    fun reloadAvatar(botId: String) {
+        _state.update { it.copy(avatars = it.avatars - botId) }
+        loadAvatars()
+    }
+
+    /** Fetch the roster again, e.g. after a bot was made or deleted here. */
+    fun refreshBots() = scope.launch { loadBots() }
 
     // requests
 
@@ -828,7 +858,10 @@ class ChatRepository(
                 "chat.hidden" -> onHidden(p)
                 "chat.file", "chat.talk" -> onFile(p)  // a message the bridge keeps: a file, or what was said in Talk
                 "agent.default_model" -> _state.update { s -> s.copy(models = s.models?.copy(default = parseModel(p.obj("default")))) }
-                "bots.changed" -> _state.update { it.copy(bots = parseBots(p["bots"] as? JsonArray)) }
+                "bots.changed" -> {
+                    _state.update { it.copy(bots = parseBots(p["bots"] as? JsonArray)) }
+                    loadAvatars()
+                }
             }
         }
     }

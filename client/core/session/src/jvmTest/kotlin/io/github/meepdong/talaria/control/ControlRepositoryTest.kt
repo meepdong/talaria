@@ -126,4 +126,48 @@ class ControlRepositoryTest {
         advanceUntilIdle()
         assertNull(repo.state.value.helpers["c-1"])
     }
+
+    @Test
+    fun theBotEditorSavesOnlyWhatChangedAndAsksAboutExpensiveModels() = test { scope ->
+        val api = FakeApi()
+        api.answers["bots.describe"] = {
+            json("""{"bot":{"bot_id":"bot:scout","name":"Scout","about":"Finds things","personality":"Be kind.","model":"qwen/qwen3.8-flash",
+                "skills":[{"name":"research","enabled":true},{"name":"spotify","enabled":false}],
+                "toolsets":[{"name":"web","label":"Web","about":"Search","enabled":true}],"connectors":[]}}""")
+        }
+        var confirmNext = true
+        api.answers["bots.update"] = { p ->
+            if (confirmNext && "model" in p && "confirm" !in p) json("""{"applied":{},"confirm":"pricey/big is expensive"}""")
+            else json("""{"applied":{"model":true}}""")
+        }
+        api.answers["bots.create"] = { json("""{"bot_id":"bot:tripplanner"}""") }
+        val repo = ControlRepository(scope, api).also { it.start() }
+        repo.editBot("bot:scout")
+        advanceUntilIdle()
+        val was = repo.state.value.editing!!.settings!!
+        assertEquals(listOf("research"), was.skills.filter { it.enabled }.map { it.name })
+
+        val now = was.copy(about = "Finds places to eat", skills = was.skills.map { it.copy(enabled = true) })
+        var saved: String? = null
+        repo.saveBot(was, now) { saved = it }
+        advanceUntilIdle()
+        val sent = api.calls.last { it.first == "bots.update" }.second
+        assertEquals(setOf("bot_id", "about", "skills"), sent.keys)
+        assertEquals("""["research","spotify"]""", sent["skills"].toString())
+        assertEquals("bot:scout", saved)
+
+        repo.saveBot(was, was.copy(model = "pricey/big"))
+        advanceUntilIdle()
+        assertEquals("pricey/big is expensive", repo.state.value.editing!!.confirm)
+        repo.saveBot(was, was.copy(model = "pricey/big"), confirm = true)
+        advanceUntilIdle()
+        assertEquals("true", api.calls.last { it.first == "bots.update" }.second["confirm"].toString())
+        assertNull(repo.state.value.editing!!.confirm)
+
+        repo.editBot(null)
+        repo.saveBot(null, BotSettings("", "Trip Planner", "Plans trips", "", null, emptyList(), emptyList(), emptyList())) { saved = it }
+        advanceUntilIdle()
+        assertEquals("bot:tripplanner", saved)
+        assertEquals("""{"name":"Trip Planner","about":"Plans trips"}""", api.calls.last { it.first == "bots.create" }.second.toString())
+    }
 }

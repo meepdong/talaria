@@ -111,6 +111,19 @@ class MainActivity : ComponentActivity() {
             // as many as the system picker allows (often 100); the controller keeps the first 128
             val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { onPicked(it) }
             val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { onPicked(it) }
+            // a bot's picture (§18.8): one photo, made small here
+            val pickPicture = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                if (uri != null) {
+                    io.launch(Dispatchers.IO) {
+                        val bytes = runCatching { AndroidAttachments.picture(this@MainActivity, uri) }.getOrNull()
+                        controller.botPicturePicked(bytes, if (bytes == null) "Couldn't read that picture" else null)
+                    }
+                }
+            }
+            DisposableEffect(controller) {
+                controller.setPicturePicker { pickPicture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                onDispose { controller.setPicturePicker(null) }
+            }
             DisposableEffect(controller) {
                 controller.setFilePicker { photos ->
                     if (photos) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -180,6 +193,7 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled = current is Screen.Chat && current.tab == Tab.CHATS && current.view.room != null) { controller.closeRoom() }
             BackHandler(enabled = current is Screen.Status && current.view.canGoBack) { controller.showChats() }
             BackHandler(enabled = current is Screen.Server) { controller.showChats() }
+            BackHandler(enabled = current is Screen.BotEditor) { controller.closeBotEditor() }
             BackHandler(enabled = current is Screen.Terminal) {
                 if ((current as Screen.Terminal).view.open != null) controller.closeTerminal() else controller.showChats()
             }
