@@ -22,7 +22,7 @@
       "properties": {
         "request_id": {
           "type": "string",
-          "pattern": "^op-[0-9a-f]{16}$"
+          "pattern": "^(op|hc)-[0-9a-f]{16}$"
         },
         "choice": {
           "enum": [

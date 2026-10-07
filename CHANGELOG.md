@@ -4,6 +4,18 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Added
+- Hermes's own commands work in Talaria: in a chat with Hermes or a bot, type / to see Talaria's commands and then
+  Hermes's (/help, /usage, /insights, /compress, /kanban list, /skills, skill commands such as /weekly-review…).
+  What they print shows as a card in the chat; skill commands become a message the bot answers. Commands that
+  change Hermes's settings (/yolo, /personality, /reload, /kanban create…) ask first, with the usual approval card.
+
+### Fixed
+- The chat header on the phone shows the chat's or bot's name again (it was squeezed to "…" by the connection
+  text and the model chip): the connection is a dot, the model a small line under the name.
+
 ## [0.2.0-beta.21] - 2026-10-07
 
 ### Added

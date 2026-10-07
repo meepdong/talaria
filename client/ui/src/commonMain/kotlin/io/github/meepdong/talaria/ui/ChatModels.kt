@@ -143,6 +143,8 @@ data class ChatView(
     val modelPicker: String? = null,
     /** Side questions (/btw) on the open conversation. */
     val asides: List<AsideItem> = emptyList(),
+    /** Hermes's own commands in the open chat (§18.3), offered after Talaria's in the / menu. */
+    val hermesCommands: List<Command.Help> = emptyList(),
     /** /status, while it's showing. */
     val status: ConversationStatusView? = null,
     /** Whether this app can hand text to other apps (Share in a message's menu). */
@@ -187,7 +189,8 @@ data class ModelGroup(val provider: String, val name: String, val models: List<M
 
 data class ModelItem(val provider: String, val model: String, val label: String, val selected: Boolean)
 
-data class AsideItem(val id: String, val question: String, val answer: String?, val error: String?)
+/** A /btw side question, or (with [command]) one of Hermes's own commands and its output (§18.3). */
+data class AsideItem(val id: String, val question: String, val answer: String?, val error: String?, val command: Boolean = false)
 
 /** /status as label and value lines. */
 data class ConversationStatusView(val title: String, val lines: List<Pair<String, String>>)

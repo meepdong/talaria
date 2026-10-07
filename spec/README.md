@@ -594,3 +594,38 @@ name, member list or text; `AGENT_UNAVAILABLE` when the doorway is down; `METHOD
 Schemas: `rooms.list`, `rooms.list.result`, `rooms.open`, `rooms.open.result`, `rooms.send`, `rooms.send.result`,
 `rooms.stop`, `rooms.stop.result`, `rooms.approve`, `rooms.approve.result`, `rooms.create`, `rooms.create.result`,
 `rooms.changed`, `rooms.update`.
+
+### 18.3 Hermes's own commands
+
+Hermes has its own `/` commands (`/help`, `/usage`, `/compress`, `/yolo`, `/kanban list`, skill commands like
+`/weekly-review`, …). A device runs them in a conversation of the doorway's agent or a bot (§18.1): the bridge runs
+them in that chat's Hermes session through the doorway. Talaria's own commands (§11) are handled by the device and
+never reach this method.
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `commands.list` | request | `{conversation_id}` → `{commands, available}` |
+| `commands.run` | request | `{conversation_id, text}` → `{status, command, output?, turn?, text?, request_id?}` |
+
+A command is `{name, about, category, approve}`: `name` without the slash, `about` one line, `category` Hermes's
+grouping (`Session`, `Info`, `Tools & Skills`, …, or `Skills`), and `approve` true when running it asks the owner
+first. Commands that only make sense in a terminal or on the laptop (keys, logins, screens, clipboard, exit…) are
+left out and refused. `available` is false while the doorway is down.
+
+`commands.run` takes the whole line, `/name arg…`. `status` says what happened:
+
+- `done`: it ran; `output` is Hermes's answer as plain text (monospace, may be long).
+- `sent`: it became a message to the agent (a skill, `/plan`, …); `turn` is the turn started, as for `chat.send`
+  (§9), whose user text is the command line.
+- `prefill`: `text` should go into the composer for the owner to edit and send.
+- `pending`: it changes Hermes's settings or state, so it waits for approval. The bridge sends
+  `ops.approval.request` (§16) with `op` `hermes.command`, a `request_id` `hc-<16 hex>`, `params_json`
+  `{"command": "/name arg", "conversation_id": "…"}` and tier 1; a device answers with `ops.approve`, signed the
+  same way. The bridge checks the signature itself (not talaria-ops), then sends `ops.approval.done` and, once the
+  command ran, `ops.result` with `op` `hermes.command` and the output. A pending command expires after 120 s.
+
+Errors: `NOT_FOUND` for an unknown conversation or a command Hermes doesn't have; `INVALID_PARAMS` for a command
+that can't run from a phone (the message says so); `AGENT_UNAVAILABLE` when the doorway is down or Hermes fails;
+`METHOD_NOT_FOUND` without a doorway, or for a conversation of an agent the doorway doesn't serve.
+
+Schemas: `commands.list`, `commands.list.result`, `commands.run`, `commands.run.result`.

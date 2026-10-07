@@ -910,7 +910,17 @@ class TalariaController(
                     ?.let(c::stop) ?: c.notice("Nothing is running")
             }
             Command.New -> newConversation()
-            is Command.Unknown -> c.notice("Talaria doesn't know /${command.name}. Type / to see the commands it has.")
+            is Command.Unknown -> {
+                // not Talaria's: Hermes's own command (§18.3), when the open chat has them
+                val open = c.state.value.openId
+                val hermes = open?.let { c.state.value.commands[it] }
+                when {
+                    open == null -> c.notice("Talaria doesn't know /${command.name}. Hermes's own commands work inside a chat.")
+                    hermes != null && hermes.isEmpty() ->
+                        c.notice("Talaria doesn't know /${command.name}. Type / to see the commands it has.")
+                    else -> c.runCommand(text) { t -> voice.update { it.copy(dictation = Dictation(++dictations, t, send = false)) } }
+                }
+            }
         }
     }
 

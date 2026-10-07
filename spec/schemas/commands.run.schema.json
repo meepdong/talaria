@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/commands.run.schema.json",
+  "title": "commands.run",
+  "description": "Device to bridge (request): run one of Hermes's commands in a conversation (\u00a718.3).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "id",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "commands.run"
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 2,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "conversation_id",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

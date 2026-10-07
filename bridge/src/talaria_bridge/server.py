@@ -19,6 +19,7 @@ from websockets.http11 import Request
 from . import __version__
 from .agents import AgentMonitor
 from .chat import CHAT_METHODS, ChatService, RpcError
+from .commands import CommandError
 from .hermes_serve import BackendError, HermesBackend
 from .terminals import TERM_METHODS, Terminals
 from .updates import UPDATE_METHODS, AppUpdates, UpdateError
@@ -60,6 +61,11 @@ class _Session:
 
 
 OPS_METHODS = frozenset({"ops.catalogue", "ops.run", "ops.approve"})
+
+
+def _command_id(params: object) -> bool:
+    """An approval for one of Hermes's commands (§18.3), not a server operation."""
+    return isinstance(params, dict) and isinstance(params.get("request_id"), str) and params["request_id"].startswith("hc-")
 HERMES_METHODS = frozenset({"hermes.capabilities", "hermes.call", "hermes.respond"})  # the doorway (§18)
 
 
@@ -142,6 +148,9 @@ class BridgeServer:
                 with contextlib.suppress(ConnectionClosed):
                     await self._send(ws, m.notification("status", self.status_report(session)))
 
+    def _commands(self) -> bool:
+        return self.chat is not None and self.chat.commands is not None
+
     async def broadcast(self, msg: dict) -> None:
         """Send one notification to every session that is past `ready` (chat, §9)."""
         for ws, session in list(self._sessions.items()):
@@ -166,6 +175,22 @@ class BridgeServer:
             return
         with contextlib.suppress(ConnectionClosed):
             await self._send(ws, m.result(msg_id, result) if result is not None else m.error(msg_id, *error))
+
+    async def _command_approve(self, ws: ServerConnection, session: _Session, msg_id, params: dict) -> None:
+        """ops.approve for one of Hermes's commands (§18.3): the bridge checks the signature itself."""
+        device = self.registry.get_device(session.device_id)
+        try:
+            if device is None or device.revoked:
+                raise CommandError(m.INVALID_PARAMS, "This device isn't paired")
+            answer = m.result(msg_id, await self.chat.commands.approve(session.device_id, device.public_key, params))
+        except CommandError as exc:
+            answer = m.error(msg_id, exc.code, exc.message)
+        except Exception:
+            log.exception("command approval failed")
+            answer = m.error(msg_id, -32603, "Internal error")
+        if msg_id is not None:
+            with contextlib.suppress(ConnectionClosed):
+                await self._send(ws, answer)
 
     async def _hermes_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
         try:
@@ -207,9 +232,10 @@ class BridgeServer:
         except UpdateError as exc:
             return m.error(msg_id, exc.code, exc.message)
 
-    async def _chat_request(self, ws: ServerConnection, method: str, msg_id, params: dict) -> None:
+    async def _chat_request(self, ws: ServerConnection, method: str, msg_id, params: dict,
+                            device_id: str | None = None) -> None:
         try:
-            result, turn = await self.chat.handle(method, params)
+            result, turn = await self.chat.handle(method, params, device_id)
         except RpcError as exc:
             if msg_id is not None:
                 with contextlib.suppress(ConnectionClosed):
@@ -458,9 +484,15 @@ class BridgeServer:
             session.ready = True
             for request in self.ops.pending_notifications() if self.ops is not None else []:
                 await self._send(ws, request)  # approvals asked while this device was away (§10.8)
+            for request in self.chat.commands.pending_notifications() if self._commands() else []:
+                await self._send(ws, request)  # Hermes's commands waiting likewise (§18.3)
         elif method == "status.get":
             if msg_id is not None:
                 await self._send(ws, m.result(msg_id, self.status_report(session)))
+        elif method == "ops.approve" and session.ready and self._commands() and _command_id(msg.get("params")):
+            task = asyncio.ensure_future(self._command_approve(ws, session, msg_id, msg["params"]))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         elif method in OPS_METHODS and session.ready and self.ops is not None:
             # an operation may run for minutes, so it runs beside the reader
             params = msg.get("params")
@@ -496,7 +528,8 @@ class BridgeServer:
         elif method in CHAT_METHODS and self.chat is not None:
             # Chat calls may wait on the agent, so they run beside the reader, not in it.
             params = msg.get("params")
-            task = asyncio.ensure_future(self._chat_request(ws, method, msg_id, params if isinstance(params, dict) else {}))
+            task = asyncio.ensure_future(self._chat_request(ws, method, msg_id, params if isinstance(params, dict) else {},
+                                                            session.device_id))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         elif method in CHAT_METHODS and msg_id is not None:

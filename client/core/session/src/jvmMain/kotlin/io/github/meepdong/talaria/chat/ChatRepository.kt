@@ -30,6 +30,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -128,6 +129,69 @@ class ChatRepository(
         if (conversationId == null) return
         val thread = _state.value.threads[conversationId]
         if (thread == null || (!thread.loaded && !thread.loading)) scope.launch { loadNewest(conversationId) }
+        if (conversationId !in _state.value.commands) scope.launch { loadCommands(conversationId) }
+    }
+
+    /** Hermes's own commands for this conversation (§18.3), for the / menu. Kept empty where there are none. */
+    private suspend fun loadCommands(conversationId: String) {
+        val list = try {
+            val r = api.request("commands.list", buildJsonObject { put("conversation_id", conversationId) })
+            if ((r["available"] as? JsonPrimitive)?.booleanOrNull == false) return  // the doorway is down: ask again later
+            (r["commands"] as? JsonArray).orEmpty().mapNotNull { e ->
+                val o = e as? JsonObject ?: return@mapNotNull null
+                HermesCommand(o.str("name") ?: return@mapNotNull null, o.str("about").orEmpty(), o.str("category").orEmpty(),
+                    (o["approve"] as? JsonPrimitive)?.booleanOrNull ?: false)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RpcException) {
+            if (e.code != METHOD_NOT_FOUND) return
+            emptyList()
+        } catch (e: Exception) {
+            return
+        }
+        _state.update { s -> s.copy(commands = s.commands + (conversationId to list)) }
+    }
+
+    /**
+     * Run one of Hermes's own commands in the open conversation (§18.3). Its output shows as a card there; one that
+     * gives text to edit hands it to [prefill]; one that changes Hermes's settings waits for its approval card.
+     */
+    fun runCommand(text: String, prefill: (String) -> Unit) {
+        val conv = _state.value.openId
+        if (conv == null) {
+            notice("Hermes's commands run in a chat. Open one first.")
+            return
+        }
+        scope.launch {
+            try {
+                val r = api.request("commands.run", buildJsonObject {
+                    put("conversation_id", conv)
+                    put("text", text.trim())
+                }, timeoutMs = 130_000)
+                val line = r.str("command") ?: text.trim()
+                val output = r.str("output")?.takeIf { it.isNotBlank() }
+                when (r.str("status")) {
+                    "done" -> commandCard(conv, line, output ?: "(no output)")
+                    "sent" -> output?.let { commandCard(conv, line, it) }
+                    "prefill" -> {
+                        prefill(r.str("text").orEmpty())
+                        output?.let(::notice)
+                    }
+                    "pending" -> notice("$line changes Hermes's settings: allow it on the card above")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice(e.message ?: "Hermes couldn't run that")
+            }
+        }
+    }
+
+    private suspend fun commandCard(conv: String, line: String, output: String) = lock.withLock {
+        val card = Aside("cmd-" + nowMs() + "-" + line.hashCode().toUInt(), line, "```\n" + output.trimEnd() + "\n```",
+            command = true)
+        _state.update { s -> s.copy(asides = s.asides + (conv to (s.asides[conv].orEmpty() + card).takeLast(MAX_ASIDES))) }
     }
 
     /** Start a new conversation: the next message sent gets a new id from the bridge. */
@@ -1080,6 +1144,7 @@ class ChatRepository(
         const val CHUNK_BYTES = 512 * 1024
         private const val STALE_RETRIES = 3
         private const val MAX_ASIDES = 5
+        private const val METHOD_NOT_FOUND = -32601
         private const val MAX_HIDE = 50
         private const val HISTORY_KEY = "h:"
         private val LOCAL_STATES = setOf(MessageState.SENDING, MessageState.NOT_SENT, MessageState.QUEUED, MessageState.STREAMING)

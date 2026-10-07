@@ -138,6 +138,47 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun hermesCommandsAreListedAndRunInTheOpenChat() = chatTest { scope ->
+        val api = FakeApi()
+        api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"bot:scout","title":"Scout","created_at":1,"updated_at":2}]}""") }
+        api.answers["chat.history"] = { json("""{"messages":[],"next_before":null}""") }
+        api.answers["commands.list"] = { json("""{"available":true,"commands":[{"name":"usage","about":"Token usage","category":"Info","approve":false},
+            {"name":"yolo","about":"Skip approvals","category":"Configuration","approve":true}]}""") }
+        api.answers["commands.run"] = { p ->
+            when (p["text"].toString().trim('"')) {
+                "/usage" -> json("""{"status":"done","command":"/usage","output":"12 calls"}""")
+                "/undo" -> json("""{"status":"prefill","command":"/undo","text":"Find a cafe"}""")
+                else -> json("""{"status":"pending","command":"/yolo","request_id":"hc-0123456789abcdef"}""")
+            }
+        }
+        val repo = repo(scope, api)
+        advanceUntilIdle()
+        api.sessions.emit("s-1")
+        advanceUntilIdle()
+        repo.open("c-1")
+        advanceUntilIdle()
+        assertEquals(listOf("usage", "yolo"), repo.state.value.commands["c-1"]!!.map { it.name })
+        assertEquals(true, repo.state.value.commands["c-1"]!![1].approve)
+
+        repo.runCommand("/usage") { error("no prefill") }
+        advanceUntilIdle()
+        val card = repo.state.value.asides["c-1"]!!.single()
+        assertEquals("/usage", card.question)
+        assertEquals("```\n12 calls\n```", card.answer)
+        assertEquals(true, card.command)
+
+        var composer = ""
+        repo.runCommand("/undo") { composer = it }
+        advanceUntilIdle()
+        assertEquals("Find a cafe", composer)
+
+        repo.runCommand("/yolo") { error("no prefill") }
+        advanceUntilIdle()
+        assertEquals("/yolo changes Hermes's settings: allow it on the card above", repo.state.value.notice)
+        assertEquals(1, repo.state.value.asides["c-1"]!!.size)
+    }
+
+    @Test
     fun hidingMessagesAndPinning() = chatTest { scope ->
         val api = FakeApi()
         api.answers["conversations.list"] = { json("""{"conversations":[{"conversation_id":"c-1","agent_id":"hermes","title":"Trip","created_at":1,"updated_at":2,"pinned":true}]}""") }

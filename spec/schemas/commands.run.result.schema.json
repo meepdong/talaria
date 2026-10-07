@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/commands.run.result.schema.json",
+  "title": "commands.run.result",
+  "description": "Result of commands.run (\u00a718.3).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "done",
+            "sent",
+            "prefill",
+            "pending"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "output": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "object"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^hc-[0-9a-f]{16}$"
+        }
+      },
+      "required": [
+        "status",
+        "command"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

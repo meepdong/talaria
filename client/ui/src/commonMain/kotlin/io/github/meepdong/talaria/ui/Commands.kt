@@ -53,11 +53,12 @@ sealed interface Command {
             }
         }
 
-        /** Menu entries for what's typed so far: "/" lists all, "/st" narrows it. */
-        fun suggestions(input: String): List<Help> {
+        /** Menu entries for what's typed so far: "/" lists all, "/st" narrows it; Talaria's first, then [hermes]'s. */
+        fun suggestions(input: String, hermes: List<Help> = emptyList()): List<Help> {
             if (!input.startsWith("/") || input.startsWith("//") || ' ' in input || '\n' in input) return emptyList()
             val typed = input.drop(1).lowercase()
-            return HELP.filter { it.name.startsWith(typed) }
+            val own = HELP.map { it.name }.toSet() + ALIASES.keys
+            return (HELP + hermes.filter { it.name !in own }).filter { it.name.startsWith(typed) }
         }
     }
 }

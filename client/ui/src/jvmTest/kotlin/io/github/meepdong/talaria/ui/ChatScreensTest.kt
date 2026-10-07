@@ -22,7 +22,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import io.github.meepdong.talaria.chat.Aside
 import io.github.meepdong.talaria.chat.Attachment
+import io.github.meepdong.talaria.chat.HermesCommand
 import io.github.meepdong.talaria.chat.ChatMessage
 import io.github.meepdong.talaria.chat.ChatState
 import io.github.meepdong.talaria.chat.ConversationSummary
@@ -620,6 +622,36 @@ class ChatScreensTest {
         assertNull(Command.parse("a /btw in the middle"))
         assertEquals(listOf("steer", "status", "stop"), Command.suggestions("/st").map { it.name })
         assertEquals(emptyList(), Command.suggestions("/steer x"))
+        // Hermes's own come after Talaria's, and never shadow them
+        val hermes = listOf(Command.Help("status", "/status", "Hermes's status"), Command.Help("stats", "/stats", "Usage"))
+        assertEquals(listOf("steer", "status", "stop", "stats"), Command.suggestions("/st", hermes).map { it.name })
+        assertEquals("Model, tokens and cost of this chat", Command.suggestions("/status", hermes).single().what)
+    }
+
+    private fun withCommands(s: ChatState) = s.copy(
+        commands = mapOf("c-bot" to listOf(HermesCommand("usage", "Token usage", "Info", false),
+            HermesCommand("yolo", "Skip approvals", "Configuration", true))),
+        asides = mapOf("c-bot" to listOf(Aside("cmd-1", "/usage", "```\n12 calls\n```", command = true))),
+    )
+
+    @Test
+    fun aPhoneShowsTheBotsNameAndHermessCommands() = runComposeUiTest {
+        val actions = Recorder()
+        val v = view(withCommands(withBots(state(), openBot = true)))
+        assertEquals(listOf("usage", "yolo"), v.hermesCommands.map { it.name })
+        assertEquals("Skip approvals · asks you first", v.hermesCommands[1].what)
+        setContent { androidx.compose.foundation.layout.Box(Modifier.size(380.dp, 800.dp)) { ChatHome(v, actions) } }
+        // #53: the name has the room, the connection is only a dot
+        onNodeWithTag("title").assertTextContains("Scout", substring = true).assertIsDisplayed()
+        onNodeWithText("Connected").assertDoesNotExist()
+        onNodeWithTag("connection").assertIsDisplayed()
+        // a command's output is a card in the chat
+        onNodeWithText("/usage").assertExists()
+        onNodeWithTag("command-output", useUnmergedTree = true).assertExists()
+        // the / menu offers Hermes's commands too
+        onNodeWithTag("composer").performTextInput("/yo")
+        onNodeWithTag("command-yolo").assertExists().performClick()
+        onNodeWithTag("composer").assertTextContains("/yolo ")
     }
 
     @Test

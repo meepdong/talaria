@@ -31,6 +31,7 @@ from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .bots import profile_of
+from .commands import COMMAND_METHODS, CommandError
 from .rooms import ROOM_METHODS, RoomError
 from .workorders import mark_workers
 from .hermes import HermesClient, HermesError, HermesUnavailable
@@ -478,6 +479,7 @@ class ChatService:
         self.hermes_watch = None  # checks Hermes still answers as the bridge expects (hermes_check.py), set by make_chat
         self.bots = None  # Hermes's bots as chats (bots.py, §18), set by the server when the doorway is on
         self.rooms = None  # Hermes's group chats (rooms.py, §18.2), likewise
+        self.commands = None  # Hermes's own / commands (commands.py, §18.3), likewise
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -1414,7 +1416,7 @@ class ChatService:
     async def balance(self) -> dict:
         return {"accounts": list(await asyncio.gather(*(a.balance() for a in self.accounts)))}
 
-    async def handle(self, method: str, p: dict) -> tuple[dict, Turn | Job | None]:
+    async def handle(self, method: str, p: dict, device_id: str | None = None) -> tuple[dict, Turn | Job | None]:
         """Dispatch one chat request. Returns (result, turn to start after the result is sent)."""
         if method in BLOB_METHODS:
             if self.blobs is None:
@@ -1460,6 +1462,13 @@ class ChatService:
             return result, None
         if method in BOT_METHODS:
             return await self.bots_handle(method, p), None
+        if method in COMMAND_METHODS:
+            if self.commands is None:
+                raise RpcError(m.METHOD_NOT_FOUND, "Hermes's commands aren't set up on this bridge")
+            try:
+                return await self.commands.handle(method, p, f"device:{device_id}" if device_id else "device")
+            except CommandError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method in ROOM_METHODS:
             if self.rooms is None:
                 raise RpcError(m.METHOD_NOT_FOUND, "Hermes's group chats aren't set up on this bridge")
@@ -1538,7 +1547,7 @@ class ChatService:
 
 
 BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
-CHAT_METHODS = BOT_METHODS | ROOM_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

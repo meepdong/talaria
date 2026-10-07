@@ -139,7 +139,10 @@ fun chatView(
                 ModelItem(p.id, m, m.substringAfterLast('/'), state.effectiveModel == ModelChoice(p.id, m))
             })
         },
-        asides = state.openId?.let { state.asides[it] }.orEmpty().map { AsideItem(it.id, it.question, it.answer, it.error) },
+        asides = state.openId?.let { state.asides[it] }.orEmpty().map { AsideItem(it.id, it.question, it.answer, it.error, it.command) },
+        hermesCommands = state.openId?.let { state.commands[it] }.orEmpty().map {
+            Command.Help(it.name, "/${it.name}", it.about + if (it.approve) " · asks you first" else "")
+        },
         status = state.status?.takeIf { it.conversationId == state.openId }?.let { statusLines(it, state.openSummary?.title) },
         opsApprovals = opsApprovals,
         opsResults = opsResults,

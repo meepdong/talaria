@@ -111,15 +111,17 @@ fun ChatHome(view: ChatView, actions: TalariaActions, menu: @Composable () -> Un
 }
 
 @Composable
-private fun ConnectionDot(view: ChatView, actions: TalariaActions) {
+private fun ConnectionDot(view: ChatView, actions: TalariaActions, dotOnly: Boolean = false) {
     Row(
         Modifier.clickable(onClick = actions::showStatus).padding(8.dp).testTag("connection"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(10.dp).background(view.connection.color(), CircleShape))
-        Spacer(Modifier.width(6.dp))
-        Text(view.connectionSummary, style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!dotOnly) {
+            Spacer(Modifier.width(6.dp))
+            Text(view.connectionSummary, style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -294,15 +296,25 @@ private fun Conversation(
             if (showBack) {
                 TextButton(onClick = actions::closeConversation, modifier = Modifier.testTag("back")) { Text("←") }
             }
-            Text((if (view.openBot != null) "🤖 " else "") + view.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
-            if (showBack) ConnectionDot(view, actions)
+            val title = (if (view.openBot != null) "🤖 " else "") + view.title
+            if (showBack) {
+                // a phone: the name gets the width; the model is a small line under it, the connection a dot (#53)
+                Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("title"))
+                    view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions, small = true) }
+                }
+                ConnectionDot(view, actions, dotOnly = true)
+            } else {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp).testTag("title"))
+            }
             if (view.openId != null) {
                 IconButton(onClick = actions::newConversation, modifier = Modifier.testTag("new-chat-here")) {
                     Icon(TalariaIcons.Plus, "New chat")
                 }
             }
-            view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions) }
+            if (!showBack) view.model?.let { ModelChip(it, view.modelGroups, view.modelPicker, actions) }
             ConversationMenu(view.openId, view.voice, actions, onRename = { renaming = true })
             menu()
         }
@@ -348,14 +360,20 @@ private fun Conversation(
 
 /** The model this chat uses; tap it for a searchable dropdown of the models Hermes has keys for (Hermes's /model). */
 @Composable
-private fun ModelChip(label: String, groups: List<ModelGroup>, picker: String?, actions: TalariaActions) {
+private fun ModelChip(label: String, groups: List<ModelGroup>, picker: String?, actions: TalariaActions, small: Boolean = false) {
     var query by remember(picker != null) { mutableStateOf(picker.orEmpty()) }
     Box {
-        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier = Modifier.widthIn(max = 200.dp).clip(RoundedCornerShape(50)).clickable { actions.openModelPicker() }
-                .testTag("model")) {
-            Text("$label ▾", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge,
+        if (small) {
+            Text("$label ▾", Modifier.clickable { actions.openModelPicker() }.testTag("model"),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.widthIn(max = 200.dp).clip(RoundedCornerShape(50)).clickable { actions.openModelPicker() }
+                    .testTag("model")) {
+                Text("$label ▾", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         DropdownMenu(expanded = picker != null, onDismissRequest = actions::closeModelPicker,
             modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 460.dp).testTag("model-picker")) {
@@ -636,14 +654,21 @@ private fun AsideCard(a: AsideItem, actions: TalariaActions) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("By the way: ${a.question}", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
-                    fontStyle = FontStyle.Italic)
+                if (a.command) {
+                    Text(a.question, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontFamily = FontFamily.Monospace)
+                } else {
+                    Text("By the way: ${a.question}", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
+                        fontStyle = FontStyle.Italic)
+                }
                 TextButton(onClick = { actions.dismissAside(a.id) }, modifier = Modifier.testTag("dismiss-aside")) { Text("✕") }
             }
             when {
                 a.error != null -> Text(a.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 a.answer == null -> Text("Thinking…", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                a.command -> Box(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()).testTag("command-output")) {
+                    MarkdownText(a.answer)
+                }
                 else -> MarkdownText(a.answer)
             }
         }
@@ -734,10 +759,11 @@ private fun Composer(view: ChatView, actions: TalariaActions) {
                 }
             }
         }
-        val suggestions = Command.suggestions(text)
+        val suggestions = Command.suggestions(text, view.hermesCommands)
         if (suggestions.isNotEmpty()) {
             Card(Modifier.fillMaxWidth().padding(bottom = 6.dp).testTag("commands")) {
-                Column(Modifier.padding(vertical = 4.dp)) {
+                // Talaria's own and Hermes's (§18.3): scrolls when they don't fit
+                Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
                     suggestions.forEach { c ->
                         Row(Modifier.fillMaxWidth().clickable { setText("/${c.name} ") }.padding(horizontal = 14.dp, vertical = 8.dp)
                             .testTag("command-${c.name}"), verticalAlignment = Alignment.CenterVertically) {

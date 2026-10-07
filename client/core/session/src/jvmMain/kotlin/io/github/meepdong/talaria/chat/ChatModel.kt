@@ -42,8 +42,15 @@ data class ModelOptions(val current: ModelChoice?, val providers: List<Provider>
     data class Provider(val id: String, val name: String, val models: List<String>)
 }
 
-/** A side question (Hermes's /btw) and its answer, once it comes. Not saved in history. */
-data class Aside(val id: String, val question: String, val answer: String? = null, val error: String? = null)
+/**
+ * A side question (Hermes's /btw) and its answer, once it comes; or, with [command], one of Hermes's own commands
+ * and what it printed (§18.3). Not saved in history.
+ */
+data class Aside(val id: String, val question: String, val answer: String? = null, val error: String? = null,
+                 val command: Boolean = false)
+
+/** One of Hermes's own / commands (§18.3). [approve]: running it asks the owner first. */
+data class HermesCommand(val name: String, val about: String, val category: String, val approve: Boolean)
 
 /** What `chat.status` reports about a conversation. */
 data class ConversationStatus(
@@ -193,6 +200,8 @@ data class ChatState(
     val balances: List<AccountBalance> = emptyList(),
     /** Hermes's bots, when the bridge has its doorway (§18.1); empty otherwise. */
     val bots: List<Bot> = emptyList(),
+    /** Hermes's own / commands by conversation (§18.3); a conversation without them maps to an empty list. */
+    val commands: Map<String, List<HermesCommand>> = emptyMap(),
 ) {
     val openMessages: List<ChatMessage>
         get() = openId?.let { threads[it]?.messages } ?: draft
