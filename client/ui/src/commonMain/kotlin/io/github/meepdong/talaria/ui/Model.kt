@@ -43,6 +43,8 @@ sealed interface Screen {
         val files: FilesView = FilesView(),
         val schedule: ScheduleView = ScheduleView(),
         val todos: TodosView = TodosView(),
+        /** Hermes's board of bots' tasks (§18.4), beside the to-dos. */
+        val board: BoardView = BoardView(),
         /** "Archived", "Deleted": what the last swipe did, with Undo, for a few seconds. */
         val undo: String? = null,
     ) : Screen
@@ -404,6 +406,16 @@ interface TalariaActions {
     fun deleteTodoComment(id: String, commentId: String) {}
     /** Ask Hermes to sort every open to-do into groups again. */
     fun regroupTodos() {}
+
+    // Hermes's board (§18.4) and usage (§18.5)
+    fun showBoard(show: Boolean) {}
+    fun boardAdd(title: String, assignee: String?) {}
+    fun boardOpen(taskId: String?) {}
+    fun boardMove(taskId: String, status: String) {}
+    fun boardGive(taskId: String, assignee: String) {}
+    fun boardComment(taskId: String, text: String) {}
+    fun boardDismiss() {}
+    fun loadUsage(days: Int) {}
     /** A new chat asking Hermes to do it; the to-do remembers the chat. */
     fun handTodoToAgent(id: String) {}
 

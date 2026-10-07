@@ -45,6 +45,8 @@ data class ServerView(
     /** Operations on their way, by name (e.g. "service.logs"). */
     val busy: Set<String> = emptySet(),
     val error: String? = null,
+    /** What Hermes spent (§18.5); null when the bridge can't say. */
+    val usage: UsageView? = null,
     /** Hermes's skills and whether each is on for Talaria; [hasSkills] when the server can list them. */
     val hasSkills: Boolean = false,
     val skillsSummary: String = "",

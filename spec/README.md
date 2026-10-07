@@ -629,3 +629,51 @@ that can't run from a phone (the message says so); `AGENT_UNAVAILABLE` when the 
 `METHOD_NOT_FOUND` without a doorway, or for a conversation of an agent the doorway doesn't serve.
 
 Schemas: `commands.list`, `commands.list.result`, `commands.run`, `commands.run.result`.
+
+### 18.4 The board (Kanban)
+
+Hermes keeps a Kanban board of tasks; a task given to a bot (its `assignee`) and made `ready` is picked up and worked
+by that bot on its own, which writes a summary when it's done. Hermes Desktop shows the same board. The bridge reads
+and changes it through the doorway (the board's own addresses on `hermes serve`).
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `board.get` | request | `{}` → `{columns, available}` |
+| `board.task` | request | `{task_id}` → `{task, comments}` |
+| `board.add` | request | `{title, body?, assignee?, triage?}` → `{task, warning?}` |
+| `board.update` | request | `{task_id, status?, assignee?, title?, body?, priority?}` → `{task}` |
+| `board.comment` | request | `{task_id, text}` → `{}` |
+| `board.changed` | notification | `{columns}` |
+
+`columns` lists, in order, `triage`, `todo`, `scheduled`, `ready`, `running`, `blocked`, `review` and `done`, each
+`{name, tasks}`. A **task** is `{id, title, status, priority, created_at, body?, assignee?, started_at?,
+completed_at?, summary?, result?, error?, comments}`: `assignee` is a bot id (§18.1) or `"assistant"` for the owner's
+own assistant, `summary` the worker's latest note, `error` its last failure, `comments` how many there are (on
+`board.task`, `comments` is the list `{author, text, at}` instead). `board.update` moves a task (any status but
+`running`, which only a worker sets; `archived` takes it off the board), gives it to someone (`assignee`, or `""` for
+nobody), or edits it; Hermes refuses a move it doesn't allow (e.g. to `ready` while a task it depends on isn't done)
+with `CONFLICT` and says why. `board.add` makes a task in `ready` when it has an `assignee` (so it starts), `todo`
+otherwise, or `triage` with `triage: true`; `warning` says when nothing will pick it up yet. `board.get` marks the
+board as watched by that device for 10 minutes: while it is, the bridge checks it every few seconds and sends
+`board.changed` when it changed.
+
+Errors: `NOT_FOUND` for an unknown task; `INVALID_PARAMS` for a bad field; `CONFLICT` as above;
+`AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a doorway.
+
+### 18.5 Usage
+
+| Method | Kind | Params → result |
+|---|---|---|
+| `usage.get` | request | `{days}` → `{days, total, by_day, by_model}` |
+
+What Hermes spent over the last `days` (1–365), from its own records (every surface: chats, Talk's jobs, bots,
+automations, Hermes Desktop). `total` and each row of `by_day` (`{day, …}`, oldest first, `day` as `YYYY-MM-DD`) and
+`by_model` (`{model, …}`, costliest first) carry `cost_usd`, `estimated` (true when the cost is Hermes's estimate
+rather than what the provider charged), `input_tokens`, `output_tokens`, `sessions` and `calls`.
+
+Errors: `INVALID_PARAMS` for bad `days`; `AGENT_UNAVAILABLE` when the doorway is down; `METHOD_NOT_FOUND` without a
+doorway.
+
+Schemas: `board.get`, `board.get.result`, `board.task`, `board.task.result`, `board.add`, `board.add.result`,
+`board.update`, `board.update.result`, `board.comment`, `board.comment.result`, `board.changed`, `usage.get`,
+`usage.get.result`.

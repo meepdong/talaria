@@ -31,6 +31,7 @@ from .todo_groups import GroupingError, group_todos
 from .todos import TODO_METHODS, TodoError, TodoStore
 from .blobs import BLOB_METHODS, Blob, BlobError, BlobStore, safe_name
 from .bots import profile_of
+from .board import BOARD_METHODS, BoardError
 from .commands import COMMAND_METHODS, CommandError
 from .rooms import ROOM_METHODS, RoomError
 from .workorders import mark_workers
@@ -480,6 +481,7 @@ class ChatService:
         self.bots = None  # Hermes's bots as chats (bots.py, §18), set by the server when the doorway is on
         self.rooms = None  # Hermes's group chats (rooms.py, §18.2), likewise
         self.commands = None  # Hermes's own / commands (commands.py, §18.3), likewise
+        self.board = None  # Hermes's Kanban board and usage (board.py, §18.4–18.5), likewise
         self.agent_names: dict[str, str] = {}  # agent id -> its name (agents.json), set by make_chat
         self._bot_lock = asyncio.Lock()
         if automations is not None:
@@ -515,7 +517,8 @@ class ChatService:
         tasks = [t for t in (self.automations.poll() if self.automations is not None else None,
                              self.hermes_watch.run() if self.hermes_watch is not None else None,
                              self.bots.run() if self.bots is not None else None,
-                             self.rooms.run() if self.rooms is not None else None) if t is not None]
+                             self.rooms.run() if self.rooms is not None else None,
+                             self.board.run() if self.board is not None else None) if t is not None]
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -1462,6 +1465,13 @@ class ChatService:
             return result, None
         if method in BOT_METHODS:
             return await self.bots_handle(method, p), None
+        if method in BOARD_METHODS:
+            if self.board is None:
+                raise RpcError(m.METHOD_NOT_FOUND, "Hermes's board isn't set up on this bridge")
+            try:
+                return await self.board.handle(method, p), None
+            except BoardError as exc:
+                raise RpcError(exc.code, exc.message) from None
         if method in COMMAND_METHODS:
             if self.commands is None:
                 raise RpcError(m.METHOD_NOT_FOUND, "Hermes's commands aren't set up on this bridge")
@@ -1547,7 +1557,7 @@ class ChatService:
 
 
 BOT_METHODS = frozenset({"bots.list", "bots.open", "bots.avatar"})  # Hermes's bots (§18)
-CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
+CHAT_METHODS = BOT_METHODS | ROOM_METHODS | COMMAND_METHODS | BOARD_METHODS | frozenset({"chat.send", "chat.cancel", "chat.turn.get", "chat.history",
                           "conversations.list", "conversations.rename", "conversations.delete",
                           "conversations.set_model", "agent.models", "agent.set_default_model", "chat.steer", "chat.approve", "chat.aside", "chat.status",
                           "automations.run_in_chat", "conversations.pin", "conversations.archive", "chat.hide",

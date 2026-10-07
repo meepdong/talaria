@@ -80,6 +80,8 @@ fun ServerScreen(view: ServerView, actions: TalariaActions) {
             Section("Earlier results") { view.results.drop(1).forEach { OpsResultCard(it, actions) } }
         }
 
+        view.usage?.let { u -> Section("Hermes's usage") { UsageSection(u, actions) } }
+
         Section("Overview") {
             Text(view.overview.ifEmpty { "…" }, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("server-overview"))
             view.overviewRows.forEach { (k, v) ->

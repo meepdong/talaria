@@ -32,6 +32,7 @@ from .ops.client import OpsClient
 from .server_ops import ServerOps
 from .hermes import HermesClient, read_api_key
 from .bots import Bots
+from .board import Board
 from .commands import Commands
 from .rooms import Rooms
 from .hermes_check import HermesWatch
@@ -252,6 +253,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         talker = next((a for a in agents if a.serve_url), None)
         chat.rooms = Rooms(doorway, chat.bots, assistant_name=(talker.talk_name or talker.name) if talker else "Hermes")
         chat.commands = Commands(doorway, chat, talker.id if talker else None)  # Hermes's own / commands (§18.3)
+        chat.board = Board(doorway)  # the Kanban board and usage (§18.4–18.5)
+        chat.board.broadcast = lambda msg: chat.broadcast(msg)
         chat.rooms.broadcast = lambda msg: chat.broadcast(msg)  # group chats (§18.2)
     bridge = BridgeServer(registry, key, settings, AgentMonitor(agents), chat, ops, updates, doorway)
     tools = make_agent_tools(agents, chat, ops)

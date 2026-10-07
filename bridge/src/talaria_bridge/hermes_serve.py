@@ -192,12 +192,13 @@ class HermesServe:
                 if inspect.isawaitable(done):
                     await done
 
-    async def rest(self, path: str) -> object:
-        """GET one of its REST addresses (e.g. the Kanban board), with the same token."""
+    async def rest(self, path: str, method: str = "GET", body: dict | None = None) -> object:
+        """One of its REST addresses (e.g. the Kanban board), with the same token."""
         base = self.url.replace("ws://", "http://", 1).replace("wss://", "https://", 1).rsplit("/api/ws", 1)[0]
         async with httpx.AsyncClient(timeout=CALL_TIMEOUT_S) as http:
             try:
-                resp = await http.get(base + path, headers={"X-Hermes-Session-Token": self.token})
+                resp = await http.request(method, base + path, headers={"X-Hermes-Session-Token": self.token},
+                                          json=body)
             except httpx.HTTPError as exc:
                 raise ServeUnavailable(f"{type(exc).__name__}: {exc}") from exc
         if resp.status_code >= 400:
@@ -406,6 +407,13 @@ class HermesBackend:
         if hs is None:
             raise ServeUnavailable("Hermes's backend isn't connected")
         return await hs.call(method, params or {}, timeout=timeout)
+
+    async def rest(self, path: str, method: str = "GET", body: dict | None = None) -> object:
+        """One of Hermes's REST addresses on this connection (the Kanban board, usage: §18.4–18.5)."""
+        hs = self._hs
+        if hs is None:
+            raise ServeUnavailable("Hermes's backend isn't connected")
+        return await hs.rest(path, method, body)
 
     def listen(self, session_id: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()

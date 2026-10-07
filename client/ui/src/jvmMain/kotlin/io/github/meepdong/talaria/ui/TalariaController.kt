@@ -12,6 +12,8 @@ import io.github.meepdong.talaria.chat.ServerFile
 import io.github.meepdong.talaria.chat.VoiceApi
 import io.github.meepdong.talaria.ops.OpsRepository
 import io.github.meepdong.talaria.rooms.RoomsRepository
+import io.github.meepdong.talaria.control.ControlRepository
+import io.github.meepdong.talaria.control.ControlState
 import io.github.meepdong.talaria.rooms.RoomsState
 import io.github.meepdong.talaria.ops.OpsState
 import io.github.meepdong.talaria.files.FilesRepository
@@ -117,6 +119,7 @@ class TalariaController(
             val bridge: PairedBridge, val client: TnpClient, val chat: ChatRepository, val files: FilesRepository,
             val todos: TodosRepository, val schedule: ScheduleRepository, val ops: OpsRepository,
             val updates: UpdateRepository, val terminals: TerminalRepository, val rooms: RoomsRepository,
+            val control: ControlRepository,
             val voice: VoiceApi = VoiceApi(client.asChatApi()),
         ) : Mode
     }
@@ -131,6 +134,8 @@ class TalariaController(
         val conversationOpen: Boolean = false,
         /** The group chat showing (§18.2), instead of a conversation. */
         val roomOpen: String? = null,
+        /** The To-dos tab shows Hermes's board (§18.4) instead of the list. */
+        val board: Boolean = false,
         val tab: Tab = Tab.HOME,
         val menuOpen: Boolean = false,
         val modelQuery: String? = null,
@@ -326,6 +331,7 @@ class TalariaController(
         val mode: Mode, val state: ConnectionState?, val chat: ChatState?, val files: FilesState? = null,
         val todos: TodosState? = null, val schedule: ScheduleState? = null, val ops: OpsState? = null,
         val updates: UpdateState? = null, val terminal: TerminalState? = null, val rooms: RoomsState? = null,
+        val control: ControlState? = null,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -333,9 +339,9 @@ class TalariaController(
         if (m is Mode.Connected) {
             combine(
                 combine(m.client.state, m.chat.state, m.files.state) { st, c, f -> Triple(st, c, f) },
-                m.todos.state, m.schedule.state,
+                m.todos.state, combine(m.schedule.state, m.control.state) { sc, ct -> sc to ct },
                 combine(m.ops.state, m.updates.state, m.terminals.state, m.rooms.state) { o, u, tm, rm -> Quad(o, u, tm, rm) },
-            ) { (st, c, f), t, sc, q -> Live(m, st, c, f, t, sc, q.a, q.b, q.c, q.d) }
+            ) { (st, c, f), t, (sc, ct), q -> Live(m, st, c, f, t, sc, q.a, q.b, q.c, q.d, ct) }
         } else {
             flowOf(Live(m, null, null))
         }
@@ -582,7 +588,10 @@ class TalariaController(
     override fun selectTab(tab: Tab) {
         page.update { it.copy(tab = tab, status = false, menuOpen = false, arrangingHome = false) }
         if (tab == Tab.HOME || tab == Tab.CHATS) chat?.refresh()
-        if (tab == Tab.TODOS) todos?.refresh()
+        if (tab == Tab.TODOS) {
+            todos?.refresh()
+            control?.let { if (page.value.board) it.refreshBoard() else it.probe() }
+        }
         if (tab == Tab.FILES) files?.load()
         if (tab == Tab.HOME || tab == Tab.SCHEDULE) schedule?.refresh()
     }
@@ -1422,7 +1431,23 @@ class TalariaController(
     override fun showServer() {
         page.update { it.copy(server = true, terminal = false, status = false, menuOpen = false) }
         ops?.refresh()
+        control?.let { c -> c.loadUsage(c.state.value.usage?.days ?: 7) }
     }
+
+    private val control: ControlRepository? get() = (mode.value as? Mode.Connected)?.control
+
+    override fun showBoard(show: Boolean) {
+        page.update { it.copy(board = show) }
+        if (show) control?.refreshBoard()
+    }
+
+    override fun boardAdd(title: String, assignee: String?) { control?.add(title, null, assignee) }
+    override fun boardOpen(taskId: String?) { control?.open(taskId) }
+    override fun boardMove(taskId: String, status: String) { control?.move(taskId, status) }
+    override fun boardGive(taskId: String, assignee: String) { control?.give(taskId, assignee) }
+    override fun boardComment(taskId: String, text: String) { control?.comment(taskId, text) }
+    override fun boardDismiss() { control?.dismissNotice() }
+    override fun loadUsage(days: Int) { control?.loadUsage(days) }
 
     override fun refreshServer() {
         ops?.refresh()
@@ -1589,8 +1614,9 @@ class TalariaController(
         val updates = UpdateRepository(scope, client.asChatApi(), versionCodeOf(TALARIA_VERSION) ?: 0).also { it.start() }
         val terminals = TerminalRepository(scope, client.asChatApi(), bridge.deviceId).also { it.start() }
         val rooms = RoomsRepository(scope, client.asChatApi()).also { it.start() }
+        val control = ControlRepository(scope, client.asChatApi()).also { it.start() }
         mode.value = Mode.Connected(bridge, client, chat, FilesRepository(scope, client.asChatApi()), todos, schedule, ops, updates,
-            terminals, rooms)
+            terminals, rooms, control)
         client.start()
     }
 
@@ -1612,7 +1638,7 @@ class TalariaController(
                 Screen.Terminal(terminalView(l.terminal ?: TerminalState(), opsState, now,
                     locked = authenticator != null && !terminalLock.unlocked), status)
             } else if (x.page.server) {
-                Screen.Server(serverView(opsState, m.bridge.deviceId), status)
+                Screen.Server(serverView(opsState, m.bridge.deviceId).copy(usage = usageView(l.control)), status)
             } else {
                 val withBalance = status.copy(balances = balanceItems(l.chat?.balances.orEmpty()))
                 val todosShown = l.todos?.let { t -> t.copy(todos = t.todos.filterNot { it.id in x.page.hiddenTodos }) }
@@ -1633,6 +1659,7 @@ class TalariaController(
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice, x.fileTask.progress),
                     schedule = scheduleView(l.schedule, now),
                     todos = todosView(todosShown, view, now),
+                    board = boardView(l.control, x.page.board, l.chat?.bots.orEmpty(), now),
                 )
             }
         }

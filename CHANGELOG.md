@@ -7,6 +7,12 @@ release notes the app shows.
 ## [Unreleased]
 
 ### Added
+- Bots' board: the To-dos tab has "My list" and "Bots' board", Hermes's Kanban board (the same one Hermes Desktop
+  shows). Add a task and pick a bot ("Add and start"): the bot works on it by itself and its notes show on the
+  card. Tap a task to see its details, move it, give it to another bot or comment on it. The board updates by itself
+  while it's open.
+- Server page: "Hermes's usage", what Hermes spent over the last 7 or 30 days (all of it: chats, Talk, bots,
+  automations, Hermes Desktop), day by day and by model.
 - Hermes's own commands work in Talaria: in a chat with Hermes or a bot, type / to see Talaria's commands and then
   Hermes's (/help, /usage, /insights, /compress, /kanban list, /skills, skill commands such as /weekly-review…).
   What they print shows as a card in the chat; skill commands become a message the bot answers. Commands that

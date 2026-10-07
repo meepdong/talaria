@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/board.changed.schema.json",
+  "title": "board.changed",
+  "description": "Bridge to device (notification): the watched board changed (\u00a718.4).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "method": {
+      "const": "board.changed"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "tasks"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "enum": [
+                  "triage",
+                  "todo",
+                  "scheduled",
+                  "ready",
+                  "running",
+                  "blocked",
+                  "review",
+                  "done",
+                  "archived"
+                ]
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "title",
+                    "status",
+                    "priority",
+                    "created_at",
+                    "comments"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "triage",
+                        "todo",
+                        "scheduled",
+                        "ready",
+                        "running",
+                        "blocked",
+                        "review",
+                        "done",
+                        "archived"
+                      ]
+                    },
+                    "priority": {
+                      "type": "integer"
+                    },
+                    "created_at": {
+                      "type": "integer"
+                    },
+                    "body": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "assignee": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 80
+                    },
+                    "started_at": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "completed_at": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "summary": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "result": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "comments": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "columns"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

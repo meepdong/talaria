@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talaria.invalid/tnp/v0/board.add.result.schema.json",
+  "title": "board.add.result",
+  "description": "Result of board.add (\u00a718.4).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "tnp",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "tnp": {
+      "const": 0
+    },
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "object",
+          "required": [
+            "id",
+            "title",
+            "status",
+            "priority",
+            "created_at",
+            "comments"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "title": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "triage",
+                "todo",
+                "scheduled",
+                "ready",
+                "running",
+                "blocked",
+                "review",
+                "done",
+                "archived"
+              ]
+            },
+            "priority": {
+              "type": "integer"
+            },
+            "created_at": {
+              "type": "integer"
+            },
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "assignee": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 80
+            },
+            "started_at": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "completed_at": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "comments": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "warning": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
