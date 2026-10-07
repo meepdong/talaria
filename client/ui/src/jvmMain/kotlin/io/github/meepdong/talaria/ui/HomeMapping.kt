@@ -94,10 +94,18 @@ fun dueLabel(due: LocalDate, today: LocalDate, done: Boolean = false): String = 
 }
 
 /** The ☰ panel: replies at work, the default model, provider balances and the connection rows. */
-fun menuView(chat: ChatView, status: StatusView, models: ModelOptions? = null, version: String = "0.1.0"): MenuView {
+fun menuView(chat: ChatView, status: StatusView, models: ModelOptions? = null, version: String = "0.1.0",
+             board: BoardView = BoardView()): MenuView {
     val default = models?.forNewChats
     return MenuView(
-        running = chat.conversations.filter { it.running }.map { RunningItem(it.title, "Hermes is replying", it.id) },
+        running = chat.conversations.filter { it.running }.map { RunningItem(it.title, "Hermes is replying", it.id) } +
+            // group chats (§18.2) and the bots' board (§18.4) work on the server too
+            chat.rooms.filter { it.working || it.needsYou }.map { r ->
+                RunningItem(r.name, if (r.working) "Group chat: members are talking" else "Group chat: waiting for you", roomId = r.id)
+            } +
+            board.columns.filter { it.name == "running" }.flatMap { it.tasks }.map { t ->
+                RunningItem(t.title, "Board: ${t.who ?: "a bot"} is working on it", board = true)
+            },
         balances = status.balances,
         connection = status.rows,
         defaultModel = default?.shortName,

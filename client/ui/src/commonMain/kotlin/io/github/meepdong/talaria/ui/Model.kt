@@ -199,7 +199,9 @@ data class MenuView(
 )
 
 /** Something at work: a reply being written. [conversationId] opens it. */
-data class RunningItem(val title: String, val detail: String, val conversationId: String? = null)
+/** Something at work: a chat's reply ([conversationId]), a group chat ([roomId]), or a task on the bots' board ([board]). */
+data class RunningItem(val title: String, val detail: String, val conversationId: String? = null, val roomId: String? = null,
+                       val board: Boolean = false)
 
 /** One line of the status card: Network, Bridge, or an agent. */
 data class StatusRow(val label: String, val health: Health, val value: String, val detail: String? = null)

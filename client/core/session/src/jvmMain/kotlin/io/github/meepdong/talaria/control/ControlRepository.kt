@@ -110,7 +110,8 @@ class ControlRepository(private val scope: CoroutineScope, private val api: Chat
         if (job != null) return
         job = scope.launch {
             launch { api.notifications.collect { runCatching { onNotification(it) } } }
-            launch { api.sessions.collect { if (_state.value.boardLoaded) refreshBoard() } }
+            // each session: is there a board, and what's on it (the ☰ menu shows bots' tasks at work)
+            launch { api.sessions.collect { if (_state.value.boardLoaded) refreshBoard() else probe() } }
         }
     }
 

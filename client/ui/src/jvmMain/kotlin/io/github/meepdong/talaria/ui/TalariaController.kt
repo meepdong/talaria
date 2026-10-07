@@ -605,6 +605,10 @@ class TalariaController(
     override fun setMenuOpen(open: Boolean) {
         if (open) chat?.loadBalance()
         if (open) chat?.loadModels()  // the default model picker
+        if (open) {  // what's at work on the server: group chats and the bots' board
+            rooms?.refresh()
+            control?.let { c -> if (c.state.value.boardAvailable) c.refreshBoard() else c.probe() }
+        }
         page.update { it.copy(menuOpen = open) }
     }
 
@@ -1748,7 +1752,8 @@ class TalariaController(
                     tabs = TABS,
                     home = homeView(view, now, todosShown).copy(order = x.homeOrder, arranging = x.page.arrangingHome,
                         update = l.updates?.takeIf { installer != null }?.let(::updateBanner)).withSchedule(l.schedule, now),
-                    menu = menuView(view, withBalance, l.chat?.models, VERSION).withUpdate(l.updates, installer != null),
+                    menu = menuView(view, withBalance, l.chat?.models, VERSION,
+                        boardView(l.control, false, l.chat?.bots.orEmpty(), now)).withUpdate(l.updates, installer != null),
                     menuOpen = x.page.menuOpen,
                     files = filesView(l.files, now, x.fileTask.opening, x.fileTask.notice, x.fileTask.progress),
                     schedule = scheduleView(l.schedule, now).copy(routines = routinesView(l.control, l.chat?.bots.orEmpty(), now)),

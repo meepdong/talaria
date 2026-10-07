@@ -13,6 +13,10 @@ release notes the app shows.
 - Server page, "Find skills": search Hermes's skill registries and install a skill for Hermes or for one bot (with an
   approval; Hermes's own safety scan still applies).
 
+### Fixed
+- ☰ → Running now also shows group chats whose members are talking (or that wait for you) and tasks a bot is
+  working on from the bots' board; tap one to open it. It used to list only chats with a reply in progress.
+
 ## [0.2.0-beta.23] - 2026-10-07
 
 ### Added

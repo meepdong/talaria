@@ -212,4 +212,19 @@ class BoardScreenTest {
         assertEquals(listOf("save ${BotDraft("Trip Planner", "", "", null, emptySet(), emptySet(), emptySet())} true",
             "save ${BotDraft("Trip Planner", "", "", null, emptySet(), emptySet(), emptySet())} false"), actions.calls)
     }
+
+    @Test
+    fun theMenuShowsGroupChatsAndBoardWorkAsRunning() {
+        val status = StatusView(rows = emptyList(), lastConnected = "just now", deviceName = "Phone", server = "wss://vps",
+            keyProtection = "Keystore", overall = Health.GOOD, summary = "Connected")
+        val chat = chatView(io.github.meepdong.talaria.chat.ChatState(listLoaded = true), false, true, status, now).copy(rooms = listOf(
+            RoomItem("g1", "Trip crew", "Scout, Hermes", "", "", working = true, needsYou = false),
+            RoomItem("g2", "Budget", "Freaksheet", "", "", working = false, needsYou = true),
+            RoomItem("g3", "Quiet", "Research", "", "", working = false, needsYou = false)))
+        val menu = menuView(chat, status, board = boardView(state, false, bots, now))
+        assertEquals(listOf(
+            RunningItem("Trip crew", "Group chat: members are talking", roomId = "g1"),
+            RunningItem("Budget", "Group chat: waiting for you", roomId = "g2"),
+            RunningItem("Summarise Monday's call", "Board: Meeting Minder is working on it", board = true)), menu.running)
+    }
 }

@@ -269,8 +269,12 @@ private fun MenuPanel(screen: Screen.Chat, actions: TalariaActions, wide: Boolea
                 }
                 menu.running.forEach { r ->
                     Row(
-                        Modifier.fillMaxWidth().clickable(enabled = r.conversationId != null) {
-                            r.conversationId?.let(actions::openConversation)
+                        Modifier.fillMaxWidth().clickable(enabled = r.conversationId != null || r.roomId != null || r.board) {
+                            when {
+                                r.conversationId != null -> actions.openConversation(r.conversationId)
+                                r.roomId != null -> { actions.setMenuOpen(false); actions.openRoom(r.roomId) }
+                                r.board -> { actions.setMenuOpen(false); actions.selectTab(Tab.TODOS); actions.showBoard(true) }
+                            }
                         }.padding(vertical = 6.dp).testTag("running-item"),
                     ) {
                         Box(Modifier.padding(top = 7.dp).size(8.dp).background(Brand.Busy, CircleShape))
