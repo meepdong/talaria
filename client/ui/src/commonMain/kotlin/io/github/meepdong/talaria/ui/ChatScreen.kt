@@ -1058,7 +1058,7 @@ private fun TallyModels(t: TallyView, actions: TalariaActions) {
         Text("Voice model: how she sounds", style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         val options = (if (t.canOwnVoice) listOf(Triple("", "Her main model's own voice", "")) else emptyList()) +
-            t.speeches.map { (id, label) -> Triple(id, label, "") }
+            t.speeches.map { (id, label) -> Triple(id, label, if (id.substringBefore(':') == "gemini") "Gemini key" else "OpenRouter") }
         ModelMenu(t.speechLabel, options, "tally-speech", enabled = !t.busy) { actions.setTallySpeech(it.ifEmpty { null }) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("New chats go to Tally", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
