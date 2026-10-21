@@ -210,3 +210,38 @@ async def test_typed_chat_with_tally_and_her_jobs_come_back_to_her(tmp_path: Pat
     models = (await chat.handle("agent.models", {"agent_id": "tally"}))[0]
     assert models["current"] == {"provider": "gemini", "model": "gemini-3.5-flash"}
     await chat.close()
+
+
+async def test_an_openrouter_brain_that_hears_still_hears_after_a_restart(tmp_path: Path):
+    """The brain's hearing comes from OpenRouter's list; a restarted bridge looks it up again, so the recording reaches
+    the model even when Whisper can't write it down."""
+    bodies: list[dict] = []
+
+    class Router(FakeRouter):
+        def __call__(self, req: httpx.Request) -> httpx.Response:
+            if req.url.path.endswith("/models/user"):
+                return httpx.Response(200, json={"data": [
+                    {"id": "google/gemini-3.5-flash", "name": "Gemini 3.5 Flash",
+                     "architecture": {"input_modalities": ["text", "audio"], "output_modalities": ["text"]}}]})
+            if req.url.path.endswith("/audio/transcriptions"):
+                return httpx.Response(404, json={"error": {"message": "not found"}})
+            if req.url.path.endswith("/chat/completions"):
+                body = json.loads(req.content)
+                bodies.append(body)
+                if not body.get("stream"):  # writing down what was said
+                    return httpx.Response(200, json={"choices": [{"message": {"content": "What's on my day?"}}]})
+                return httpx.Response(200, content=sse({"choices": [{"delta": {"content": "Your day is clear."}}]}))
+            return super().__call__(req)
+
+    chat, sent = make(tmp_path, FakeGemini())
+    chat.store.set_setting("talk.brain", "openrouter:google/gemini-3.5-flash")  # picked on a device before the restart
+    chat.talker = Talker("sk", chat, name="Tally", worker="Hermes", gemini_key="gk",
+                         transport=httpx.MockTransport(Router()), gemini_transport=httpx.MockTransport(FakeGemini()),
+                         speech="gemini:gemini-3.8-flash-tts", voice="Kore")
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "format": "wav"})
+    end = await done(sent)
+    assert end["text"] == "Your day is clear." and "error" not in end
+    talked = next(b for b in bodies if b.get("stream"))
+    assert talked["messages"][-1]["content"][0]["type"] == "input_audio"  # she hears the recording itself
+    heard = [x["params"]["text"] for x in sent if x["method"] == "talk.heard"]
+    assert heard == ["What's on my day?"]  # and writes it down when Whisper can't
