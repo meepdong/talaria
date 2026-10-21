@@ -741,12 +741,16 @@ class Talker:
         except ModelError as exc:
             raise TalkError(m.AGENT_UNAVAILABLE, str(exc)) from None
         finally:
+            voice_failed = None
             if speaking is not None:
                 lines.put_nowait(None)
                 try:
                     await speaking
                 except ModelError as exc:
                     log.warning("talk %s: Tally's voice failed: %s", talk_id, exc)
+                    voice_failed = str(exc)
+        if voice_failed and not calls:  # nothing was heard: say why on the device rather than go quiet
+            raise TalkError(m.AGENT_UNAVAILABLE, voice_failed)
         return said.strip(), calls, raw
 
     # tools

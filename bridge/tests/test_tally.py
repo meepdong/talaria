@@ -245,3 +245,17 @@ async def test_an_openrouter_brain_that_hears_still_hears_after_a_restart(tmp_pa
     assert talked["messages"][-1]["content"][0]["type"] == "input_audio"  # she hears the recording itself
     heard = [x["params"]["text"] for x in sent if x["method"] == "talk.heard"]
     assert heard == ["What's on my day?"]  # and writes it down when Whisper can't
+
+
+async def test_a_refused_voice_is_said_on_the_device_not_kept_quiet(tmp_path: Path):
+    class Refusing(FakeGemini):
+        def __call__(self, req: httpx.Request) -> httpx.Response:
+            if "-tts:" in req.url.path:
+                return httpx.Response(403, json={"error": {"code": 403, "message": "Permission denied",
+                                                           "status": "PERMISSION_DENIED"}})
+            return super().__call__(req)
+
+    chat, sent = make(tmp_path, Refusing(g_text("Your day is clear.")))
+    await chat.handle("talk.turn", {"audio": "UklGRg==", "format": "wav"})
+    end = await done(sent)
+    assert end["error"] == "Tally's voice refused (403)" and end["text"] == ""

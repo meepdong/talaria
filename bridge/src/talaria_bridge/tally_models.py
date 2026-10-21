@@ -98,7 +98,7 @@ class OpenRouterBrain(Brain):
         try:
             async with self.http.stream("POST", "/chat/completions", json=body) as resp:
                 if resp.status_code != 200:
-                    text = (await resp.aread())[:300].decode(errors="replace")
+                    text = _one_line(await resp.aread())
                     log.warning("%s refused (%s): %s", self.id, resp.status_code, text)
                     raise ModelError(f"Tally's model refused ({resp.status_code})")
                 async for line in resp.aiter_lines():
@@ -148,6 +148,11 @@ class OpenRouterBrain(Brain):
         return None
 
 
+def _one_line(body: bytes) -> str:
+    """A refusal's body for the log, on one line so journalctl shows the reason with it."""
+    return " ".join(body.decode(errors="replace").split())[:400]
+
+
 def _plain(message: dict) -> dict:
     """A message without our own keys (provider-specific parts kept for another provider)."""
     return {k: v for k, v in message.items() if not k.startswith("_")}
@@ -174,7 +179,7 @@ class GeminiBrain(Brain):
             try:
                 async with self.http.stream("POST", f"/models/{self.model}:streamGenerateContent?alt=sse", json=body) as resp:
                     if resp.status_code != 200:
-                        text = (await resp.aread())[:400].decode(errors="replace")
+                        text = _one_line(await resp.aread())
                         if resp.status_code == 400 and "hinking" in text and attempt < 2:
                             # this model doesn't take that level: the next lighter one it does (or its default)
                             self._thinking = {"thinkingLevel": "low"} if level == {"thinkingLevel": "minimal"} else None
@@ -323,7 +328,7 @@ class GeminiVoice(Voice):
         try:
             async with self.http.stream("POST", f"/models/{self.model}:streamGenerateContent?alt=sse", json=body) as resp:
                 if resp.status_code != 200:
-                    text = (await resp.aread())[:300].decode(errors="replace")
+                    text = _one_line(await resp.aread())
                     log.warning("%s refused (%s): %s", self.id, resp.status_code, text)
                     raise ModelError(f"Tally's voice refused ({resp.status_code})")
                 async for line in resp.aiter_lines():
@@ -351,7 +356,7 @@ class OpenRouterVoice(Voice):
         except httpx.HTTPError as exc:
             raise ModelError(f"Tally's voice can't be reached ({type(exc).__name__})") from None
         if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("audio/"):
-            log.warning("%s refused (%s): %s", self.id, resp.status_code, resp.text[:300])
+            log.warning("%s refused (%s): %s", self.id, resp.status_code, _one_line(resp.content))
             raise ModelError(f"Tally's voice refused ({resp.status_code})")
         pcm = resp.content
         for i in range(0, len(pcm), CHUNK):
