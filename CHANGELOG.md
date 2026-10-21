@@ -4,6 +4,17 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Fixed
+- Talk no longer goes quiet when Tally's voice model is refused (for example Google answering 403): Talk ends and
+  says why ("Tally's voice refused (403)"), and the bridge logs the provider's reason on one line.
+- An OpenRouter main model that hears your voice keeps hearing it after the bridge restarts (it was taken for one
+  that only reads, and with Whisper failing Tally heard nothing).
+
+### Changed
+- The Tally dialog shows where each voice model runs: Gemini key or OpenRouter.
+
 ## [0.2.0-beta.27] - 2026-10-07
 
 ### Added

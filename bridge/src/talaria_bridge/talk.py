@@ -219,6 +219,7 @@ class Talker:
         self._tasks: set[asyncio.Task] = set()
         self._holds: dict[str, _Hold] = {}  # talk_id -> an early turn not yet committed
         self._fillers: dict[str, list[str]] = {}  # "<voice model>|<voice>" -> FILLER as PCM chunks (base64), made once
+        self._hears_known: set[str] = set()  # OpenRouter brains whose hearing was looked up in the models list
 
     async def close(self) -> None:
         for task in list(self._tasks):
@@ -269,6 +270,8 @@ class Talker:
         speech = speech or None
         hears = brains[brain].hears if brain in brains else None
         chosen = self.models.brain(brain, hears)
+        if hears is not None:
+            self._hears_known.add(brain)
         if speech is None and not chosen.speaks:
             raise TalkError(m.INVALID_PARAMS, "That model can't speak: pick a voice model for Tally too")
         self.brain_id, self.speech_id = brain, speech
@@ -286,6 +289,18 @@ class Talker:
             self._spawn(self._make_filler(wanted))
         return await self.setup()
 
+    async def _know_hears(self) -> None:
+        """Whether an OpenRouter brain hears comes from OpenRouter's models list, which only talk.configure read: after
+        a restart, a brain that hears was taken for one that doesn't, and with Whisper failing it got nothing at all
+        ("the owner said something that couldn't be made out"). Look it up once before its first turn."""
+        if self.brain_id in self._hears_known or split_id(self.brain_id)[0] != "openrouter":
+            return
+        for c in (await self.models.choices())["brains"]:
+            if c.id == self.brain_id:
+                self.models.brain(self.brain_id, c.hears)
+                self._hears_known.add(self.brain_id)
+                return
+
     # requests
 
     async def turn(self, p: dict) -> dict:
@@ -298,6 +313,7 @@ class Talker:
         if fmt not in ("wav", "mp3"):
             raise TalkError(m.INVALID_PARAMS, "format must be wav or mp3")
         conv = self._conv(p.get("conversation_id"))
+        await self._know_hears()
         talk_id = "tk_" + secrets.token_hex(8)
         sound = {"type": "input_audio", "input_audio": {"data": audio, "format": fmt}}
         system = self._system(conv)  # before the owner's words are kept, which makes them the chat's last message
@@ -725,12 +741,16 @@ class Talker:
         except ModelError as exc:
             raise TalkError(m.AGENT_UNAVAILABLE, str(exc)) from None
         finally:
+            voice_failed = None
             if speaking is not None:
                 lines.put_nowait(None)
                 try:
                     await speaking
                 except ModelError as exc:
                     log.warning("talk %s: Tally's voice failed: %s", talk_id, exc)
+                    voice_failed = str(exc)
+        if voice_failed and not calls:  # nothing was heard: say why on the device rather than go quiet
+            raise TalkError(m.AGENT_UNAVAILABLE, voice_failed)
         return said.strip(), calls, raw
 
     # tools
