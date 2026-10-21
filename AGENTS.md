@@ -60,6 +60,16 @@ cd client && TALARIA_PYTHON=$PWD/../.venv/bin/python ./gradlew :core:protocol:jv
 CI (`.github/workflows/tests.yml`, named "tests") runs the bridge on Linux and Windows and `./gradlew check` plus the
 desktop and Android builds. A tag `v*` runs `release.yml`.
 
+## Code map (graphify)
+
+[graphify](https://github.com/Graphify-Labs/graphify) turns the repo into a knowledge graph in `graphify-out/` (not
+committed). Install it once (`uv tool install graphifyy==0.9.93`, or `py -3.12 -m pip install graphifyy==0.9.93` on
+Windows), then `graphify update .` builds the code part in about ten seconds with no API key. Before grepping or
+reading files for a codebase question, ask the graph: `graphify query "<question>"`, `graphify explain "<name>"`,
+`graphify path "<A>" "<B>"`. Run `graphify update .` again after changing code. Claude Code also has it as the
+`/graphify` skill (`.claude/skills/graphify/`, written by `graphify install --project --platform claude`; upgrade by
+rerunning that), whose hooks nudge it to the graph before raw searches.
+
 ## Conventions
 
 - **Spec first.** A new or changed message: `spec/README.md` + a schema in `spec/schemas/`, then the bridge (with a

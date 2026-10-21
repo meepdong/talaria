@@ -9,3 +9,6 @@ __pycache__/
 # Bridge runtime state, if TALARIA_HOME is pointed inside the repo.
 *.db
 bridge_key.pem
+
+# graphify code map: rebuilt locally with `graphify update .`, too big and too busy to commit.
+graphify-out/
