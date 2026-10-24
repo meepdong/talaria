@@ -4,6 +4,12 @@ Talaria's releases (PROCESS.md "Releases" in the deployment notes): `X.Y.Z-beta.
 `X.Y.Z` for everyone once tested. Sections: Added, Changed, Fixed, Security. CI uses the version's section as the
 release notes the app shows.
 
+## [Unreleased]
+
+### Changed
+- Tally on an OpenRouter voice model (ElevenLabs Eleven v4 Turbo, v3…) starts speaking sooner: her voice plays as it
+  arrives instead of after each whole sentence is made.
+
 ## [0.2.0-beta.27] - 2026-10-07
 
 ### Added

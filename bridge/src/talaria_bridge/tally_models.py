@@ -345,17 +345,23 @@ class OpenRouterVoice(Voice):
             GEMINI_VOICES if model.startswith("google/") else OPENAI_VOICES if model.startswith("openai/") else ()
 
     async def speak(self, text, voice):
+        # the sound is passed on as it arrives (ElevenLabs streams it), not once the whole sentence is made
+        body = {"model": self.model, "input": text, "response_format": "pcm", **({"voice": voice} if voice else {})}
         try:
-            resp = await self.http.post("/audio/speech", timeout=httpx.Timeout(30, connect=5), json={
-                "model": self.model, "input": text, "response_format": "pcm", **({"voice": voice} if voice else {})})
+            async with self.http.stream("POST", "/audio/speech", json=body, timeout=httpx.Timeout(30, connect=5)) as resp:
+                if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("audio/"):
+                    await resp.aread()
+                    log.warning("%s refused (%s): %s", self.id, resp.status_code, resp.text[:300])
+                    raise ModelError(f"Tally's voice refused ({resp.status_code})")
+                pending = b""
+                async for data in resp.aiter_bytes():
+                    pending += data
+                    whole = len(pending) - len(pending) % 2  # never split a 16-bit sample
+                    for i in range(0, whole, CHUNK):
+                        yield base64.b64encode(pending[i:min(i + CHUNK, whole)]).decode()
+                    pending = pending[whole:]
         except httpx.HTTPError as exc:
             raise ModelError(f"Tally's voice can't be reached ({type(exc).__name__})") from None
-        if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("audio/"):
-            log.warning("%s refused (%s): %s", self.id, resp.status_code, resp.text[:300])
-            raise ModelError(f"Tally's voice refused ({resp.status_code})")
-        pcm = resp.content
-        for i in range(0, len(pcm), CHUNK):
-            yield base64.b64encode(pcm[i:i + CHUNK]).decode()
 
 
 # what the keys allow

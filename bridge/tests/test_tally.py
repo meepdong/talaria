@@ -13,7 +13,7 @@ from talaria_bridge.chat import ChatService, ChatStore, Conversation
 from talaria_bridge.hermes import HermesClient
 from talaria_bridge.protocol import messages as m
 from talaria_bridge.tally_chat import TallyChat
-from talaria_bridge.tally_models import sentences, to_gemini
+from talaria_bridge.tally_models import ModelError, Models, sentences, to_gemini
 from talaria_bridge.talk import Talker
 from talaria_bridge.todos import TodoStore
 
@@ -167,6 +167,33 @@ async def test_tally_hears_thinks_and_speaks_sentence_by_sentence(tmp_path: Path
     first = gemini.bodies[0]
     assert first["contents"][-1]["parts"][0]["inline_data"]["mime_type"] == "audio/wav"  # she hears the recording itself
     assert first["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "low"}}  # the lightest level this model takes
+
+
+async def test_an_openrouter_voice_is_passed_on_as_it_arrives():
+    more = asyncio.Event()
+
+    async def sound():
+        yield b"\x01\x00" * 100 + b"\x02"  # half a sample at the end: kept for the next piece
+        await more.wait()
+        yield b"\x00" + b"\x03\x00" * 50
+
+    def router(req: httpx.Request) -> httpx.Response:
+        if json.loads(req.content)["model"] == "elevenlabs/eleven-v3":
+            return httpx.Response(404, json={"error": {"message": "blocked by your guardrail"}})
+        return httpx.Response(200, content=sound(), headers={"content-type": "audio/pcm"})
+
+    models = Models("sk", None, openrouter=httpx.MockTransport(router))
+    pieces = models.voice("openrouter:elevenlabs/eleven-v4-turbo").speak("Hi there.", "Sarah")
+    first = base64.b64decode(await asyncio.wait_for(anext(pieces), 2))
+    assert first == b"\x01\x00" * 100 and not more.is_set()  # before the rest is made
+    more.set()
+    assert [base64.b64decode(x) async for x in pieces] == [b"\x02\x00" + b"\x03\x00" * 50]
+    try:
+        [x async for x in models.voice("openrouter:elevenlabs/eleven-v3").speak("Hi.", "Sarah")]
+        raise AssertionError("a blocked voice should refuse")
+    except ModelError as exc:
+        assert "refused (404)" in str(exc)
+    await models.close()
 
 
 async def test_tool_calls_round_trip_with_geminis_signatures(tmp_path: Path):

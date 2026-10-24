@@ -170,7 +170,8 @@ the owner's guardrail) and a Gemini API key (agents.json `gemini_key_file`). A m
 (`gemini:gemini-3.5-flash`, `openrouter:openai/gpt-audio-mini`). Her **main model** (`brain`) hears the owner's voice
 directly when it can (it then gets the recording as is); one that can't gets the words written down first. Her
 **voice model** (`speech`, e.g. `gemini:gemini-3.8-flash-tts` or `openrouter:elevenlabs/eleven-v4-turbo`) says her
-answer sentence by sentence as it's written, so she starts speaking before the answer is finished; with `speech`
+answer sentence by sentence as it's written, so she starts speaking before the answer is finished, and its sound is
+passed on as it arrives; with `speech`
 null, a main model that speaks itself (GPT Audio) uses its own voice. `talk.audio` is the same either way (24 kHz
 16-bit mono PCM). `talk.setup` returns the choices: `brains` `[{id, label, hears, speaks}]`, `speeches`
 `[{id, label}]` (what the keys allow, checked against the guardrail) and `voices`, the voice names of the current
